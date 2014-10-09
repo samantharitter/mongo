@@ -51,7 +51,7 @@ namespace QueryStageDelete {
 
             for (size_t i = 0; i < numObj(); ++i) {
                 BSONObjBuilder bob;
-                bob.append("foo", static_cast<long long int>(i));
+                bob.append("a", static_cast<long long int>(i));
                 _client.insert(ns(), bob.obj());
             }
             ctx.commit();
@@ -67,25 +67,64 @@ namespace QueryStageDelete {
             _client.remove(ns(), obj);
         }
 
-        void getLocs(Collection* collection,
-                     CollectionScanParams::Direction direction,
-                     vector<DiskLoc>* out) {
-            WorkingSet ws;
+        void mutate(const BSONObj& oldObj, const BSONObj& newObj) {
+            _client.update(ns(), oldObj, newObj);
+        }
 
+        Collection* getCollection(Client::WriteContext* ctx) {
+            return ctx->ctx().db()->getCollection(&_txn, ns());
+        }
+
+        /*
+         * Return a forward in-order collection scan for this collection.
+         */
+        CollectionScan* getCollectionScan(Client::WriteContext* ctx, WorkingSet* ws,
+                                          const MatchExpression* query) {
             CollectionScanParams params;
-            params.collection = collection;
-            params.direction = direction;
+            params.collection = getCollection(ctx);
+            params.direction = CollectionScanParams::FORWARD;
             params.tailable = false;
+            return new CollectionScan(&_txn, params, ws, query);
+        }
 
-            scoped_ptr<CollectionScan> scan(new CollectionScan(&_txn, params, &ws, NULL));
+        /*
+         * Given a PlanStage, exhaust it and collect its disklocs.
+         */
+        void getLocs(auto_ptr<PlanStage> scan, WorkingSet* ws, vector<DiskLoc>* out) {
             while (!scan->isEOF()) {
                 WorkingSetID id = WorkingSet::INVALID_ID;
                 PlanStage::StageState state = scan->work(&id);
                 if (PlanStage::ADVANCED == state) {
-                    WorkingSetMember* member = ws.get(id);
+                    WorkingSetMember* member = ws->get(id);
                     verify(member->hasLoc());
-                    out->push_back(member->loc);
+                    if (member->hasLoc()) out->push_back(member->loc);
                 }
+            }
+        }
+
+        /*
+         * Delete the next 'toDelete' documents using this DeleteStage,
+         * or fail.
+         */
+        void deleteN(DeleteStage* deleteStage, const DeleteStats* stats,
+                     const size_t toDelete) {
+            while (stats->docsDeleted < toDelete) {
+                WorkingSetID id = WorkingSet::INVALID_ID;
+                PlanStage::StageState state = deleteStage->work(&id);
+                invariant(state == PlanStage::NEED_TIME);
+            }
+        }
+
+        /*
+         * Delete documents using this DeleteStage until we hit EOF or fail.
+         */
+        void deleteAll(DeleteStage* deleteStage) {
+            WorkingSetID id;
+
+            while (!deleteStage->isEOF()) {
+                id = WorkingSet::INVALID_ID;
+                PlanStage::StageState state = deleteStage->work(&id);
+                invariant(PlanStage::NEED_TIME == state || PlanStage::IS_EOF == state);
             }
         }
 
@@ -109,55 +148,152 @@ namespace QueryStageDelete {
     public:
         void run() {
             Client::WriteContext ctx(&_txn, ns());
+            Collection* coll = getCollection(&ctx);
 
-            Collection* coll = ctx.ctx().db()->getCollection(&_txn, ns());
+            // Configure a collection scan
+            WorkingSet ws;
+            CollectionScan* collScanDelete = getCollectionScan(&ctx, &ws, NULL);
 
-            // Get the DiskLocs that would be returned by an in-order scan.
+            // Create an identical scan and use it to fetch DiskLocs.
+            WorkingSet wsDummy;
+            auto_ptr<PlanStage> dummy(getCollectionScan(&ctx, &wsDummy, NULL));
             vector<DiskLoc> locs;
-            getLocs(coll, CollectionScanParams::FORWARD, &locs);
+            getLocs(dummy, &wsDummy, &locs);
 
-            // Configure the scan.
-            CollectionScanParams collScanParams;
-            collScanParams.collection = coll;
-            collScanParams.direction = CollectionScanParams::FORWARD;
-            collScanParams.tailable = false;
-
-            // Configure the delete stage.
+            // Configure our delete stagee
             DeleteStageParams deleteStageParams;
             deleteStageParams.isMulti = true;
             deleteStageParams.shouldCallLogOp = false;
+            DeleteStage deleteStage(&_txn, deleteStageParams, &ws, coll, collScanDelete);
 
-            WorkingSet ws;
-            DeleteStage deleteStage(&_txn, deleteStageParams, &ws, coll,
-                                    new CollectionScan(&_txn, collScanParams, &ws, NULL));
+            // Configure stats, for tracking
+            const DeleteStats* stats = static_cast<const DeleteStats*>(deleteStage.getSpecificStats());
 
-            const DeleteStats* stats =
-                static_cast<const DeleteStats*>(deleteStage.getSpecificStats());
-
+            // Delete some documents
             const size_t targetDocIndex = 10;
+            deleteN(&deleteStage, stats, targetDocIndex);
 
-            while (stats->docsDeleted < targetDocIndex) {
-                WorkingSetID id = WorkingSet::INVALID_ID;
-                PlanStage::StageState state = deleteStage.work(&id);
-                ASSERT_EQUALS(PlanStage::NEED_TIME, state);
-            }
-
-            // Remove locs[targetDocIndex];
+            // Prepare to yield
             deleteStage.saveState();
+
+            // Remove and invalidate locs[targetDocIndex]
             deleteStage.invalidate(locs[targetDocIndex], INVALIDATION_DELETION);
             BSONObj targetDoc = coll->docFor(&_txn, locs[targetDocIndex]);
             ASSERT(!targetDoc.isEmpty());
             remove(targetDoc);
+
+            // Restore from yield, remove the rest
             deleteStage.restoreState(&_txn);
-
-            // Remove the rest.
-            while (!deleteStage.isEOF()) {
-                WorkingSetID id = WorkingSet::INVALID_ID;
-                PlanStage::StageState state = deleteStage.work(&id);
-                invariant(PlanStage::NEED_TIME == state || PlanStage::IS_EOF == state);
-            }
-
+            deleteAll(&deleteStage);
             ASSERT_EQUALS(numObj() - 1, stats->docsDeleted);
+
+            ctx.commit();
+        }
+    };
+
+    //
+    // Test that DeleteStage recovers properly from an INVALIDATION_MUTATION of
+    // one of its upcoming documents, when the document still matches the query.
+    //
+    class QueryStageDeleteMutatedUpcomingObject : public QueryStageDeleteBase {
+    public:
+        void run() {
+            Client::WriteContext ctx(&_txn, ns());
+            Collection* coll = getCollection(&ctx);
+
+            // Configure a collection scan to run under our DeleteStage
+            WorkingSet ws;
+            CollectionScan* collScanDelete = getCollectionScan(&ctx, &ws, NULL);
+
+            // Create an identical collection scan and use it to
+            // get the DiskLocs that this CollScan will return
+            WorkingSet wsDummy;
+            auto_ptr<PlanStage> dummy(getCollectionScan(&ctx, &wsDummy, NULL));
+            vector<DiskLoc> locs;
+            getLocs(dummy, &wsDummy, &locs);
+
+            // Configure our delete stage
+            DeleteStageParams deleteStageParams;
+            deleteStageParams.isMulti = true;
+            deleteStageParams.shouldCallLogOp = false;
+            DeleteStage deleteStage(&_txn, deleteStageParams, &ws, coll, collScanDelete);
+
+            // Configure stats, so we can track this delete.
+            const DeleteStats* stats = static_cast<const DeleteStats*>(deleteStage.getSpecificStats());
+
+            // Delete some documents
+            const size_t toDelete = 10;
+            deleteN(&deleteStage, stats, toDelete);
+
+            // Prepare to yield
+            deleteStage.saveState();
+
+            // Mutate and invalidate next document, it will still match query
+            deleteStage.invalidate(locs[toDelete], INVALIDATION_MUTATION);
+            BSONObj oldObj = coll->docFor(&_txn, locs[toDelete]);
+            ASSERT(!oldObj.isEmpty());
+            mutate(oldObj, BSON("b" << "1"));
+
+            // Recover from yield, delete all documents
+            deleteStage.restoreState(&_txn);
+            deleteAll(&deleteStage);
+            ASSERT_EQUALS(numObj(), stats->docsDeleted);
+
+            ctx.commit();
+        }
+    };
+
+    //
+    // Test that DeleteStage recovers properly when an upcoming object is
+    // mutated and invalidated such that it no longer matches our query.
+    //
+    class QueryStageDeleteMutateObjectNoMatch : public QueryStageDeleteBase {
+    public:
+        void run() {
+            Client::WriteContext ctx(&_txn, ns());
+            Collection* coll = getCollection(&ctx);
+
+            // Set up a collectionScan for {a : {"$gt" : 5 }}
+            BSONObj query = BSON("a" << BSON("$gt" << 5));
+            StatusWithMatchExpression status = MatchExpressionParser::parse(query);
+            ASSERT(status.isOK());
+            MatchExpression* filter(status.getValue());
+
+            WorkingSet ws;
+            CollectionScan* filteredScan = getCollectionScan(&ctx, &ws, filter);
+
+            // Duplicate, get diskLocs
+            WorkingSet wsDummy;
+            auto_ptr<PlanStage> dummy(getCollectionScan(&ctx, &wsDummy, filter));
+            vector<DiskLoc> locs;
+            getLocs(dummy, &wsDummy, &locs);
+
+            // Set up our DeleteStage
+            DeleteStageParams deleteParams;
+            deleteParams.isMulti = true;
+            deleteParams.shouldCallLogOp = false;
+            DeleteStage deleteStage(&_txn, deleteParams, &ws, coll, filteredScan);
+
+            // Configure stats, to track delete
+            const DeleteStats* stats = static_cast<const DeleteStats*>(deleteStage.getSpecificStats());
+
+            // Delete some documents
+            const size_t toDelete = 10;
+            deleteN(&deleteStage, stats, toDelete);
+
+            // Prepare to yield
+            deleteStage.saveState();
+
+            // Mutate and invalidate a document so that it does not match query
+            deleteStage.invalidate(locs[toDelete], INVALIDATION_MUTATION);
+            BSONObj oldObj = coll->docFor(&_txn, locs[toDelete]);
+            ASSERT(!oldObj.isEmpty());
+            mutate(oldObj, BSON("a" << -1));
+
+            // recover and delete all documents, skipping invalidated one
+            deleteStage.restoreState(&_txn);
+            deleteAll(&deleteStage);
+            ASSERT_EQUALS(numObj() - 7, stats->docsDeleted);
 
             ctx.commit();
         }
@@ -170,6 +306,8 @@ namespace QueryStageDelete {
         void setupTests() {
             // Stage-specific tests below.
             add<QueryStageDeleteInvalidateUpcomingObject>();
+            add<QueryStageDeleteMutatedUpcomingObject>();
+            add<QueryStageDeleteMutateObjectNoMatch>();
         }
     } all;
 
