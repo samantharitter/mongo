@@ -415,6 +415,14 @@ namespace mongo {
         size_t limit;
     };
 
+    struct MockStats : public SpecificStats {
+        MockStats() { }
+
+        virtual SpecificStats* clone() const {
+            return new MockStats(*this);
+        }
+    };
+
     struct MultiPlanStats : public SpecificStats {
         MultiPlanStats() { }
 
