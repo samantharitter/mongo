@@ -239,17 +239,6 @@ namespace {
     // Has the side effect of proactively clearing any cached connections which have been
     // disconnected in the background.
     bool DBClientReplicaSet::isStillConnected() {
-
-        if ( _master && !_master->isStillConnected() ) {
-            resetMaster();
-            // Don't notify monitor of bg failure, since it's not clear how long ago it happened
-        }
-
-        if ( _lastSlaveOkConn.get() && !_lastSlaveOkConn->isStillConnected() ) {
-            resetSlaveOkConn();
-            // Don't notify monitor of bg failure, since it's not clear how long ago it happened
-        }
-
         return true;
     }
 

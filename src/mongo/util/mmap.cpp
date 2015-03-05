@@ -33,6 +33,8 @@
 
 #include "mongo/util/mmap.h"
 
+#include <iostream>
+
 #include <boost/filesystem/operations.hpp>
 
 #include "mongo/base/owned_pointer_vector.h"
@@ -90,9 +92,10 @@ namespace {
     void* MemoryMappedFile::map(const char *filename) {
         unsigned long long l;
         try {
+            std::cout << "about to try to map file " << filename << std::endl;
             l = boost::filesystem::file_size( filename );
-        } 
-        catch(boost::filesystem::filesystem_error& e) { 
+        }
+        catch(boost::filesystem::filesystem_error& e) {
             uasserted(15922, mongoutils::str::stream() << "couldn't get file length when opening mapping " << filename << ' ' << e.what() );
         }
         return map( filename , l );
@@ -101,8 +104,8 @@ namespace {
         unsigned long long l;
         try {
             l = boost::filesystem::file_size( filename );
-        } 
-        catch(boost::filesystem::filesystem_error& e) { 
+        }
+        catch(boost::filesystem::filesystem_error& e) {
             uasserted(15923, mongoutils::str::stream() << "couldn't get file length when opening mapping " << filename << ' ' << e.what() );
         }
         return map( filename , l, options );

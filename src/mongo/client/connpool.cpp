@@ -157,8 +157,8 @@ namespace mongo {
     }
 
     bool PoolForHost::StoredConnection::ok( time_t now ) {
-        // Poke the connection to see if we're still ok
-        return conn->isStillConnected();
+        // UDP "connections" are always ok :D
+        return true;
     }
 
     void PoolForHost::createdOne( DBClientBase * base) {

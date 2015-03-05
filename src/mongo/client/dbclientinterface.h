@@ -1304,7 +1304,7 @@ namespace mongo {
          */
         bool isFailed() const { return _failed; }
 
-        bool isStillConnected() { return p ? p->isStillConnected() : true; }
+        bool isStillConnected() { return true; }
 
         MessagingPort& port() { verify(p); return *p; }
 

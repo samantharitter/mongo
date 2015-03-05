@@ -34,41 +34,9 @@
 
 namespace mongo {
 
-#ifdef _WIN32
-
-    typedef int (WSAAPI *WSAPollFunction)(pollfd* fdarray, ULONG nfds, INT timeout);
-
-    static WSAPollFunction wsaPollFunction = NULL;
-
-    MONGO_INITIALIZER(DynamicLinkWin32Poll)(InitializerContext* context) {
-        HINSTANCE wsaPollLib = LoadLibraryW( L"Ws2_32.dll" );
-        if (wsaPollLib) {
-            wsaPollFunction =
-                reinterpret_cast<WSAPollFunction>(GetProcAddress(wsaPollLib, "WSAPoll"));
-        }
-
-        return Status::OK();
-    }
-
-    bool isPollSupported() { return wsaPollFunction != NULL; }
-
-    int socketPoll( pollfd* fdarray, unsigned long nfds, int timeout ) {
-        fassert(17185, isPollSupported());
-        return wsaPollFunction(fdarray, nfds, timeout);
-    }
-
-#else
-
     bool isPollSupported() { return true; }
 
     int socketPoll( pollfd* fdarray, unsigned long nfds, int timeout ) {
         return ::poll(fdarray, nfds, timeout);
     }
-
-#endif
-
 }
-
-
-
-

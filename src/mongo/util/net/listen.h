@@ -106,8 +106,10 @@ namespace mongo {
         void waitUntilListening() const;
 
     private:
-        std::vector<SockAddr> _mine;
-        std::vector<SOCKET> _socks;
+        //std::vector<SockAddr> _mine;
+        //std::vector<SOCKET> _socks;
+        SockAddr _addr;
+        SOCKET _sock;
         std::string _name;
         std::string _ip;
         bool _setupSocketsSuccessful;
@@ -117,15 +119,15 @@ namespace mongo {
         mutable boost::condition_variable _readyCondition; // Used to wait for changes to _ready
         // Boolean that indicates whether this Listener is ready to accept incoming network requests
         bool _ready;
-        
+
 #ifdef MONGO_SSL
         SSLManagerInterface* _ssl;
 #endif
-        
+
         void _logListen( int port , bool ssl );
 
         static const Listener* _timeTracker;
-        
+
         virtual bool useUnixSockets() const { return false; }
 
     public:
@@ -134,9 +136,6 @@ namespace mongo {
 
         /** keeps track of how many allowed connections there are and how many are being used*/
         static TicketHolder globalTicketHolder;
-
-        /** makes sure user input is sane */
-        static void checkTicketNumbers();
     };
 
     class ListeningSockets {

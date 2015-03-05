@@ -31,8 +31,6 @@
 
 #include <stdio.h>
 
-#ifndef _WIN32
-
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
@@ -41,8 +39,6 @@
 #ifdef __openbsd__
 # include <sys/uio.h>
 #endif
-
-#endif // not _WIN32
 
 #include <boost/scoped_ptr.hpp>
 #include <string>
@@ -67,26 +63,9 @@ namespace mongo {
 
     const int SOCK_FAMILY_UNKNOWN_ERROR=13078;
 
-    void disableNagle(int sock);
-
-#if defined(_WIN32)
-
-    typedef short sa_family_t;
-    typedef int socklen_t;
-
-    // This won't actually be used on windows
-    struct sockaddr_un {
-        short sun_family;
-        char sun_path[108]; // length from unix header
-    };
-
-#else // _WIN32
-
     inline void closesocket(int s) { close(s); }
     const int INVALID_SOCKET = -1;
     typedef int SOCKET;
-
-#endif // _WIN32
 
     std::string makeUnixSockPath(int port);
 
@@ -108,12 +87,12 @@ namespace mongo {
 
         template <typename T> T& as() { return *(T*)(&sa); }
         template <typename T> const T& as() const { return *(const T*)(&sa); }
-        
+
         std::string toString(bool includePort=true) const;
 
         bool isValid() const { return _isValid; }
 
-        /** 
+        /**
          * @return one of AF_INET, AF_INET6, or AF_UNIX
          */
         sa_family_t getType() const;
