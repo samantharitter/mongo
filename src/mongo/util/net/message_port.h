@@ -52,7 +52,7 @@ namespace mongo {
         virtual unsigned remotePort() const = 0;
         virtual SockAddr remoteAddr() const = 0;
         virtual SockAddr localAddr() const = 0;
-        
+
         void setX509SubjectName(const std::string& x509SubjectName) {
             _x509SubjectName = x509SubjectName;
         }
@@ -154,12 +154,12 @@ namespace mongo {
         }
 
     private:
-        
+
         PiggyBackData * piggyBackData;
 
         // this is the parsed version of remote
         // mutable because its initialized only on call to remote()
-        mutable HostAndPort _remoteParsed; 
+        mutable HostAndPort _remoteParsed;
 
     public:
         static void closeAllSockets(unsigned tagMask = 0xffffffff);

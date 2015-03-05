@@ -54,6 +54,9 @@
 #include "mongo/util/net/ssl_manager.h"
 #include "mongo/util/scopeguard.h"
 
+#include <sys/socket.h>
+#include <netinet/in.h>
+
 #ifdef __linux__  // TODO: consider making this ifndef _WIN32
 # include <sys/resource.h>
 #endif
@@ -103,64 +106,11 @@ namespace {
         }
 
         virtual void accepted(boost::shared_ptr<Socket> psocket, long long connectionId ) {
-            ScopeGuard sleepAfterClosingPort = MakeGuard(sleepmillis, 2);
             std::auto_ptr<MessagingPortWithHandler> portWithHandler(
                 new MessagingPortWithHandler(psocket, _handler, connectionId));
 
-            if ( ! Listener::globalTicketHolder.tryAcquire() ) {
-                log() << "connection refused because too many open connections: " << Listener::globalTicketHolder.used() << endl;
-                return;
-            }
-
-            try {
-#ifndef __linux__  // TODO: consider making this ifdef _WIN32
-                {
-                    boost::thread thr(stdx::bind(&handleIncomingMsg, portWithHandler.get()));
-                }
-#else
-                pthread_attr_t attrs;
-                pthread_attr_init(&attrs);
-                pthread_attr_setdetachstate(&attrs, PTHREAD_CREATE_DETACHED);
-
-                static const size_t STACK_SIZE = 1024*1024; // if we change this we need to update the warning
-
-                struct rlimit limits;
-                verify(getrlimit(RLIMIT_STACK, &limits) == 0);
-                if (limits.rlim_cur > STACK_SIZE) {
-                    size_t stackSizeToSet = STACK_SIZE;
-#if !__has_feature(address_sanitizer)
-                    if (DEBUG_BUILD)
-                        stackSizeToSet /= 2;
-#endif
-                    pthread_attr_setstacksize(&attrs, stackSizeToSet);
-                } else if (limits.rlim_cur < 1024*1024) {
-                    warning() << "Stack size set to " << (limits.rlim_cur/1024) << "KB. We suggest 1MB" << endl;
-                }
-
-
-                pthread_t thread;
-                int failed =
-                    pthread_create(&thread, &attrs, &handleIncomingMsg, portWithHandler.get());
-
-                pthread_attr_destroy(&attrs);
-
-                if (failed) {
-                    log() << "pthread_create failed: " << errnoWithDescription(failed) << endl;
-                    throw boost::thread_resource_error(); // for consistency with boost::thread
-                }
-#endif  // __linux__
-
-                portWithHandler.release();
-                sleepAfterClosingPort.Dismiss();
-            }
-            catch ( boost::thread_resource_error& ) {
-                Listener::globalTicketHolder.release();
-                log() << "can't create new thread, closing connection" << endl;
-            }
-            catch ( ... ) {
-                Listener::globalTicketHolder.release();
-                log() << "unknown error accepting new socket" << endl;
-            }
+            // send to handleIncomingMsg, which will never return.
+            handleIncomingMsg( portWithHandler.get() );
         }
 
         virtual void setAsTimeTracker() {
@@ -193,75 +143,24 @@ namespace {
          * @return NULL
          */
         static void* handleIncomingMsg(void* arg) {
-            TicketHolderReleaser connTicketReleaser( &Listener::globalTicketHolder );
+            struct sockaddr_in remote;
+            socklen_t addrlen = sizeof(remote);
+            unsigned char buf [100];
+            int recvlen;
 
             invariant(arg);
-            scoped_ptr<MessagingPortWithHandler> portWithHandler(
-                static_cast<MessagingPortWithHandler*>(arg));
-            MessageHandler* const handler = portWithHandler->getHandler();
 
-            setThreadName(std::string(str::stream() << "conn" << portWithHandler->connectionId()));
-            portWithHandler->psock->setLogLevel(logger::LogSeverity::Debug(1));
+            scoped_ptr<MessagingPortWithHandler> portWithHandler(static_cast<MessagingPortWithHandler*>(arg));
+            //MessageHandler* const handler = portWithHandler->getHandler();
 
-            Message m;
-            int64_t counter = 0;
-            try {
-                LastError * le = new LastError();
-                lastError.reset( le ); // lastError now has ownership
-
-                handler->connected(portWithHandler.get());
-
-                while ( ! inShutdown() ) {
-                    m.reset();
-                    portWithHandler->psock->clearCounters();
-
-                    if (!portWithHandler->recv(m)) {
-                        if (!serverGlobalParams.quiet) {
-                            int conns = Listener::globalTicketHolder.used()-1;
-                            const char* word = (conns == 1 ? " connection" : " connections");
-                            log() << "end connection " << portWithHandler->psock->remoteString()
-                                  << " (" << conns << word << " now open)" << endl;
-                        }
-                        portWithHandler->shutdown();
-                        break;
-                    }
-
-                    handler->process(m, portWithHandler.get(), le);
-                    networkCounter.hit(portWithHandler->psock->getBytesIn(),
-                                       portWithHandler->psock->getBytesOut());
-
-                    // Occasionally we want to see if we're using too much memory.
-                    if ((counter++ & 0xf) == 0) {
-                        markThreadIdle();
-                    }
+            for (;;) {
+                recvlen = recvfrom(portWithHandler->psock->rawFD(), buf, 100, 0,
+                                   (struct sockaddr *)&remote, &addrlen);
+                if (recvlen > 0) {
+                    buf[recvlen] = 0;
+                    std::cout << "SERVER: " << buf << std::endl;
                 }
             }
-            catch ( AssertionException& e ) {
-                log() << "AssertionException handling request, closing client connection: " << e << endl;
-                portWithHandler->shutdown();
-            }
-            catch ( SocketException& e ) {
-                log() << "SocketException handling request, closing client connection: " << e << endl;
-                portWithHandler->shutdown();
-            }
-            catch ( const DBException& e ) { // must be right above std::exception to avoid catching subclasses
-                log() << "DBException handling request, closing client connection: " << e << endl;
-                portWithHandler->shutdown();
-            }
-            catch ( std::exception &e ) {
-                error() << "Uncaught std::exception: " << e.what() << ", terminating" << endl;
-                dbexit( EXIT_UNCAUGHT );
-            }
-
-            // Normal disconnect path.
-#ifdef MONGO_SSL
-            SSLManagerInterface* manager = getSSLManager();
-            if (manager)
-                manager->cleanupThreadLocals();
-#endif
-            handler->disconnected(portWithHandler.get());
-
-            return NULL;
         }
     };
 

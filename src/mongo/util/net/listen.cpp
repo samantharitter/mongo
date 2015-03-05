@@ -158,14 +158,8 @@ namespace mongo {
     }
 
     void Listener::initAndListen() {
-        struct sockaddr_in remote;
-        socklen_t addrlen = sizeof(remote);
-        unsigned char buf [100];
-        int recvlen;
 
         std::cout << "entering initAndListen..." << std::endl;
-
-        // what we really want to do here is just open one socket and listen on it
 
         if (!_setupSocketsSuccessful) {
             std::cout << "didn't set up sockets successfully, exiting" << std::endl;
@@ -181,18 +175,16 @@ namespace mongo {
             _readyCondition.notify_all();
         }
 
-        std::cout << "entering listening loop..." << std::endl;
-        while ( ! inShutdown() ) {
-            recvlen = recvfrom(_sock, buf, 100, 0, (struct sockaddr *)&remote, &addrlen);
-            if (recvlen > 0) {
-                buf[recvlen] = 0;
-                std::cout << "SERVER: " << buf << std::endl;
-            }
-        }
+        std::cout << "moving on to accepted()" << std::endl;
+
+        boost::shared_ptr<Socket> pnewSock( new Socket(_sock, _addr) );
+
+        long long myConnectionNumber = globalConnectionNumber.addAndFetch(1);
+        accepted( pnewSock, myConnectionNumber );
     }
 
     void Listener::_logListen( int port , bool ssl ) {
-        log() << _name << ( _name.size() ? " " : "" ) << "waiting for packets on port " << port << ( ssl ? " ssl" : "" ) << endl;
+        log() << _name << ( _name.size() ? " " : "" ) << "waiting for connections on port " << port << ( ssl ? " ssl" : "" ) << endl;
     }
 
     void Listener::waitUntilListening() const {
@@ -219,11 +211,6 @@ namespace mongo {
     ListeningSockets* ListeningSockets::get() {
         return _instance;
     }
-
-    // ------ connection ticket and control ------
-
-    TicketHolder Listener::globalTicketHolder(DEFAULT_MAX_CONN);
-    AtomicInt64 Listener::globalConnectionNumber;
 
     void ListeningSockets::closeAll() {
         std::set<int>* sockets;
@@ -252,4 +239,6 @@ namespace mongo {
         delete paths;
     }
 
+    TicketHolder Listener::globalTicketHolder(DEFAULT_MAX_CONN);
+    AtomicInt64 Listener::globalConnectionNumber;
 }
