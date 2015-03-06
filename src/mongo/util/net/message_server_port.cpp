@@ -145,20 +145,83 @@ namespace {
         static void* handleIncomingMsg(void* arg) {
             struct sockaddr_in remote;
             socklen_t addrlen = sizeof(remote);
-            unsigned char buf [100];
+            int MAX_PACKET_LEN = 65507;
+            unsigned char buf [MAX_PACKET_LEN];
             int recvlen;
 
             invariant(arg);
 
             scoped_ptr<MessagingPortWithHandler> portWithHandler(static_cast<MessagingPortWithHandler*>(arg));
-            //MessageHandler* const handler = portWithHandler->getHandler();
+            MessageHandler* const handler = portWithHandler->getHandler();
 
             for (;;) {
-                recvlen = recvfrom(portWithHandler->psock->rawFD(), buf, 100, 0,
+                recvlen = recvfrom(portWithHandler->psock->rawFD(), buf, MAX_PACKET_LEN, 0,
                                    (struct sockaddr *)&remote, &addrlen);
                 if (recvlen > 0) {
+                    Message m;
+
                     buf[recvlen] = 0;
-                    std::cout << "SERVER: " << buf << std::endl;
+                    std::cout << "SERVER: received " << recvlen << " bytes:"  << buf << std::endl;
+
+                    // assumption: the packet we've just received is
+                    // a whole wire protocol message.
+                    try {
+                        // parse out the MSGHEADER
+                        MSGHEADER::Value header;
+                        int headerLen = sizeof(MSGHEADER::Value);
+                        invariant (headerLen < recvlen);
+                        memcpy(&header, &buf, headerLen);
+                        int len = header.constView().getMessageLength();
+
+                        if (len != recvlen) {
+                            std::cout << "bytes received (" << recvlen << ") and len (" << len << ") disagree" << std::endl;
+                            continue;
+                        }
+
+                        std::cout << "parsed the header" << std::endl;
+
+                        // sketchy memory allocation??
+                        int z = (len+1023)&0xfffffc00;
+                        verify(z>=len);
+                        MsgData::View md = reinterpret_cast<char *>(mongoMalloc(z));
+                        ScopeGuard guard = MakeGuard(free, md.view2ptr());
+                        verify(md.view2ptr());
+
+                        // copy things into the MsgData::View
+                        memcpy(md.view2ptr(), &header, headerLen);
+                        memcpy(md.data(), buf + headerLen, len - headerLen);
+
+                        std::cout << "memcopied the data in" << std::endl;
+
+                        guard.Dismiss();
+                        m.setData(md.view2ptr(), true);
+
+                        std::cout << "set the data" << std::endl;
+
+
+                        // send to process
+                        LastError * le = new LastError();
+                        lastError.reset( le ); // lastError now has ownership
+
+                        std::cout << "sending to process()" << std::endl;
+                        handler->process(m, portWithHandler.get(), le);
+                    }
+                    catch ( std::exception &e ) {
+                        error() << "Uncaught std::exception: " << e.what() << endl;
+                        //dbexit( EXIT_UNCAUGHT ); eh, just keep going :D
+                    }
+
+                    // FUTURE:
+                    // - parse out datagram header
+                    // - if this is the first message:
+                    //   - parse out MSGHEADER
+                    //   - make a new message container for this
+                    // - else:
+                    //   - if there is no container for this packet, ditch it
+                    //   - if there is, and this is the next part, append
+                    //   - if there is, and this is not the next part, ??
+                    // - if this is the last message:
+                    //   - complete it and send to assembleResponse
                 }
             }
         }

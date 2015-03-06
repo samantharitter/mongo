@@ -207,7 +207,7 @@ again:
                     uasserted(17133,
                               "SSL handshake requested, SSL feature not available in this build");
                 }
-#else                    
+#else
                 if (header.constView().getResponseTo() != 0
                  && header.constView().getResponseTo() != -1) {
                     uassert(17132,
