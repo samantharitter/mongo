@@ -458,7 +458,8 @@ namespace {
         }
 
         CurOp& currentOp = *CurOp::get(c);
-        currentOp.reset(remote,op);
+        //currentOp.reset(remote,op); // ditch remote
+        currentOp.reset(op);
 
         OpDebug& debug = currentOp.debug();
         debug.op = op;
@@ -474,7 +475,7 @@ namespace {
             responseComponent = LogComponent::kCommand;
         }
 
-        bool shouldLog = logger::globalLogDomain()->shouldLog(responseComponent, 
+        bool shouldLog = logger::globalLogDomain()->shouldLog(responseComponent,
                                                               logger::LogSeverity::Debug(1));
 
         if ( op == dbQuery ) {
@@ -523,7 +524,7 @@ namespace {
                     shouldLog = true;
                 }
                 else {
-                    if (remote != DBDirectClient::dummyHost) {
+                    /*if (remote != DBDirectClient::dummyHost) {
                         const ShardedConnectionInfo* connInfo = ShardedConnectionInfo::get(false);
                         uassert(18663,
                                 str::stream() << "legacy writeOps not longer supported for "
@@ -531,12 +532,9 @@ namespace {
                                               << ", op: " << opToString(op)
                                               << ", remote: " << remote.toString(),
                                 connInfo == NULL);
-                    }
+                                }*/
 
-                    if (!nsString.isValid()) {
-                        uassert(16257, str::stream() << "Invalid ns [" << ns << "]", false);
-                    }
-                    else if (op == dbInsert) {
+                    if (op == dbInsert) {
                         receivedInsert(txn, nsString, m, currentOp);
                     }
                     else if (op == dbUpdate) {
@@ -597,6 +595,156 @@ namespace {
         debug.recordStats();
         debug.reset();
     }
+
+    // Returns false when request includes 'end'
+    void pocAssembleResponse( OperationContext* txn,
+                              Message& m,
+                              DbResponse& dbresponse) {
+        // before we lock...
+        int op = m.operation();
+        bool isCommand = false;
+
+        DbMessage dbmsg(m);
+
+        Client& c = *txn->getClient();
+        if (!txn->getClient()->isInDirectClient()) {
+            c.getAuthorizationSession()->startRequest(txn);
+
+            // We should not be holding any locks at this point
+            invariant(!txn->lockState()->isLocked());
+        }
+
+        const char* ns = dbmsg.messageShouldHaveNs() ? dbmsg.getns() : NULL;
+        const NamespaceString nsString = ns ? NamespaceString(ns) : NamespaceString();
+
+        if ( op == dbQuery ) {
+            if (nsString.isCommand()) {
+                isCommand = true;
+                opwrite(m);
+            }
+            else if (nsString.isSpecialCommand()) {
+                opwrite(m);
+
+                if (nsString.coll() == "$cmd.sys.inprog") {
+                    inProgCmd(txn, nsString, m, dbresponse);
+                    return;
+                }
+                if (nsString.coll() == "$cmd.sys.killop") {
+                    killOp(txn, m, dbresponse);
+                    return;
+                }
+                if (nsString.coll() == "$cmd.sys.unlock") {
+                    receivedPseudoCommand(txn, nsString, c, dbresponse, m, "fsyncUnlock");
+                    return;
+                }
+            }
+            else {
+                opread(m);
+            }
+        }
+        else if( op == dbGetMore ) {
+            opread(m);
+        }
+        else {
+            opwrite(m);
+        }
+
+        // Increment op counters.
+        switch (op) {
+        case dbQuery:
+            if (!isCommand) {
+                globalOpCounters.gotQuery();
+            }
+            else {
+                // Command counting is deferred, since it is not known yet whether the command
+                // needs counting.
+            }
+            break;
+        case dbGetMore:
+            globalOpCounters.gotGetMore();
+            break;
+        case dbInsert:
+            // Insert counting is deferred, since it is not known yet whether the insert contains
+            // multiple documents (each of which needs to be counted).
+            break;
+        case dbUpdate:
+            globalOpCounters.gotUpdate();
+            break;
+        case dbDelete:
+            globalOpCounters.gotDelete();
+            break;
+        }
+
+        scoped_ptr<CurOp> nestedOp;
+        CurOp* currentOpP = c.curop();
+        if ( currentOpP->active() ) {
+            nestedOp.reset( new CurOp( &c , currentOpP ) );
+            currentOpP = nestedOp.get();
+        }
+
+        CurOp& currentOp = *currentOpP;
+        currentOp.reset(op);
+
+        OpDebug& debug = currentOp.debug();
+        debug.op = op;
+
+        if ( op == dbQuery ) {
+            if (isCommand) {
+                receivedCommand(txn, nsString, c, dbresponse, m);
+            }
+            else {
+                receivedQuery(txn, nsString, c, dbresponse, m);
+            }
+        }
+        else if ( op == dbGetMore ) {
+            // nothing
+        }
+        else {
+            try {
+                // The following operations all require authorization.
+                // dbInsert, dbUpdate and dbDelete can be easily pre-authorized,
+                // here, but dbKillCursors cannot.
+                if ( op == dbKillCursors ) {
+                    currentOp.ensureStarted();
+                    receivedKillCursors(txn, m);
+                }
+                else if (op != dbInsert && op != dbUpdate && op != dbDelete) {
+                    currentOp.done();
+                }
+                else {
+                    if (!nsString.isValid()) {
+                        uassert(16257, str::stream() << "Invalid ns [" << ns << "]", false);
+                    }
+                    else if (op == dbInsert) {
+                        receivedInsert(txn, nsString, m, currentOp);
+                    }
+                    else if (op == dbUpdate) {
+                        receivedUpdate(txn, nsString, m, currentOp);
+                    }
+                    else if (op == dbDelete) {
+                        receivedDelete(txn, nsString, m, currentOp);
+                    }
+                    else {
+                        invariant(false);
+                    }
+                }
+             }
+            catch (const UserException& ue) {
+                setLastError(ue.getCode(), ue.getInfo().msg.c_str());
+                debug.exceptionInfo = ue.getInfo();
+            }
+            catch (const AssertionException& e) {
+                setLastError(e.getCode(), e.getInfo().msg.c_str());
+                debug.exceptionInfo = e.getInfo();
+            }
+        }
+        currentOp.ensureStarted();
+        currentOp.done();
+        debug.executionTime = currentOp.totalTimeMillis();
+        debug.recordStats();
+        debug.reset();
+    }
+
 
     void receivedKillCursors(OperationContext* txn, Message& m) {
         DbMessage dbmessage(m);

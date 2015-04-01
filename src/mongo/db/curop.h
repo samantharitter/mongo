@@ -206,6 +206,7 @@ namespace mongo {
         
         void enter(const char* ns, int dbProfileLevel);
         void reset();
+        void reset( int op );
         void reset( const HostAndPort& remote, int op );
         void markCommand() { _isCommand = true; }
         OpDebug& debug()           { return _debug; }
@@ -283,6 +284,8 @@ namespace mongo {
 
         void setQuery(const BSONObj& query) { _query.set( query ); }
 
+        Client * getClient() const { return _client; }
+
         Command * getCommand() const { return _command; }
         void setCommand(Command* command) { _command = command; }
 
@@ -292,6 +295,9 @@ namespace mongo {
         BSONObj description();
 
         std::string getRemoteString( bool includePort = true ) {
+            if (_remote.empty()) {
+               return "";
+            }
             if (includePort)
                 return _remote.toString();
             return _remote.host();
@@ -303,13 +309,15 @@ namespace mongo {
                                   int secondsBetween = 3);
         std::string getMessage() const { return _message.toString(); }
         ProgressMeter& getProgressMeter() { return _progressMeter; }
+
         CurOp *parent() const { return _parent; }
-        void kill(); 
+        void kill();
+
         bool killPendingStrict() const { return _killPending.load(); }
         bool killPending() const { return _killPending.loadRelaxed(); }
         void yielded() { _numYields++; }
         int numYields() const { return _numYields; }
-        
+
         long long getExpectedLatencyMs() const { return _expectedLatencyMs; }
         void setExpectedLatencyMs( long long latency ) { _expectedLatencyMs = latency; }
 
@@ -350,11 +358,11 @@ namespace mongo {
         ProgressMeter _progressMeter;
         AtomicInt32 _killPending;
         int _numYields;
-        
+
         // this is how much "extra" time a query might take
-        // a writebacklisten for example will block for 30s 
+        // a writebacklisten for example will block for 30s
         // so this should be 30000 in that case
-        long long _expectedLatencyMs; 
+        long long _expectedLatencyMs;
 
         // Time limit for this operation.  0 if the operation has no time limit.
         uint64_t _maxTimeMicros;
