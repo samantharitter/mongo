@@ -171,6 +171,7 @@ namespace mongo {
                 lastError.startRequest( m , le );
 
                 DbResponse dbresponse;
+                //assembleResponse(&txn, m, dbresponse);
                 assembleResponse(&txn, m, dbresponse, port->remote());
 
                 if ( dbresponse.response ) {

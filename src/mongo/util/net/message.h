@@ -465,7 +465,7 @@ namespace mongo {
         }
 
         void send( MessagingPort &p, const char *context );
-        
+
         std::string toString() const;
 
     private:

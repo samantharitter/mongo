@@ -70,7 +70,11 @@ namespace mongo {
     void assembleResponse( OperationContext* txn,
                            Message& m,
                            DbResponse& dbresponse,
-                           const HostAndPort &client );
+                           const HostAndPort &client);
+
+    void pocAssembleResponse( OperationContext* txn,
+                              Message& m,
+                              DbResponse& dbresponse );
 
     void maybeCreatePidFile();
 

@@ -153,6 +153,11 @@ namespace mongo {
         _active = true; // this should be last for ui clarity
     }
 
+    void CurOp::reset( int op ) {
+        reset();
+        _op = op;
+    }
+
     void CurOp::reset( const HostAndPort& remote, int op ) {
         reset();
         if( _remote != remote ) {

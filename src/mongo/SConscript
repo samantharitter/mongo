@@ -854,6 +854,7 @@ serverOnlyFiles = [ "db/background.cpp",
                     "s/distlock_test.cpp",
                     "util/compress.cpp",
                     "util/logfile.cpp",
+                    "util/net/poc.cpp",
                 ]
 
 # This library exists because some libraries, such as our networking library, need access to server

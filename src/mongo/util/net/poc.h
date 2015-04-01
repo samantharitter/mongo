@@ -1,6 +1,4 @@
-// message_server.h
-
-/*    Copyright 2009 10gen Inc.
+/*    Copyright 2015 MongoDB Inc.
  *
  *    This program is free software: you can redistribute it and/or  modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -27,55 +25,28 @@
  *    then also delete it in the license file.
  */
 
-/*
-  abstract database server
-  async io core, worker thread system
- */
-
-#pragma once
-
-#include "mongo/platform/basic.h"
+#include "mongo/util/net/message.h"
+#include "mongo/util/net/message_port.h"
+#include "mongo/util/net/message_server.h"
 
 namespace mongo {
 
-    struct LastError;
+   class PocMessageHandler : public MessageHandler {
+   public:
+      void connected(AbstractMessagingPort* p) {}
+      void disconnected(AbstractMessagingPort* p) {}
 
-    class MessageHandler {
-    public:
-        virtual ~MessageHandler() {}
+      void process(Message& m, AbstractMessagingPort* port, LastError* le);
+   };
 
-        /**
-         * called once when a socket is connected
-         */
-        virtual void connected( AbstractMessagingPort* p ) = 0;
+   class PocServer {
+   public:
+      PocServer(int n);
 
-        /**
-         * called every time a message comes in
-         * handler is responsible for responding to client
-         */
-        virtual void process( Message& m , AbstractMessagingPort* p , LastError * err ) = 0;
+      void run(mongo::MessageHandler* messageHandler);
 
-        /**
-         * called once when a socket is disconnected
-         */
-        virtual void disconnected( AbstractMessagingPort* p ) = 0;
-    };
+   private:
+      int _n;
+   };
 
-    class MessageServer {
-    public:
-        struct Options {
-            int port;                   // port to bind to
-            std::string ipList;             // addresses to bind to
-
-            Options() : port(0), ipList("") {}
-        };
-
-        virtual ~MessageServer() {}
-        virtual void run() = 0;
-        virtual void setAsTimeTracker() = 0;
-        virtual void setupSockets() = 0;
-    };
-
-    // TODO use a factory here to decide between port and asio variations
-    MessageServer * createServer( const MessageServer::Options& opts , MessageHandler * handler );
-}
+} // namespace mongo
