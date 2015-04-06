@@ -72,6 +72,9 @@ namespace mongo {
     }
 
     Status runGlobalInitializers(int argc, const char* const* argv, const char* const* envp) {
+        std::cout << "runGlobalInitializers()\n";
+        std::cout << "argc: " << argc << ", argv: " << argv << ", envp: " << envp << "\n";
+
         InitializerContext::ArgumentVector args(argc);
         std::copy(argv, argv + argc, args.begin());
 
@@ -91,6 +94,7 @@ namespace mongo {
     }
 
     void runGlobalInitializersOrDie(int argc, const char* const* argv, const char* const* envp) {
+        std::cout << "runGlobalInitializersOrDie()\n";
         Status status = runGlobalInitializers(argc, argv, envp);
         if (!status.isOK()) {
             std::cerr << "Failed global initialization: " << status << std::endl;

@@ -598,6 +598,7 @@ coredbEnv.Library("coredb", [
         "db/pipeline/document_source_unwind.cpp",
         "db/pipeline/expression.cpp",
         "db/stats/timer_stats.cpp",
+#        "util/net/poc.cpp"
         ],
                   LIBDEPS=['db/auth/serverauth',
                            'db/commands/server_status_core',
@@ -854,7 +855,6 @@ serverOnlyFiles = [ "db/background.cpp",
                     "s/distlock_test.cpp",
                     "util/compress.cpp",
                     "util/logfile.cpp",
-                    "util/net/poc.cpp",
                 ]
 
 # This library exists because some libraries, such as our networking library, need access to server
@@ -1064,9 +1064,9 @@ env.CppUnitTest('range_deleter_test',
                     'range_deleter',
                 ])
 
-env.Library(
-    "db_shared",
-    [ "db/db_shared.cpp" ],
+env.Library("db_shared",
+    [ "db/db_shared.cpp",
+      "util/net/poc.cpp" ],
     LIBDEPS=[
         "coredb",
         "coreserver",
@@ -1084,7 +1084,6 @@ serveronlyLibdeps = ["coreshard",
                      "db/auth/authmongod",
                      "db/fts/ftsmongod",
                      "db/common",
-                     "db/db_shared",
                      "db/concurrency/lock_manager",
                      "db/concurrency/write_conflict_exception",
                      "db/ops/update_driver",
