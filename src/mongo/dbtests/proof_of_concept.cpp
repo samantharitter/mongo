@@ -37,12 +37,21 @@ namespace PocTest {
     class NetworkingProofOfConcept {
     public:
         void run() {
-            boost::scoped_ptr<PocServer> server(new PocServer(10000));
+            boost::scoped_ptr<PocServer> server(new PocServer(10000, 1));
             PocMessageHandler handler{};
 
             server->run(static_cast<MessageHandler *>(&handler));
         }
     };
+    /*
+    class PocControl {
+    public:
+        void run() {
+            // for the same loop,
+            // create messages in the exact same way
+            // serialize and send through the listener instead of calling process()
+        }
+        };*/
 
     class All : public Suite {
     public:

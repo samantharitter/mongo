@@ -106,6 +106,7 @@
 #include "mongo/util/exit.h"
 #include "mongo/util/log.h"
 #include "mongo/util/net/message_server.h"
+#include "mongo/util/net/port_message_server.h"
 #include "mongo/util/net/ssl_manager.h"
 #include "mongo/util/ntservice.h"
 #include "mongo/util/options_parser/startup_options.h"
@@ -141,6 +142,7 @@ namespace mongo {
     void (*snmpInit)() = NULL;
 
     extern int diagLogging;
+    extern PortMessageServer* centralServer;
 
 #ifdef _WIN32
     ntservice::NtServiceDefaultStrings defaultServiceStrings = {
@@ -414,8 +416,9 @@ namespace mongo {
         MessageServer::Options options;
         options.port = listenPort;
         options.ipList = serverGlobalParams.bind_ip;
-
-        MessageServer* server = createServer(options, new MyMessageHandler());
+        std::cout << "creating the main server\n";
+        PortMessageServer* server = createPortMessageServer(options, new MyMessageHandler());
+        centralServer = server;
         server->setAsTimeTracker();
 
         // This is what actually creates the sockets, but does not yet listen on them because we
