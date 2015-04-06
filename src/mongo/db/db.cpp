@@ -289,7 +289,7 @@ namespace mongoecho {
 // KEEP THIS HERE
 static int mongoDbMain(int argc, char* argv[], char **envp) {
     static StaticObserver staticObserver;
-
+    std::cout << "mongoDbMain()\n";
     setupSignalHandlers(false);
 
     dbExecCommand = argv[0];
@@ -306,6 +306,7 @@ static int mongoDbMain(int argc, char* argv[], char **envp) {
     }
 
     Status status = mongo::runGlobalInitializers(argc, argv, envp);
+
     if (!status.isOK()) {
         severe(LogComponent::kControl) << "Failed global initialization: " << status;
         quickExit(EXIT_FAILURE);
