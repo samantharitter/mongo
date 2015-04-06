@@ -34,14 +34,13 @@
 #include "mongo/db/curop.h"
 #include "mongo/db/catalog/database_holder.h"
 #include "mongo/util/net/message.h"
-#include "mongo/util/net/port_message_server.h"
 
 namespace mongo {
 
-   namespace repl {
-      class ReplSettings;
-   } // namespace repl
+namespace repl {
+    class ReplSettings;
+} // namespace repl
 
-   extern void (*snmpInit)();
+    extern void (*snmpInit)();
 
 } // namespace mongo

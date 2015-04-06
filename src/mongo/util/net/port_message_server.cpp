@@ -39,6 +39,7 @@
 #include <memory>
 
 #include "mongo/base/disallow_copying.h"
+#include "mongo/db/db_shared.h"
 #include "mongo/db/lasterror.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/stats/counters.h"
@@ -192,6 +193,9 @@ namespace {
     void* PortMessageServer::handleIncomingMsg(void* arg) {
         TicketHolderReleaser connTicketReleaser( &Listener::globalTicketHolder );
 
+        int done = 0;
+        std::cout << "in handleIncomingMsg()\n";
+
         invariant(arg);
         scoped_ptr<MessagingPortWithHandler> portWithHandler(
                                                              static_cast<MessagingPortWithHandler*>(arg));
@@ -213,6 +217,7 @@ namespace {
                 portWithHandler->psock->clearCounters();
 
                 if (!portWithHandler->recv(m)) {
+                    std::cout << "nothing to receive\n";
                     if (!serverGlobalParams.quiet) {
                         int conns = Listener::globalTicketHolder.used()-1;
                         const char* word = (conns == 1 ? " connection" : " connections");
@@ -224,12 +229,20 @@ namespace {
                 }
 
                 handler->process(m, portWithHandler.get(), le);
+                done++;
                 networkCounter.hit(portWithHandler->psock->getBytesIn(),
                                        portWithHandler->psock->getBytesOut());
 
                 // Occasionally we want to see if we're using too much memory.
                 if ((counter++ & 0xf) == 0) {
                     markThreadIdle();
+                }
+
+                //std::cout << "done processing one message\n";
+                // here is where we'd flip a switch
+                doneProcessing = true;
+                if (done == 1000) {
+                    doneProcessingAll = true;
                 }
             }
         }

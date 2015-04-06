@@ -38,8 +38,14 @@
 
 namespace mongo {
 
-   extern PortMessageServer* centralServer; // NET: does this need to go here?
+   extern PortMessageServer* centralServer;
+   extern Socket* listeningSocket;
 
-   ExitCode initAndListen(int listenPort);
+   extern bool serverSet;
+   extern bool socketSet;
+   extern bool doneProcessing;
+   extern bool doneProcessingAll;
+
+   ExitCode initAndListenShared(int listenPort);
 
 } // namespace mongo

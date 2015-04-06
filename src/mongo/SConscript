@@ -1068,14 +1068,15 @@ env.Library("db_shared",
     [ "db/db_shared.cpp",
       "util/net/poc.cpp" ],
     LIBDEPS=[
-        "coredb",
-        "coreserver",
-        "mongodandmongos",
-        "mongodwebserver",
-        "ntservice",
-        "serveronly",
-        "mongod_options",
         "$BUILD_DIR/third_party/shim_asio",
+         "message_server_port",
+  #      "coredb",
+ #       "coreserver",
+#        "mongodandmongos",
+#        "mongodwebserver",
+#        "ntservice",
+#        "serveronly",
+#        "mongod_options",
     ])
 
 serveronlyEnv = env.Clone()
@@ -1194,13 +1195,13 @@ mongod = env.Install(
         mongodOnlyFiles,
         LIBDEPS=[
             "db_shared",
-#            "coredb",
-#            "coreserver",
-#            "mongodandmongos",
-#            "mongodwebserver",
-#            "ntservice",
-#            "serveronly",
-#            "mongod_options",
+            "coredb",
+            "coreserver",
+            "mongodandmongos",
+            "mongodwebserver",
+            "ntservice",
+            "serveronly",
+            "mongod_options",
         ]))
 Default( mongod )
 

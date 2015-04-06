@@ -28,6 +28,7 @@
 *    it in the license file.
 */
 
+
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kStorage
 
 #include "mongo/config.h"
@@ -60,7 +61,6 @@
 #include "mongo/db/concurrency/d_concurrency.h"
 #include "mongo/db/db.h"
 #include "mongo/db/db_raii.h"
-#include "mongo/db/db_shared.h"
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/dbmessage.h"
 #include "mongo/db/dbwebserver.h"
@@ -123,6 +123,9 @@
 
 # include <sys/file.h>
 
+//#include "mongo/util/exit.h"
+//#include "mongo/util/exit_code.h"
+
 namespace mongo {
 
     using std::auto_ptr;
@@ -136,15 +139,20 @@ namespace mongo {
 
     using logger::LogComponent;
 
-    void (*snmpInit)() = NULL;
+    void (*snmpInitShared)() = NULL;
 
     extern int diagLogging;
-    extern PortMessageServer* centralServer;
 
-    Timer startupSrandTimer;
+    Timer startupSrandTimerShared;
 
     QueryResult::View emptyMoreResult(long long);
 
+    PortMessageServer *centralServer = NULL;
+    bool serverSet = false;
+    bool doneProcessing = false;
+    bool doneProcessingAll = false;
+
+    // TODO: put this somewhere else, in its own file.
     class MyMessageHandler : public MessageHandler {
     public:
         virtual void connected( AbstractMessagingPort* p ) {
@@ -241,7 +249,7 @@ namespace mongo {
         wunit.commit();
     }
 
-    static void checkForIdIndexes(OperationContext* txn, Database* db) {
+    static void checkForIdIndexesShared(OperationContext* txn, Database* db) {
         if ( db->name() == "local") {
             // we do not need an _id index on anything in the local database
             return;
@@ -274,6 +282,7 @@ namespace mongo {
         }
     }
 
+
     /**
      * Checks if this server was started without --replset but has a config in local.system.replset
      * (meaning that this is probably a replica set member started in stand-alone mode).
@@ -281,7 +290,7 @@ namespace mongo {
      * @returns the number of documents in local.system.replset or 0 if this was started with
      *          --replset.
      */
-    static unsigned long long checkIfReplMissingFromCommandLine(OperationContext* txn) {
+    static unsigned long long checkIfReplMissingFromCommandLineShared(OperationContext* txn) {
         // This is helpful for the query below to work as you can't open files when readlocked
         ScopedTransaction transaction(txn, MODE_X);
         Lock::GlobalWrite lk(txn->lockState());
@@ -292,7 +301,7 @@ namespace mongo {
         return 0;
     }
 
-    static void repairDatabasesAndCheckVersion() {
+    static void repairDatabasesAndCheckVersionShared() {
         LOG(1) << "enter repairDatabases (to check pdfile version #)" << endl;
 
         OperationContextImpl txn;
@@ -310,7 +319,7 @@ namespace mongo {
                 const string dbName = *i;
                 LOG(1) << "    Repairing database: " << dbName << endl;
 
-                fassert(18506, repairDatabase(&txn, storageEngine, dbName));
+                // NET GET FASSERT
             }
         }
 
@@ -321,7 +330,7 @@ namespace mongo {
         // promotion to primary. On pure slaves, they are only cleared when the oplog tells them
         // to. The local DB is special because it is not replicated.  See SERVER-10927 for more
         // details.
-        const bool shouldClearNonLocalTmpCollections = !(checkIfReplMissingFromCommandLine(&txn)
+        const bool shouldClearNonLocalTmpCollections = !(checkIfReplMissingFromCommandLineShared(&txn)
                                                     || replSettings.usingReplSets()
                                                     || replSettings.slave == repl::SimpleSlave);
 
@@ -383,7 +392,7 @@ namespace mongo {
 
             if (replSettings.usingReplSets()) {
                 // We only care about the _id index if we are in a replset
-                checkForIdIndexes(&txn, db);
+                checkForIdIndexesShared(&txn, db);
             }
 
             if (shouldClearNonLocalTmpCollections || dbName == "local") {
@@ -394,7 +403,7 @@ namespace mongo {
         LOG(1) << "done repairDatabases" << endl;
     }
 
-    static void _initAndListen(int listenPort ) {
+    static void _initAndListenShared(int listenPort ) {
         Client::initThread("initandlisten");
 
         // Due to SERVER-15389, we must setupSockets first thing at startup in order to avoid
@@ -402,15 +411,20 @@ namespace mongo {
         MessageServer::Options options;
         options.port = listenPort;
         options.ipList = serverGlobalParams.bind_ip;
-        std::cout << "creating the main server\n";
+
         PortMessageServer* server = createPortMessageServer(options, new MyMessageHandler());
-        centralServer = server;
         server->setAsTimeTracker();
+
+        std::cout << "setting centralServer in _initAndListenShared\n";
+        centralServer = server;
+        serverSet = true;
+        std::cout << "centralServer is now " << centralServer << "\n";
+        //listeningSocket = NULL;
 
         // This is what actually creates the sockets, but does not yet listen on them because we
         // do not want connections to just hang if recovery takes a very long time.
         server->setupSockets();
-
+        /*
         boost::shared_ptr<DbWebServer> dbWebServer;
         if (serverGlobalParams.isHttpInterfaceEnabled) {
             dbWebServer.reset(new DbWebServer(serverGlobalParams.bind_ip,
@@ -418,7 +432,7 @@ namespace mongo {
                                               new RestAdminAccess()));
             dbWebServer->setupSockets();
         }
-
+        */
         // Warn if we detect configurations for multiple registered storage engines in
         // the same configuration file/environment.
         if (serverGlobalParams.parsedOpts.hasField("storage")) {
@@ -442,8 +456,8 @@ namespace mongo {
                 }
             }
         }
-
-        getGlobalEnvironment()->setGlobalStorageEngine(storageGlobalParams.engine);
+        // NET:
+        //getGlobalEnvironment()->setGlobalStorageEngine(storageGlobalParams.engine);
         getGlobalEnvironment()->setOpObserver(stdx::make_unique<OpObserver>());
 
         const repl::ReplSettings& replSettings =
@@ -465,6 +479,10 @@ namespace mongo {
         DEV log(LogComponent::kControl) << "DEBUG build (which is slower)" << endl;
         logMongodStartupWarnings(storageGlobalParams);
 
+#if defined(_WIN32)
+        printTargetMinOS();
+#endif
+
         logProcessDetails();
 
         {
@@ -475,21 +493,19 @@ namespace mongo {
             ss << " Create this directory or give existing directory in --dbpath." << endl;
             ss << " See http://dochub.mongodb.org/core/startingandstoppingmongo" << endl;
             ss << "*********************************************************************" << endl;
-            uassert(10296,  ss.str().c_str(), boost::filesystem::exists(storageGlobalParams.dbpath));
+            // NET GET UASSERT
         }
 
         {
             stringstream ss;
             ss << "repairpath (" << storageGlobalParams.repairpath << ") does not exist";
-            uassert(12590, 
-                    ss.str().c_str(),
-                    boost::filesystem::exists(storageGlobalParams.repairpath));
+            // NET GET UASSERT
         }
 
         // TODO:  This should go into a MONGO_INITIALIZER once we have figured out the correct
         // dependencies.
-        if (snmpInit) {
-            snmpInit();
+        if (snmpInitShared) {
+            snmpInitShared();
         }
 
         boost::filesystem::remove_all(storageGlobalParams.dbpath + "/_tmp/");
@@ -497,11 +513,11 @@ namespace mongo {
         if (mmapv1GlobalOptions.journalOptions & MMAPV1Options::JournalRecoverOnly)
             return;
 
-        if (mongodGlobalParams.scriptingEnabled) {
-            ScriptEngine::setup();
-        }
+        //        if (mongodGlobalParams.scriptingEnabled) {
+        //  ScriptEngine::setup();
+        //        }
 
-        repairDatabasesAndCheckVersion();
+        repairDatabasesAndCheckVersionShared();
 
         if (storageGlobalParams.upgrade) {
             log() << "finished checking dbs" << endl;
@@ -515,22 +531,24 @@ namespace mongo {
         }
 
         /* this is for security on certain platforms (nonce generation) */
-        srand((unsigned) (curTimeMicros() ^ startupSrandTimer.micros()));
+        srand((unsigned) (curTimeMicros() ^ startupSrandTimerShared.micros()));
 
         // The snapshot thread provides historical collection level and lock statistics for use
         // by the web interface. Only needed when HTTP is enabled.
-        if (serverGlobalParams.isHttpInterfaceEnabled) {
+        /*        if (serverGlobalParams.isHttpInterfaceEnabled) {
             snapshotThread.go();
 
-            invariant(dbWebServer);
+            //            invariant(dbWebServer);
             boost::thread web(stdx::bind(&webServerListenThread, dbWebServer));
             web.detach();
-        }
+        }*/
 
         {
             OperationContextImpl txn;
 
-            mongo::signalForkSuccess();
+            //#ifndef _WIN32
+            //            mongo::signalForkSuccess();
+            //#endif
 
             Status status = authindex::verifySystemIndexes(&txn);
             if (!status.isOK()) {
@@ -566,7 +584,7 @@ namespace mongo {
 
             repl::getGlobalReplicationCoordinator()->startReplication(&txn);
 
-            const unsigned long long missingRepl = checkIfReplMissingFromCommandLine(&txn);
+            const unsigned long long missingRepl = checkIfReplMissingFromCommandLineShared(&txn);
             if (missingRepl) {
                 log() << startupWarningsLog;
                 log() << "** WARNING: mongod started without --replSet yet " << missingRepl
@@ -591,13 +609,18 @@ namespace mongo {
 
         logStartup();
 
+#if(TESTEXHAUST)
+        boost::thread thr(testExhaust);
+#endif
+
         // MessageServer::run will return when exit code closes its socket
         server->run();
     }
 
-    ExitCode initAndListen(int listenPort) {
+
+    ExitCode initAndListenShared(int listenPort) {
         try {
-            _initAndListen(listenPort);
+            _initAndListenShared(listenPort);
 
             return inShutdown() ? EXIT_CLEAN : EXIT_NET_ERROR;
         }
