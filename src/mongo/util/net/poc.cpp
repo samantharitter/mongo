@@ -33,6 +33,7 @@
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/client.h"
 #include "mongo/db/db.h"
+#include "mongo/db/db_shared.h"
 #include "mongo/db/instance.h"
 #include "mongo/db/operation_context_impl.h"
 #include "mongo/util/net/poc.h"
