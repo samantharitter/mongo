@@ -38,6 +38,7 @@
 #include <boost/shared_ptr.hpp>
 
 #include "mongo/config.h"
+#include "mongo/db/db_shared.h"
 #include "mongo/db/server_options.h"
 #include "mongo/base/owned_pointer_vector.h"
 #include "mongo/util/exit.h"
@@ -80,6 +81,9 @@ namespace mongo {
     using std::endl;
     using std::string;
     using std::vector;
+
+    Socket* listeningSocket;
+    bool socketSet;
 
     // ----- Listener -------
 
@@ -256,9 +260,10 @@ namespace mongo {
 
         struct timeval maxSelectTime;
         while ( ! inShutdown() ) {
+
             fd_set fds[1];
             FD_ZERO(fds);
-            
+
             for (vector<SOCKET>::iterator it=_socks.begin(), end=_socks.end(); it != end; ++it) {
                 FD_SET(*it, fds);
             }
@@ -346,6 +351,9 @@ namespace mongo {
                     pnewSock->secureAccepted(_ssl);
                 }
 #endif
+                std::cout << "setting global listening socket in listener.cpp\n";
+                listeningSocket = pnewSock.get();
+                socketSet = true;
                 accepted( pnewSock , myConnectionNumber );
             }
         }
@@ -440,6 +448,7 @@ namespace mongo {
         }
 
         while ( ! inShutdown() ) {
+
             // Turn on listening for accept-ready sockets
             for (size_t count = 0; count < _socks.size(); ++count) {
                 int status = WSAEventSelect(_socks[count], events[count], FD_ACCEPT | FD_CLOSE);
@@ -562,6 +571,7 @@ namespace mongo {
                 pnewSock->secureAccepted(_ssl);
             }
 #endif
+            listeningSocket = pnewSock.get();
             accepted( pnewSock , myConnectionNumber );
         }
     }

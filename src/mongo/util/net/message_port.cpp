@@ -175,6 +175,7 @@ namespace mongo {
     }
     
     bool MessagingPort::recv(Message& m) {
+        //std::cout << "inside MessagingPort::recv()\n";
         try {
 again:
             //mmm( log() << "*  recv() sock:" << this->sock << endl; )
@@ -241,7 +242,7 @@ again:
             int left = len - headerLen;
 
             psock->recv( md.data(), left );
-
+            //std::cout << "received data into the Message object\n";
             guard.Dismiss();
             m.setData(md.view2ptr(), true);
             return true;

@@ -39,35 +39,43 @@ namespace mongo {
 
     Status Initializer::execute(const InitializerContext::ArgumentVector& args,
                                 const InitializerContext::EnvironmentMap& env) const {
+        std::cout << "in execute()\n";
 
         std::vector<std::string> sortedNodes;
-        Status status = _graph.topSort(&sortedNodes);
-        if (Status::OK() != status)
-            return status;
 
+        Status status = _graph.topSort(&sortedNodes);
+        if (Status::OK() != status) {
+            std::cout << "top sort on this graph failed with status " << status << "\n";
+            return status;
+        }
+        std::cout << "status of graph top sort was ok\n";
         InitializerContext context(args, env);
 
-        for (size_t i = 0; i < sortedNodes.size(); ++i) {
-            InitializerFunction fn = _graph.getInitializerFunction(sortedNodes[i]);
-            if (!fn) {
-                return Status(ErrorCodes::InternalError,
-                              "topSort returned a node that has no associated function: \"" +
-                              sortedNodes[i] + '"');
-            }
-            try {
-                status = fn(&context);
-            } catch( const DBException& xcp ) {
-                return xcp.toStatus();
-            }
+         for (size_t i = 0; i < sortedNodes.size(); ++i) {
+             InitializerFunction fn = _graph.getInitializerFunction(sortedNodes[i]);
+             if (!fn) {
+                 return Status(ErrorCodes::InternalError,
+                               "topSort returned a node that has no associated function: \"" +
+                               sortedNodes[i] + '"');
+             }
+             try {
+                 status = fn(&context);
+             } catch( const DBException& xcp ) {
+                 std::cout << "caught a DBException\n";
+                 return xcp.toStatus();
+             }
 
-            if (Status::OK() != status)
-                return status;
-        }
-        return Status::OK();
-    }
+             if (Status::OK() != status) {
+                 std::cout << "status of this node was not ok\n";
+                 return status;
+             }
+         }
+         return Status::OK();
+     }
 
-    Status runGlobalInitializers(const InitializerContext::ArgumentVector& args,
-                                 const InitializerContext::EnvironmentMap& env) {
+     Status runGlobalInitializers(const InitializerContext::ArgumentVector& args,
+                                  const InitializerContext::EnvironmentMap& env) {
+         std::cout << "overloaded runGlobalInitializers()\n";
         return getGlobalInitializer().execute(args, env);
     }
 
@@ -79,7 +87,7 @@ namespace mongo {
         std::copy(argv, argv + argc, args.begin());
 
         InitializerContext::EnvironmentMap env;
-
+        std::cout << "here\n";
         if (envp) {
             for(; *envp; ++envp) {
                 const char* firstEqualSign = strchr(*envp, '=');

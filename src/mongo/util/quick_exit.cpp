@@ -60,6 +60,8 @@ namespace mongo {
         __lsan_do_leak_check();
 #endif
 
+        //exit(code);
+        // NET: fix this later.
         ::_exit(code);
     }
 

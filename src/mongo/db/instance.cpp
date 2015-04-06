@@ -93,6 +93,7 @@
 #include "mongo/util/mongoutils/str.h"
 #include "mongo/util/quick_exit.h"
 #include "mongo/util/time_support.h"
+#include "mongo/util/net/port_message_server.h"
 
 namespace mongo {
 
@@ -107,7 +108,7 @@ namespace mongo {
     using std::stringstream;
     using std::vector;
 
-    PortMessageServer* centralServer = NULL;
+    //PortMessageServer* centralServer = NULL;
 
     // for diaglog
     inline void opread(Message& m) {

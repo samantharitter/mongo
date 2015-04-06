@@ -115,44 +115,65 @@ namespace mongo {
 
     long long PocServer::benchmarkSocket() {
 
-        // make sure the db starts up
-        // this needs to go in another thread
-        boost::thread t(initAndListen, 27017);
+        doneProcessingAll = false;
 
-        PortMessageServer* server = centralServer;
-        std::cout << "1\n";
-        // connect to ourselves
-        const SockAddr addr("127.0.0.1", 27017);
-        const SockAddr from("127.0.0.1", 27017);
-        int sock = ::socket(addr.getType(), SOCK_STREAM, 0);
-        ::bind(sock, addr.raw(), addr.addressSize);
-        std::cout << "2\n";
-        boost::shared_ptr<Socket> pnewSock( new Socket(sock, from) );
-        verify(server);
-        server->accepted(pnewSock, 34012); // this forks, right?
-        std::cout << "2.75\n";
+        // start up the db
+        std::cout << "Calling initAndListenShared\n";
+        boost::thread t(initAndListenShared, 27017);
+
+        // make a tcp socket
+        int sock = socket(AF_INET, SOCK_STREAM, 0);
+        int success = false;
+        SockAddr addr("localhost", 50000);
+
+        std::cout << "Attempting to connect...\n";
+        while (!success) {
+            // connect it on an ephemeral port until it succeeds and connects to itself
+            int res = ::connect(sock, addr.raw(), addr.addressSize);
+            if (res >= 0) {
+                success = true;
+                std::cout << "Connection made!!\n";
+            } else {
+                //std::cout << "Failed to connect.\n";
+            }
+        }
+
+        // wrap it up in Socket class
+        boost::shared_ptr<Socket> psocket( new Socket(sock, addr) );
+        long long connectionId = 12345;
+
+        // pass this socket to listener
+        centralServer->accepted(psocket, connectionId);
+
         // make messages
+        std::cout << "socket accepted, making messages\n";
         Message* queue = new Message[_n];
         for (int i = 0; i < _n; i++) {
             fillMessage(&queue[i]);
         }
-        std::cout << "3\n";
-        boost::shared_ptr<MessagingPort> mp(new MessagingPort(sock, from));
-        auto start = stdx::chrono::high_resolution_clock::now();
-        for (int i = 0; i < _n; i++) {
+
+        boost::shared_ptr<MessagingPort> mp(new MessagingPort(sock, addr));
+
+        auto time_start = stdx::chrono::high_resolution_clock::now();
+        std::cout << "sending messages...\n";
+         for (int i = 0; i < _n; i++) {
             // send
+            doneProcessing = false;
             Message m = queue[i];
             m.send( *mp, "context" );
         }
-        std::cout << "4\n";
-        auto end = stdx::chrono::high_resolution_clock::now();
-        long long dur = stdx::chrono::duration_cast<stdx::chrono::milliseconds>(end - start).count();
+
+         while (!doneProcessingAll) {
+             sleep(1);
+         }
+
+        auto time_end = stdx::chrono::high_resolution_clock::now();
+        long long dur = stdx::chrono::duration_cast<stdx::chrono::milliseconds>(time_end - time_start).count();
         std::cout << _n << " same socket updates took " << dur << " milliseconds\n";
 
-        //delete [] queue;
-        std::cout << "5\n";
-
-        t.join();
+        delete [] queue;
+        // todo: force child thread to die
+        //t.join();
 
         return dur;
     }
@@ -163,22 +184,24 @@ namespace mongo {
      */
     void PocServer::run(MessageHandler* messageHandler) {
         long long x = 0;
+        long long y = 0;
+
         for (int i = 0; i < _count; i++) {
             x += benchmark(messageHandler);
+        }
+
+        for (int i = 0; i < _count; i++) {
+            y += benchmarkSocket();
         }
         std::cout << "\n\t\t\t--- Network-less updates ---\n";
         std::cout << "\t\t\tPerformed " << _count << " runs.\n";
         std::cout << "\t\t\tAverage time to run " << _n << " updates: "
                   << x/_count << " milliseconds\n\n";
 
-        x = 0;
-        for (int i = 0; i < _count; i++) {
-            x += benchmarkSocket();
-        }
         std::cout << "\n\t\t\t--- Same socket updates ---\n";
         std::cout << "\t\t\tPerformed " << _count << " runs.\n";
         std::cout << "\t\t\tAverage time to run " << _n << " updates: "
-                  << x/_count << " milliseconds\n\n";
+                  << y/_count << " milliseconds\n\n";
 
     }
 
