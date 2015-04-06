@@ -1034,12 +1034,27 @@ env.CppUnitTest('range_deleter_test',
                     'range_deleter',
                 ])
 
+env.Library(
+    "db_shared",
+    [ "db/db_shared.cpp" ],
+    LIBDEPS=[
+        "coredb",
+        "coreserver",
+        "mongodandmongos",
+        "mongodwebserver",
+        "ntservice",
+        "serveronly",
+        "mongod_options",
+        "$BUILD_DIR/third_party/shim_asio",
+    ])
+
 serveronlyEnv = env.Clone()
 serveronlyEnv.InjectThirdPartyIncludePaths(libraries=['snappy'])
 serveronlyLibdeps = ["coreshard",
                      "db/auth/authmongod",
                      "db/fts/ftsmongod",
                      "db/common",
+                     "db/db_shared",
                      "db/concurrency/lock_manager",
                      "db/concurrency/write_conflict_exception",
                      "db/ops/update_driver",
@@ -1083,7 +1098,10 @@ if wiredtiger:
 serveronlyEnv.Library("serveronly", serverOnlyFiles,
                       LIBDEPS=serveronlyLibdeps )
 
-env.Library("message_server_port", "util/net/message_server_port.cpp")
+env.Library("message_server_port",
+            [ "util/net/message_server_port.cpp",
+              "util/net/port_message_server.cpp" ]
+          )
 
 env.Library("signal_handlers_synchronous",
             ['util/signal_handlers_synchronous.cpp',
@@ -1148,14 +1166,14 @@ mongod = env.Install(
         "mongod",
         mongodOnlyFiles,
         LIBDEPS=[
-            "coredb",
-            "coreserver",
-            "mongodandmongos",
-            "mongodwebserver",
-            "ntservice",
-            "serveronly",
-            "mongod_options",
-            "$BUILD_DIR/third_party/shim_asio",
+            "db_shared",
+#            "coredb",
+#            "coreserver",
+#            "mongodandmongos",
+#            "mongodwebserver",
+#            "ntservice",
+#            "serveronly",
+#            "mongod_options",
         ]))
 Default( mongod )
 
@@ -1250,6 +1268,7 @@ test = env.Install(
                        "serveronly",
                        "coreserver",
                        "coredb",
+                       "db_shared",
                        "testframework",
                        "signal_handlers_synchronous",
                        "s/cluster_ops",

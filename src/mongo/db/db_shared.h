@@ -1,5 +1,5 @@
 /**
-*    Copyright (C) 2008 10gen Inc.
+*    Copyright (C) 2015 MongoDB Inc.
 *
 *    This program is free software: you can redistribute it and/or  modify
 *    it under the terms of the GNU Affero General Public License, version 3,
@@ -38,10 +38,8 @@
 
 namespace mongo {
 
-   namespace repl {
-      class ReplSettings;
-   } // namespace repl
+   extern PortMessageServer* centralServer; // NET: does this need to go here?
 
-   extern void (*snmpInit)();
+   ExitCode initAndListen(int listenPort);
 
 } // namespace mongo
