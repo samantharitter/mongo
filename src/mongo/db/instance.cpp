@@ -107,6 +107,8 @@ namespace mongo {
     using std::stringstream;
     using std::vector;
 
+    PortMessageServer* centralServer = NULL;
+
     // for diaglog
     inline void opread(Message& m) {
         if (_diaglog.getLevel() & 2) {

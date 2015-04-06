@@ -41,12 +41,16 @@ namespace mongo {
 
    class PocServer {
    public:
-      PocServer(int n);
+      PocServer(int n, int count);
 
-      void run(mongo::MessageHandler* messageHandler);
+      void run(MessageHandler* messageHandler);
+      long long benchmark(MessageHandler* messageHandler);
+      long long benchmarkSocket();
+      void fillMessage(Message* m);
 
    private:
       int _n;
+      int _count;
    };
 
 } // namespace mongo

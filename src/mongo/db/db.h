@@ -34,13 +34,19 @@
 #include "mongo/db/curop.h"
 #include "mongo/db/catalog/database_holder.h"
 #include "mongo/util/net/message.h"
+#include "mongo/util/net/port_message_server.h"
 
 namespace mongo {
 
-namespace repl {
-    class ReplSettings;
-} // namespace repl
+   namespace repl {
+      class ReplSettings;
+   } // namespace repl
+   // NET: why is this here?
 
-    extern void (*snmpInit)();
+   //PortMessageServer* centralServer;
+   extern PortMessageServer* centralServer; // NET: does this need to go here?
+   extern void (*snmpInit)(); // NET: why does this have to be global?
+
+   ExitCode initAndListen(int listenPort);
 
 } // namespace mongo

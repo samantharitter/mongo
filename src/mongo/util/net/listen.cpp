@@ -123,15 +123,15 @@ namespace mongo {
         return out;
 
     }
-    
-    Listener::Listener(const string& name, const string &ip, int port, bool logConnect ) 
+
+    Listener::Listener(const string& name, const string &ip, int port, bool logConnect )
         : _port(port), _name(name), _ip(ip), _setupSocketsSuccessful(false),
           _logConnect(logConnect), _elapsedTime(0) {
 #ifdef MONGO_CONFIG_SSL
         _ssl = getSSLManager();
 #endif
     }
-    
+
     Listener::~Listener() {
         if ( _timeTracker == this )
             _timeTracker = 0;
@@ -431,15 +431,14 @@ namespace mongo {
 
         OwnedPointerVector<EventHolder> eventHolders;
         boost::scoped_array<WSAEVENT> events(new WSAEVENT[_socks.size()]);
-        
-        
+
         // Populate events array with an event for each socket we are watching
         for (size_t count = 0; count < _socks.size(); ++count) {
             EventHolder* ev(new EventHolder);
             eventHolders.mutableVector().push_back(ev);
-            events[count] = ev->get();            
+            events[count] = ev->get();
         }
-            
+
         while ( ! inShutdown() ) {
             // Turn on listening for accept-ready sockets
             for (size_t count = 0; count < _socks.size(); ++count) {
@@ -508,7 +507,7 @@ namespace mongo {
                         << endl;
                 continue;
             }
-            
+
             status = WSAEventSelect(_socks[eventIndex], NULL, 0);
             if (status == SOCKET_ERROR) {
                 const int mongo_errno = WSAGetLastError();
@@ -516,9 +515,9 @@ namespace mongo {
                     << errnoWithDescription(mongo_errno) << endl;
                 continue;
             }
-            
+
             disableNonblockingMode(_socks[eventIndex]);
-            
+
             SockAddr from;
             int s = accept(_socks[eventIndex], from.raw(), &from.addressSize);
             if ( s < 0 ) {
@@ -556,7 +555,7 @@ namespace mongo {
                 const char* word = (conns == 1 ? " connection" : " connections");
                 log() << "connection accepted from " << from.toString() << " #" << myConnectionNumber << " (" << conns << word << " now open)" << endl;
             }
-            
+
             boost::shared_ptr<Socket> pnewSock( new Socket(s, from) );
 #ifdef MONGO_CONFIG_SSL
             if (_ssl) {
@@ -584,7 +583,7 @@ namespace mongo {
         port->setConnectionId( connectionId );
         acceptedMP( port );
     }
-    
+
     void Listener::acceptedMP(MessagingPort *mp) {
         verify(!"You must overwrite one of the accepted methods");
     }

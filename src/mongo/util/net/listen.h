@@ -54,7 +54,7 @@ namespace mongo {
         Listener(const std::string& name, const std::string &ip, int port, bool logConnect=true );
 
         virtual ~Listener();
-        
+
         void initAndListen(); // never returns unless error (start a thread)
 
         /* spawn a thread, etc., then return */
@@ -106,9 +106,10 @@ namespace mongo {
          */
         void waitUntilListening() const;
 
-    private:
         std::vector<SockAddr> _mine;
         std::vector<SOCKET> _socks;
+
+    private:
         std::string _name;
         std::string _ip;
         bool _setupSocketsSuccessful;
@@ -118,15 +119,15 @@ namespace mongo {
         mutable boost::condition_variable _readyCondition; // Used to wait for changes to _ready
         // Boolean that indicates whether this Listener is ready to accept incoming network requests
         bool _ready;
-        
+
 #ifdef MONGO_CONFIG_SSL
         SSLManagerInterface* _ssl;
 #endif
-        
+
         void _logListen( int port , bool ssl );
 
         static const Listener* _timeTracker;
-        
+
         virtual bool useUnixSockets() const { return false; }
 
     public:

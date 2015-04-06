@@ -53,7 +53,7 @@ namespace mongo {
         virtual unsigned remotePort() const = 0;
         virtual SockAddr remoteAddr() const = 0;
         virtual SockAddr localAddr() const = 0;
-        
+
         void setX509SubjectName(const std::string& x509SubjectName) {
             _x509SubjectName = x509SubjectName;
         }
