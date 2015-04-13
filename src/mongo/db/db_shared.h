@@ -34,16 +34,19 @@
 #include "mongo/db/curop.h"
 #include "mongo/db/catalog/database_holder.h"
 #include "mongo/util/net/message.h"
+#include "mongo/util/net/dummy_message_server.h"
 #include "mongo/util/net/port_message_server.h"
 
 namespace mongo {
 
-   extern PortMessageServer* centralServer;
+   extern DummyMessageServer* centralServer;
+   //extern PortMessageServer* centralServer;
    extern Socket* listeningSocket;
 
    extern bool serverSet;
    extern bool socketSet;
 
    ExitCode initAndListenShared(int listenPort);
+   ExitCode initAndListenStripped(int listenPort);
 
 } // namespace mongo

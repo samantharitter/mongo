@@ -30,6 +30,7 @@
 #include "mongo/db/client.h"
 #include "mongo/dbtests/dbtests.h"
 #include "mongo/util/net/poc.h"
+#include "mongo/util/net/dummy_message_server.h"
 #include "mongo/util/net/message_server.h"
 
 namespace PocTest {
@@ -40,18 +41,10 @@ namespace PocTest {
             boost::scoped_ptr<PocServer> server(new PocServer(10000, 10));
             PocMessageHandler handler{};
 
-            server->run(static_cast<MessageHandler *>(&handler));
+            //server->run(static_cast<MessageHandler *>(&handler));
+            server->runNetworklessTests(static_cast<MessageHandler *>(&handler));
         }
     };
-    /*
-    class PocControl {
-    public:
-        void run() {
-            // for the same loop,
-            // create messages in the exact same way
-            // serialize and send through the listener instead of calling process()
-        }
-        };*/
 
     class All : public Suite {
     public:

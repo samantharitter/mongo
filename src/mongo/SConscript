@@ -1100,7 +1100,8 @@ serveronlyEnv.Library("serveronly", serverOnlyFiles,
 
 env.Library("message_server_port",
             [ "util/net/message_server_port.cpp",
-              "util/net/port_message_server.cpp" ]
+              "util/net/port_message_server.cpp",
+              "util/net/dummy_message_server.cpp"]
           )
 
 env.Library("signal_handlers_synchronous",

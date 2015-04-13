@@ -1,3 +1,5 @@
+// dummy_message_server.h
+
 /*    Copyright 2015 MongoDB Inc.
  *
  *    This program is free software: you can redistribute it and/or  modify
@@ -25,32 +27,33 @@
  *    then also delete it in the license file.
  */
 
-#include "mongo/util/net/message.h"
-#include "mongo/util/net/message_port.h"
+#pragma once
+
+#include "mongo/platform/basic.h"
+#include "mongo/util/net/listen.h"
 #include "mongo/util/net/message_server.h"
 
 namespace mongo {
 
-   class PocMessageHandler : public MessageHandler {
-   public:
-      void connected(AbstractMessagingPort* p) {}
-      void disconnected(AbstractMessagingPort* p) {}
+   extern bool doneProcessing;
+   extern bool doneProcessingAll;
+   extern int batchSize;
 
-      void process(Message& m, AbstractMessagingPort* port, LastError* le);
-   };
+    class DummyMessageServer : public MessageServer , public Listener {
+    public:
+        DummyMessageServer( const MessageServer::Options& opts, MessageHandler * handler );
+        virtual void accepted( boost::shared_ptr<Socket> psocket, long long connectionId );
+        virtual void setAsTimeTracker();
+        virtual void setupSockets();
+        void run();
+        virtual bool useUnixSockets() const { return true; }
 
-   class PocServer {
-   public:
-      PocServer(int n, int count);
+    private:
+        MessageHandler* _handler;
 
-      void run(MessageHandler* messageHandler);
-      long long runNetworklessTests(MessageHandler* messageHandler);
-      long long runFakeNetworkTests(int port);
-      void fillMessage(Message* m);
+        static void* handleIncomingMsg(void* arg);
+    };
 
-   private:
-      int _n;
-      int _count;
-   };
+    DummyMessageServer* createDummyMessageServer( const MessageServer::Options& opts, MessageHandler* handler );
 
 } // namespace mongo
