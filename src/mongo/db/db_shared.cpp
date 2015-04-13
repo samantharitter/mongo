@@ -149,8 +149,6 @@ namespace mongo {
 
     PortMessageServer *centralServer = NULL;
     bool serverSet = false;
-    bool doneProcessing = false;
-    bool doneProcessingAll = false;
 
     // TODO: put this somewhere else, in its own file.
     class MyMessageHandler : public MessageHandler {

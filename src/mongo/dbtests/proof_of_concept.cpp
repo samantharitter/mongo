@@ -37,7 +37,7 @@ namespace PocTest {
     class NetworkingProofOfConcept {
     public:
         void run() {
-            boost::scoped_ptr<PocServer> server(new PocServer(10000, 1));
+            boost::scoped_ptr<PocServer> server(new PocServer(10000, 100));
             PocMessageHandler handler{};
 
             server->run(static_cast<MessageHandler *>(&handler));

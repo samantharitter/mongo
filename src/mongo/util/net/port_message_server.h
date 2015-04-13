@@ -35,6 +35,9 @@
 
 namespace mongo {
 
+   extern bool doneProcessing;
+   extern bool doneProcessingAll;
+
     class PortMessageServer : public MessageServer , public Listener {
     public:
         PortMessageServer(  const MessageServer::Options& opts, MessageHandler * handler );
