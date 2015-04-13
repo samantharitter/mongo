@@ -7,19 +7,23 @@ int main(int argc, char *argv[]) {
    mongoc_client_t *client;
    mongoc_collection_t *collection;
    bson_error_t error;
+   int64_t sum = 0;
+   int64_t avg;
    int64_t start;
-   int64_t end;
    bson_t selector;
    bson_t update;
    bson_t child;
-   int num_ops;
+   int num_ops = 1000;
+   int num_trials = 100;
    bool res;
    int i;
+   int t;
 
-   if (argc == 2) {
+   if (argc > 1) {
       num_ops = atoi(argv[1]);
-   } else {
-      num_ops = 1000;
+      if (argc > 2) {
+         num_trials = atoi(argv[2]);
+      }
    }
 
    mongoc_init ();
@@ -40,15 +44,22 @@ int main(int argc, char *argv[]) {
 
    collection = mongoc_client_get_collection (client, "test-networking", "poc");
 
-   start = bson_get_monotonic_time ();
+   for (t = 0; t < num_trials; t++) {
 
-   for (i = 0; i < num_ops; i++) {
-      res = mongoc_collection_update (collection, MONGOC_UPDATE_NONE, &selector, &update, NULL, &error);
-      if (!res) {
-         printf ("Operation failed.\n");
-         return 0;
+      start = bson_get_monotonic_time ();
+
+      for (i = 0; i < num_ops; i++) {
+         res = mongoc_collection_update (collection, MONGOC_UPDATE_NONE, &selector, &update, NULL, &error);
+         if (!res) {
+            printf ("Operation failed.\n");
+            return 0;
+         }
       }
+
+      sum += (bson_get_monotonic_time () - start);
    };
 
-   printf ("Running %d updates took %f milliseconds\n", num_ops, (double)(bson_get_monotonic_time () - start)/1000);
+   avg = sum/num_trials;
+
+   printf ("Running %d updates took %f milliseconds (average of %d runs)\n", num_ops, (double)avg/1000, num_trials);
 }

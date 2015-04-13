@@ -45,7 +45,7 @@ namespace mongo {
 
       void run(MessageHandler* messageHandler);
       long long benchmark(MessageHandler* messageHandler);
-      long long benchmarkSocket();
+      long long benchmarkSocket(int port);
       void fillMessage(Message* m);
 
    private:
