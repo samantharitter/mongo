@@ -108,6 +108,7 @@
 #include "mongo/util/log.h"
 #include "mongo/util/net/message_server.h"
 #include "mongo/util/net/port_message_server.h"
+#include "mongo/util/net/dummy_message_server.h"
 #include "mongo/util/net/ssl_manager.h"
 #include "mongo/util/ntservice.h"
 #include "mongo/util/options_parser/startup_options.h"
@@ -147,7 +148,8 @@ namespace mongo {
 
     QueryResult::View emptyMoreResult(long long);
 
-    PortMessageServer *centralServer = NULL;
+    DummyMessageServer *centralServer = NULL;
+    //PortMessageServer *centralServer = NULL;
     bool serverSet = false;
 
 
@@ -402,7 +404,7 @@ namespace mongo {
         LOG(1) << "done repairDatabases" << endl;
     }
 
-    static void _initAndListenShared(int listenPort ) {
+    static void _initAndListenShared(int listenPort) {
         Client::initThread("initandlisten");
 
         // Due to SERVER-15389, we must setupSockets first thing at startup in order to avoid
@@ -411,7 +413,8 @@ namespace mongo {
         options.port = listenPort;
         options.ipList = serverGlobalParams.bind_ip;
 
-        PortMessageServer* server = createPortMessageServer(options, new MyMessageHandler());
+        //PortMessageServer* server = createPortMessageServer(options, new MyMessageHandler());
+        DummyMessageServer* server = createDummyMessageServer(options, new MyMessageHandler());
         server->setAsTimeTracker();
 
         std::cout << "setting centralServer in _initAndListenShared\n";
@@ -602,17 +605,16 @@ namespace mongo {
 
         }
 
+        // NET: might need this?
         startClientCursorMonitor();
 
+        // NET: might need this?
         PeriodicTask::startRunningPeriodicTasks();
 
         logStartup();
 
-#if(TESTEXHAUST)
-        boost::thread thr(testExhaust);
-#endif
-
         // MessageServer::run will return when exit code closes its socket
+        // NET: might need this?
         server->run();
     }
 

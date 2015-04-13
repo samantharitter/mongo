@@ -92,7 +92,7 @@ namespace mongo {
         m->header().setResponseTo(0);
     }
 
-    long long PocServer::benchmark(MessageHandler* messageHandler) {
+    long long PocServer::runNetworklessTests(MessageHandler* messageHandler) {
         Message* queue = new Message[_n];
 
         for (int i = 0; i < _n; i++) {
@@ -114,7 +114,7 @@ namespace mongo {
     }
 
     // must call initAndListen before using this
-    long long PocServer::benchmarkSocket(int port) {
+    long long PocServer::runFakeNetworkTests(int port) {
 
         doneProcessingAll = false;
 
@@ -158,9 +158,6 @@ namespace mongo {
             doneProcessing = false;
             Message m = queue[i];
             m.send( *mp, "context" );
-            //while (!doneProcessing) {
-            //  sleep(.0001);
-            //}
         }
 
         while (!doneProcessingAll) {
@@ -189,7 +186,7 @@ namespace mongo {
         std::cout << "\n\t\tRunning networkless tests...\n\n";
 
         for (int i = 0; i < _count; i++) {
-            x += benchmark(messageHandler);
+            x += runNetworklessTests(messageHandler);
         }
 
         std::cout << "\n\t\tRunning fake network tests...\n\n";
@@ -200,7 +197,7 @@ namespace mongo {
         boost::thread t(initAndListenShared, 27017);
 
         for (int i = 0; i < _count; i++) {
-            y += benchmarkSocket(32768 + i);
+            y += runFakeNetworkTests(32768 + i);
         }
 
         std::cout << "\t\t\tFINAL RESULTS:\n\n";
