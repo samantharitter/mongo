@@ -43,8 +43,6 @@ namespace mongo {
 
    extern bool serverSet;
    extern bool socketSet;
-   extern bool doneProcessing;
-   extern bool doneProcessingAll;
 
    ExitCode initAndListenShared(int listenPort);
 

@@ -39,7 +39,7 @@
 #include <memory>
 
 #include "mongo/base/disallow_copying.h"
-#include "mongo/db/db_shared.h"
+//#include "mongo/db/db_shared.h"
 #include "mongo/db/lasterror.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/stats/counters.h"
@@ -69,6 +69,9 @@ namespace mongo {
 
     using boost::scoped_ptr;
     using std::endl;
+
+    bool doneProcessing = false;
+    bool doneProcessingAll = false;
 
 namespace {
 
