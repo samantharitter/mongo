@@ -106,27 +106,24 @@ namespace mongo {
         }
         auto end = stdx::chrono::high_resolution_clock::now();
         long long dur = stdx::chrono::duration_cast<stdx::chrono::milliseconds>(end - start).count();
-        std::cout << _n << " networkless updates took " << dur << " milliseconds\n";
+        //std::cout << _n << " networkless updates took " << dur << " milliseconds\n";
 
         delete [] queue;
 
         return dur;
     }
 
-    long long PocServer::benchmarkSocket() {
+    // must call initAndListen before using this
+    long long PocServer::benchmarkSocket(int port) {
 
         doneProcessingAll = false;
-
-        // start up the db
-        std::cout << "Calling initAndListenShared\n";
-        boost::thread t(initAndListenShared, 27017);
 
         // make a tcp socket
         int sock = socket(AF_INET, SOCK_STREAM, 0);
         int success = false;
-        SockAddr addr("localhost", 50000);
+        SockAddr addr("localhost", port);
 
-        std::cout << "Attempting to connect...\n";
+        std::cout << "Attempting to connect on port %d...\n, port";
         while (!success) {
             // connect it on an ephemeral port until it succeeds and connects to itself
             int res = ::connect(sock, addr.raw(), addr.addressSize);
@@ -156,24 +153,27 @@ namespace mongo {
 
         auto time_start = stdx::chrono::high_resolution_clock::now();
         std::cout << "sending messages...\n";
-         for (int i = 0; i < _n; i++) {
+        for (int i = 0; i < _n; i++) {
             // send
             doneProcessing = false;
             Message m = queue[i];
             m.send( *mp, "context" );
+            //while (!doneProcessing) {
+            //  sleep(.0001);
+            //}
         }
 
-         while (!doneProcessingAll) {
-             sleep(1);
-         }
+        while (!doneProcessingAll) {
+            sleep(.0001);
+        }
 
         auto time_end = stdx::chrono::high_resolution_clock::now();
         long long dur = stdx::chrono::duration_cast<stdx::chrono::milliseconds>(time_end - time_start).count();
         std::cout << _n << " same socket updates took " << dur << " milliseconds\n";
 
+        psocket->close();
+
         delete [] queue;
-        // todo: force child thread to die
-        //t.join();
 
         return dur;
     }
@@ -186,13 +186,25 @@ namespace mongo {
         long long x = 0;
         long long y = 0;
 
+        std::cout << "\n\t\tRunning networkless tests...\n\n";
+
         for (int i = 0; i < _count; i++) {
             x += benchmark(messageHandler);
         }
 
+        std::cout << "\n\t\tRunning fake network tests...\n\n";
+
+        // start up the db
+        std::cout << "Calling initAndListenShared\n";
+        batchSize = _n;
+        boost::thread t(initAndListenShared, 27017);
+
         for (int i = 0; i < _count; i++) {
-            y += benchmarkSocket();
+            y += benchmarkSocket(32768 + i);
         }
+
+        std::cout << "\t\t\tFINAL RESULTS:\n\n";
+
         std::cout << "\n\t\t\t--- Network-less updates ---\n";
         std::cout << "\t\t\tPerformed " << _count << " runs.\n";
         std::cout << "\t\t\tAverage time to run " << _n << " updates: "
@@ -203,6 +215,8 @@ namespace mongo {
         std::cout << "\t\t\tAverage time to run " << _n << " updates: "
                   << y/_count << " milliseconds\n\n";
 
+        // todo: force child thread to die
+        //t.join();
     }
 
 } // namespace mongo

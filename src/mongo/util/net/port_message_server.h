@@ -37,6 +37,7 @@ namespace mongo {
 
    extern bool doneProcessing;
    extern bool doneProcessingAll;
+   extern int batchSize;
 
     class PortMessageServer : public MessageServer , public Listener {
     public:

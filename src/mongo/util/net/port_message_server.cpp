@@ -72,6 +72,7 @@ namespace mongo {
 
     bool doneProcessing = false;
     bool doneProcessingAll = false;
+    int batchSize = 0;
 
 namespace {
 
@@ -244,7 +245,7 @@ namespace {
                 //std::cout << "done processing one message\n";
                 // here is where we'd flip a switch
                 doneProcessing = true;
-                if (done == 1000) {
+                if (done >= batchSize) {
                     doneProcessingAll = true;
                 }
             }
@@ -274,6 +275,8 @@ namespace {
 #endif
         handler->disconnected(portWithHandler.get());
 
+
+        std::cout << "exiting port message server's handleIncomingMessages";
         return NULL;
     }
 
