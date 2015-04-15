@@ -1,3 +1,4 @@
+
 // @file curop.h
 
 /*
@@ -284,7 +285,7 @@ namespace mongo {
 
         void setQuery(const BSONObj& query) { _query.set( query ); }
 
-        Client * getClient() const { return _client; }
+        //Client * getClient() const { return _client; }
 
         Command * getCommand() const { return _command; }
         void setCommand(Command* command) { _command = command; }
