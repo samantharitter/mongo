@@ -18,7 +18,7 @@ Import("wiredtiger")
 
 # Boost we need everywhere. 's2' is spammed in all over the place by
 # db/geo unfortunately. pcre is also used many places.
-env.InjectThirdPartyIncludePaths(libraries=['boost', 's2', 'pcre'])
+env.InjectThirdPartyIncludePaths(libraries=['boost', 's2', 'pcre', 'asio'])
 env.InjectMongoIncludePaths()
 
 env.SConscript(['base/SConscript',
@@ -1182,6 +1182,7 @@ mongod = env.Install(
             "ntservice",
             "serveronly",
             "mongod_options",
+            "$BUILD_DIR/third_party/shim_asio",
         ]))
 Default( mongod )
 

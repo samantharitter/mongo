@@ -40,6 +40,7 @@
 #include <limits>
 #include <signal.h>
 #include <string>
+#include <thread>
 
 #include "mongo/base/init.h"
 #include "mongo/base/initializer.h"
@@ -121,6 +122,8 @@
 #if !defined(_WIN32)
 # include <sys/file.h>
 #endif
+
+#include "asio.hpp"
 
 namespace mongo {
 
@@ -811,6 +814,82 @@ namespace mongo {
 } // namespace mongo
 #endif  // if defined(_WIN32)
 
+namespace mongoecho {
+
+    using asio::ip::tcp;
+
+    class session : public std::enable_shared_from_this<session> {
+    public:
+        session(tcp::socket socket)
+            : socket_(std::move(socket)) {
+            std::cout << "XXX established echo session ["
+                      << socket_.remote_endpoint() << " <-> "
+                      << socket_.local_endpoint() << "]"
+                      << std::endl;
+        }
+
+        ~session() {
+            std::cout << "XXX terminating echo session ["
+                      << socket_.remote_endpoint() << " <-> "
+                      << socket_.local_endpoint() << "]"
+                      << std::endl;
+        }
+
+        void start() {
+            do_read();
+        }
+
+    private:
+        void do_read() {
+            auto self(shared_from_this());
+            socket_.async_read_some(
+                asio::buffer(data_, max_length),
+                [this, self](std::error_code ec, std::size_t length) {
+                    if (!ec)
+                        do_write(length);
+                });
+        }
+
+        void do_write(std::size_t length) {
+            auto self(shared_from_this());
+            asio::async_write(
+                socket_, asio::buffer(data_, length),
+                [this, self](std::error_code ec, std::size_t /*length*/) {
+                    if (!ec)
+                        do_read();
+                });
+        }
+
+        tcp::socket socket_;
+        enum { max_length = 1024 };
+        char data_[max_length];
+    };
+
+    class server {
+    public:
+        server(asio::io_service& io_service, short port)
+            : acceptor_(io_service, tcp::endpoint(tcp::v4(), port)),
+              socket_(io_service) {
+            do_accept();
+        }
+
+    private:
+        void do_accept() {
+            acceptor_.async_accept(
+                socket_,
+                [this](std::error_code ec) {
+                    if (!ec)
+                        std::make_shared<session>(std::move(socket_))->start();
+                    do_accept();
+                });
+        }
+
+        tcp::acceptor acceptor_;
+        tcp::socket socket_;
+    };
+
+} // namespace
+
 static int mongoDbMain(int argc, char* argv[], char **envp) {
     static StaticObserver staticObserver;
 
@@ -857,6 +936,19 @@ static int mongoDbMain(int argc, char* argv[], char **envp) {
 #endif
 
     StartupTest::runTests();
+
+    std::thread echothread([]() {
+            try {
+                asio::io_service io_service;
+                mongoecho::server s(io_service, 31337);
+                io_service.run();
+            }
+            catch (const std::exception& e) {
+                std::cerr << "Echo Server Exception: " << e.what() << "\n";
+            }
+        });
+    echothread.detach();
+
     ExitCode exitCode = initAndListen(serverGlobalParams.port);
     exitCleanly(exitCode);
     return 0;
