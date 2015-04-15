@@ -289,6 +289,8 @@ add_option( "use-system-stemmer", "use system version of stemmer", 0, True )
 
 add_option( "use-system-yaml", "use system version of yaml", 0, True )
 
+add_option( "use-system-asio", "use system version of ASIO", 0, True )
+
 add_option( "use-system-all" , "use all system libraries", 0 , True )
 
 # deprecated
@@ -1918,6 +1920,14 @@ def doConfigure(myenv):
                     boostlib,
                     [boostlib + suffix for suffix in boostSuffixList],
                     language='C++')
+
+    # TODO: We need a mechanism to scope these via injection like
+    # we do for include paths
+    if not use_system_version_of_library('asio'):
+        env.Prepend(CPPDEFINES=[
+            'ASIO_SEPARATE_COMPILATION',
+            'ASIO_STANDALONE',
+        ])
 
     if posix_system:
         conf.env.SetConfigHeaderDefine("MONGO_CONFIG_HAVE_HEADER_UNISTD_H")
