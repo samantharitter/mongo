@@ -46,6 +46,8 @@ namespace mongo {
    extern bool serverSet;
    extern bool socketSet;
 
+   extern void (*snmpInitShared)();
+
    ExitCode initAndListenShared(int listenPort);
    ExitCode initAndListenStripped(int listenPort);
 

@@ -125,17 +125,18 @@
 
 #include "asio.hpp"
 
-using namespace mongo;
-using std::auto_ptr;
-using std::cout;
-using std::cerr;
-using std::endl;
-using std::list;
-using std::string;
-using std::stringstream;
-using std::vector;
+namespace mongo {
 
-using logger::LogComponent;
+    using std::auto_ptr;
+    using std::cout;
+    using std::cerr;
+    using std::endl;
+    using std::list;
+    using std::string;
+    using std::stringstream;
+    using std::vector;
+
+    using logger::LogComponent;
 
     void (*snmpInit)() = NULL;
 
@@ -152,47 +153,6 @@ using logger::LogComponent;
     Timer startupSrandTimer;
 
     QueryResult::View emptyMoreResult(long long);
-
-
-    /* todo: make this a real test.  the stuff in dbtests/ seem to do all dbdirectclient which exhaust doesn't support yet. */
-// QueryOption_Exhaust
-#define TESTEXHAUST 0
-#if( TESTEXHAUST )
-    void testExhaust() {
-        sleepsecs(1);
-        unsigned n = 0;
-        auto f = [&n](const BSONObj& o) {
-            verify( o.valid() );
-            //cout << o << endl;
-            n++;
-            bool testClosingSocketOnError = false;
-            if( testClosingSocketOnError )
-                verify(false);
-        };
-        DBClientConnection db(false);
-        db.connect("localhost");
-        const char *ns = "local.foo";
-        if( db.count(ns) < 10000 )
-            for( int i = 0; i < 20000; i++ )
-                db.insert(ns, BSON("aaa" << 3 << "b" << "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
-
-        try {
-            db.query(f, ns, Query() );
-        }
-        catch(...) {
-            cout << "hmmm" << endl;
-        }
-
-        try {
-            db.query(f, ns, Query() );
-        }
-        catch(...) {
-            cout << "caught" << endl;
-        }
-
-        cout << n << endl;
-    };
-#endif
 
     class MyMessageHandler : public MessageHandler {
     public:
@@ -211,7 +171,6 @@ using logger::LogComponent;
                 lastError.startRequest( m , le );
 
                 DbResponse dbresponse;
-                //assembleResponse(&txn, m, dbresponse);
                 assembleResponse(&txn, m, dbresponse, port->remote());
 
                 if ( dbresponse.response ) {
@@ -282,7 +241,10 @@ using logger::LogComponent;
         WriteUnitOfWork wunit(&txn);
         if (!collection) {
             BSONObj options = BSON("capped" << true << "size" << 10 * 1024 * 1024);
-            uassertStatusOK(userCreateNS(&txn, db, ns, options, true));
+            bool shouldReplicateWrites = txn.writesAreReplicated();
+            txn.setReplicatedWrites(false);
+            ON_BLOCK_EXIT(&OperationContext::setReplicatedWrites, &txn, shouldReplicateWrites);
+            uassertStatusOK(userCreateNS(&txn, db, ns, options));
             collection = db->getCollection(ns);
         }
         invariant(collection);
@@ -350,7 +312,7 @@ using logger::LogComponent;
 
         vector<string> dbNames;
 
-        StorageEngine* storageEngine = getGlobalEnvironment()->getGlobalStorageEngine();
+        StorageEngine* storageEngine = getGlobalServiceContext()->getGlobalStorageEngine();
         storageEngine->listDatabases( &dbNames );
 
         // Repair all databases first, so that we do not try to open them if they are in bad shape
@@ -482,7 +444,7 @@ using logger::LogComponent;
                 }
 
                 // Warn if field name matches non-active registered storage engine.
-                if (getGlobalEnvironment()->isRegisteredStorageEngine(e.fieldName())) {
+                if (getGlobalServiceContext()->isRegisteredStorageEngine(e.fieldName())) {
                     warning() << "Detected configuration for non-active storage engine "
                               << e.fieldName()
                               << " when current storage engine is "
@@ -491,8 +453,8 @@ using logger::LogComponent;
             }
         }
 
-        getGlobalEnvironment()->setGlobalStorageEngine(storageGlobalParams.engine);
-        getGlobalEnvironment()->setOpObserver(stdx::make_unique<OpObserver>());
+        getGlobalServiceContext()->setGlobalStorageEngine(storageGlobalParams.engine);
+        getGlobalServiceContext()->setOpObserver(stdx::make_unique<OpObserver>());
 
         const repl::ReplSettings& replSettings =
                 repl::getGlobalReplicationCoordinator()->getSettings();
@@ -645,10 +607,6 @@ using logger::LogComponent;
 
         logStartup();
 
-#if(TESTEXHAUST)
-        boost::thread thr(testExhaust);
-#endif
-
         // MessageServer::run will return when exit code closes its socket
         server->run();
     }
@@ -684,6 +642,10 @@ using logger::LogComponent;
         return initAndListen(serverGlobalParams.port);
     }
 #endif
+
+} // namespace mongo
+
+using namespace mongo;
 
 static int mongoDbMain(int argc, char* argv[], char** envp);
 
@@ -821,6 +783,37 @@ MONGO_INITIALIZER_WITH_PREREQUISITES(CreateReplicationManager, ("SetGlobalEnviro
     return Status::OK();
 }
 
+#ifdef MONGO_CONFIG_SSL
+MONGO_INITIALIZER_GENERAL(setSSLManagerType, 
+                          MONGO_NO_PREREQUISITES, 
+                          ("SSLManager"))(InitializerContext* context) {
+    isSSLServer = true;
+    return Status::OK();
+}
+#endif
+
+#if defined(_WIN32)
+namespace mongo {
+    // the hook for mongoAbort
+    extern void (*reportEventToSystem)(const char *msg);
+    static void reportEventToSystemImpl(const char *msg) {
+        static ::HANDLE hEventLog = RegisterEventSource( NULL, TEXT("mongod") );
+        if( hEventLog ) {
+            std::wstring s = toNativeString(msg);
+            LPCTSTR txt = s.c_str();
+            BOOL ok = ReportEvent(
+              hEventLog, EVENTLOG_ERROR_TYPE,
+              0, 0, NULL,
+              1,
+              0,
+              &txt,
+              0);
+            wassert(ok);
+        }
+    }
+} // namespace mongo
+#endif  // if defined(_WIN32)
+
 namespace mongoecho {
 
     using asio::ip::tcp;
@@ -896,38 +889,6 @@ namespace mongoecho {
     };
 
 } // namespace
-
-// KEEP THIS HERE
-#ifdef MONGO_CONFIG_SSL
-MONGO_INITIALIZER_GENERAL(setSSLManagerType, 
-                          MONGO_NO_PREREQUISITES, 
-                          ("SSLManager"))(InitializerContext* context) {
-    isSSLServer = true;
-    return Status::OK();
-}
-#endif
-
-#if defined(_WIN32)
-namespace mongo {
-    // the hook for mongoAbort
-    extern void (*reportEventToSystem)(const char *msg);
-    static void reportEventToSystemImpl(const char *msg) {
-        static ::HANDLE hEventLog = RegisterEventSource( NULL, TEXT("mongod") );
-        if( hEventLog ) {
-            std::wstring s = toNativeString(msg);
-            LPCTSTR txt = s.c_str();
-            BOOL ok = ReportEvent(
-              hEventLog, EVENTLOG_ERROR_TYPE,
-              0, 0, NULL,
-              1,
-              0,
-              &txt,
-              0);
-            wassert(ok);
-        }
-    }
-} // namespace mongo
-#endif  // if defined(_WIN32)
 
 static int mongoDbMain(int argc, char* argv[], char **envp) {
     static StaticObserver staticObserver;

@@ -93,7 +93,6 @@
 #include "mongo/util/mongoutils/str.h"
 #include "mongo/util/quick_exit.h"
 #include "mongo/util/time_support.h"
-#include "mongo/util/net/port_message_server.h"
 
 namespace mongo {
 
@@ -107,8 +106,6 @@ namespace mongo {
     using std::string;
     using std::stringstream;
     using std::vector;
-
-    //PortMessageServer* centralServer = NULL;
 
     // for diaglog
     inline void opread(Message& m) {
@@ -461,8 +458,7 @@ namespace {
         }
 
         CurOp& currentOp = *CurOp::get(c);
-        //currentOp.reset(remote,op); // ditch remote
-        currentOp.reset(op);
+        currentOp.reset(remote,op);
 
         OpDebug& debug = currentOp.debug();
         debug.op = op;
@@ -478,7 +474,7 @@ namespace {
             responseComponent = LogComponent::kCommand;
         }
 
-        bool shouldLog = logger::globalLogDomain()->shouldLog(responseComponent,
+        bool shouldLog = logger::globalLogDomain()->shouldLog(responseComponent, 
                                                               logger::LogSeverity::Debug(1));
 
         if ( op == dbQuery ) {
@@ -527,7 +523,7 @@ namespace {
                     shouldLog = true;
                 }
                 else {
-                    /*if (remote != DBDirectClient::dummyHost) {
+                    if (remote != DBDirectClient::dummyHost) {
                         const ShardedConnectionInfo* connInfo = ShardedConnectionInfo::get(false);
                         uassert(18663,
                                 str::stream() << "legacy writeOps not longer supported for "
@@ -535,9 +531,12 @@ namespace {
                                               << ", op: " << opToString(op)
                                               << ", remote: " << remote.toString(),
                                 connInfo == NULL);
-                                }*/
+                    }
 
-                    if (op == dbInsert) {
+                    if (!nsString.isValid()) {
+                        uassert(16257, str::stream() << "Invalid ns [" << ns << "]", false);
+                    }
+                    else if (op == dbInsert) {
                         receivedInsert(txn, nsString, m, currentOp);
                     }
                     else if (op == dbUpdate) {
@@ -599,7 +598,6 @@ namespace {
         debug.reset();
     }
 
-    // Returns false when request includes 'end'
     void pocAssembleResponse( OperationContext* txn,
                               Message& m,
                               DbResponse& dbresponse) {
@@ -629,15 +627,15 @@ namespace {
                 opwrite(m);
 
                 if (nsString.coll() == "$cmd.sys.inprog") {
-                    inProgCmd(txn, nsString, m, dbresponse);
+                    receivedPseudoCommand(txn, c, dbresponse, m, "currentOp");
                     return;
                 }
                 if (nsString.coll() == "$cmd.sys.killop") {
-                    killOp(txn, m, dbresponse);
+                    receivedPseudoCommand(txn, c, dbresponse, m, "killOp");
                     return;
                 }
                 if (nsString.coll() == "$cmd.sys.unlock") {
-                    receivedPseudoCommand(txn, nsString, c, dbresponse, m, "fsyncUnlock");
+                    receivedPseudoCommand(txn, c, dbresponse, m, "fsyncUnlock");
                     return;
                 }
             }
@@ -679,13 +677,11 @@ namespace {
         }
 
         scoped_ptr<CurOp> nestedOp;
-        CurOp* currentOpP = c.curop();
-        if ( currentOpP->active() ) {
-            nestedOp.reset( new CurOp( &c , currentOpP ) );
-            currentOpP = nestedOp.get();
+        if (CurOp::get(c)->active()) {
+            nestedOp.reset(new CurOp(&c));
         }
 
-        CurOp& currentOp = *currentOpP;
+        CurOp& currentOp = *CurOp::get(c);
         currentOp.reset(op);
 
         OpDebug& debug = currentOp.debug();
@@ -716,7 +712,8 @@ namespace {
                 }
                 else {
                     if (!nsString.isValid()) {
-                        uassert(16257, str::stream() << "Invalid ns [" << ns << "]", false);
+                        invariant(false);
+                        // was a uassert
                     }
                     else if (op == dbInsert) {
                         receivedInsert(txn, nsString, m, currentOp);
@@ -731,7 +728,7 @@ namespace {
                         invariant(false);
                     }
                 }
-             }
+            }
             catch (const UserException& ue) {
                 setLastError(ue.getCode(), ue.getInfo().msg.c_str());
                 debug.exceptionInfo = ue.getInfo();
@@ -747,7 +744,6 @@ namespace {
         debug.recordStats();
         debug.reset();
     }
-
 
     void receivedKillCursors(OperationContext* txn, Message& m) {
         DbMessage dbmessage(m);
