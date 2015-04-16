@@ -64,8 +64,8 @@
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/dbmessage.h"
 #include "mongo/db/dbwebserver.h"
-#include "mongo/db/global_environment_d.h"
-#include "mongo/db/global_environment_experiment.h"
+#include "mongo/db/service_context_d.h"
+#include "mongo/db/service_context.h"
 #include "mongo/db/index_names.h"
 #include "mongo/db/index_rebuilder.h"
 #include "mongo/db/initialize_server_global_state.h"
@@ -311,7 +311,7 @@ namespace mongo {
 
         vector<string> dbNames;
 
-        StorageEngine* storageEngine = getGlobalEnvironment()->getGlobalStorageEngine();
+        StorageEngine* storageEngine = getGlobalServiceContext()->getGlobalStorageEngine();
         storageEngine->listDatabases( &dbNames );
 
         // Repair all databases first, so that we do not try to open them if they are in bad shape
@@ -450,7 +450,7 @@ namespace mongo {
                 }
 
                 // Warn if field name matches non-active registered storage engine.
-                if (getGlobalEnvironment()->isRegisteredStorageEngine(e.fieldName())) {
+                if (getGlobalServiceContext()->isRegisteredStorageEngine(e.fieldName())) {
                     warning() << "Detected configuration for non-active storage engine "
                               << e.fieldName()
                               << " when current storage engine is "
@@ -459,8 +459,8 @@ namespace mongo {
             }
         }
         // NET:
-        //getGlobalEnvironment()->setGlobalStorageEngine(storageGlobalParams.engine);
-        getGlobalEnvironment()->setOpObserver(stdx::make_unique<OpObserver>());
+        getGlobalServiceContext()->setGlobalStorageEngine(storageGlobalParams.engine);
+        getGlobalServiceContext()->setOpObserver(stdx::make_unique<OpObserver>());
 
         const repl::ReplSettings& replSettings =
                 repl::getGlobalReplicationCoordinator()->getSettings();
