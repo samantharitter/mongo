@@ -37,10 +37,12 @@
 
 #include "mongo/bson/bsonobj.h"
 #include "mongo/util/log.h"
+
 #include "mongo/util/time_support.h"
 
 namespace mongo {
     namespace repl {
+
 
         NetworkInterfaceASIO::NetworkInterfaceASIO() : _shutdown(false) { }
 
@@ -145,13 +147,13 @@ namespace mongo {
             catch (const std::exception& ex) {
                 LOG(1) << "Failed to start " << threadName << "; caught exception: " << ex.what();
             }
-
             return;
         }
 
         void NetworkInterfaceASIO::shutdown() {
             _shutdown = true;
             _workerThread->boost::thread::join();
+            return;
         }
 
         void NetworkInterfaceASIO::waitForWork() {
