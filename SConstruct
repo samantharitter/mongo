@@ -293,6 +293,10 @@ add_option( "use-system-asio", "use system version of ASIO", 0, True )
 
 add_option( "use-system-all" , "use all system libraries", 0 , True )
 
+# experimental
+add_option( "use-experimental-networking-code", "use new networking code, turn off --use-system-asio",
+            0, False )
+
 # deprecated
 add_option( "use-new-tools" , "put new tools in the tarball", 0 , False )
 

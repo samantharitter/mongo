@@ -1375,7 +1375,8 @@ namespace mongo {
     }
 
     /* -- DBClientCursor ---------------------------------------------- */
-    void assembleRequest( const string &ns, BSONObj query, int nToReturn, int nToSkip, const BSONObj *fieldsToReturn, int queryOptions, Message &toSend ) {
+    void assembleRequest( const string &ns, BSONObj query, int nToReturn, int nToSkip,
+                          const BSONObj *fieldsToReturn, int queryOptions, Message &toSend ) {
         if (kDebugBuild) {
             massert( 10337 ,  (string)"object not valid assembleRequest query" , query.isValid() );
         }

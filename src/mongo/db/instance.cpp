@@ -608,8 +608,8 @@ namespace {
         DbMessage dbmsg(m);
 
         Client& c = *txn->getClient();
-        if (!txn->getClient()->isInDirectClient()) {
-            c.getAuthorizationSession()->startRequest(txn);
+        if (c.isInDirectClient()) {
+            AuthorizationSession::get(c)->startRequest(txn);
 
             // We should not be holding any locks at this point
             invariant(!txn->lockState()->isLocked());

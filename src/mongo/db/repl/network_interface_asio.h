@@ -29,6 +29,7 @@
 #pragma once
 
 #include "mongo/db/repl/replication_executor.h"
+#include "mongo/util/net/message.h"
 
 namespace mongo {
    namespace repl {
@@ -56,6 +57,35 @@ namespace mongo {
         virtual void runCallbackWithGlobalExclusiveLock(
                 const stdx::function<void (OperationContext*)>& callback);
 
+      private:
+        /**
+         * Information describing an in-flight command.
+         */
+        struct CommandData {
+            ReplicationExecutor::CallbackHandle cbHandle;
+            ReplicationExecutor::RemoteCommandRequest request;
+            RemoteCommandCompletionFn onFinish;
+        };
+        typedef stdx::list<CommandData> CommandDataList;
+
+        static void _launchThread(NetworkInterfaceASIO* net, const std::string& threadName);
+        ResponseStatus _runCommand(const ReplicationExecutor::RemoteCommandRequest& request);
+        void _sendMessageToHostAndPort(const Message& m, const HostAndPort& addr);
+        void _sendRequestToHostAndPort(const ReplicationExecutor::RemoteCommandRequest& request,
+                                       const HostAndPort& addr);
+        void _sendRequest(const ReplicationExecutor::RemoteCommandRequest& request);
+        void _consumeNetworkRequests();
+        void _listen();
+
+        // Queue of yet-to-be-executed network operations.
+        CommandDataList _pending;
+
+        // Single worker thread
+        // get rid of boost?
+        //boost::thread _workerThread;
+        boost::shared_ptr<boost::thread> _workerThread;
+
+        bool _shutdown;
       };
 
    } // namespace repl

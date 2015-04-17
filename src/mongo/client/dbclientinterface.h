@@ -429,8 +429,9 @@ namespace mongo {
      */
     class DBClientInterface : boost::noncopyable {
     public:
-        virtual std::auto_ptr<DBClientCursor> query(const std::string &ns, Query query, int nToReturn = 0, int nToSkip = 0,
-                                               const BSONObj *fieldsToReturn = 0, int queryOptions = 0 , int batchSize = 0 ) = 0;
+        virtual std::auto_ptr<DBClientCursor> query(const std::string &ns, Query query, int nToReturn = 0,
+                                                    int nToSkip = 0, const BSONObj *fieldsToReturn = 0,
+                                                    int queryOptions = 0 , int batchSize = 0 ) = 0;
 
         virtual void insert( const std::string &ns, BSONObj obj , int flags=0) = 0;
 
@@ -453,17 +454,21 @@ namespace mongo {
            @return a single object that matches the query.  if none do, then the object is empty
            @throws AssertionException
         */
-        virtual BSONObj findOne(const std::string &ns, const Query& query, const BSONObj *fieldsToReturn = 0, int queryOptions = 0);
+        virtual BSONObj findOne(const std::string &ns, const Query& query,
+                                const BSONObj *fieldsToReturn = 0, int queryOptions = 0);
 
-        /** query N objects from the database into an array.  makes sense mostly when you want a small number of results.  if a huge number, use
+        /** query N objects from the database into an array.
+         * makes sense mostly when you want a small number of results.  if a huge number, use
             query() and iterate the cursor.
         */
-        void findN(std::vector<BSONObj>& out, const std::string &ns, Query query, int nToReturn, int nToSkip = 0, const BSONObj *fieldsToReturn = 0, int queryOptions = 0);
+        void findN(std::vector<BSONObj>& out, const std::string &ns, Query query,
+                   int nToReturn, int nToSkip = 0, const BSONObj *fieldsToReturn = 0, int queryOptions = 0);
 
         virtual std::string getServerAddress() const = 0;
 
         /** don't use this - called automatically by DBClientCursor for you */
-        virtual std::auto_ptr<DBClientCursor> getMore( const std::string &ns, long long cursorId, int nToReturn = 0, int options = 0 ) = 0;
+        virtual std::auto_ptr<DBClientCursor> getMore( const std::string &ns, long long cursorId,
+                                                       int nToReturn = 0, int options = 0 ) = 0;
     };
 
     /**
@@ -1103,7 +1108,11 @@ namespace mongo {
            Connect timeout is fixed, but short, at 5 seconds.
          */
         DBClientConnection(bool _autoReconnect=false, DBClientReplicaSet* cp=0, double so_timeout=0) :
-            clientSet(cp), _failed(false), autoReconnect(_autoReconnect), autoReconnectBackoff(1000, 2000), _so_timeout(so_timeout) {
+            clientSet(cp),
+            _failed(false),
+            autoReconnect(_autoReconnect),
+            autoReconnectBackoff(1000, 2000),
+            _so_timeout(so_timeout) {
             _numConnections.fetchAndAdd(1);
         }
 

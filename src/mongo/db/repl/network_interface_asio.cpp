@@ -32,25 +32,126 @@
 
 #include "mongo/db/repl/network_interface_asio.h"
 
+#include <boost/make_shared.hpp>
+#include <boost/thread.hpp>
+
+#include "mongo/bson/bsonobj.h"
+#include "mongo/util/log.h"
 #include "mongo/util/time_support.h"
 
 namespace mongo {
     namespace repl {
 
-        NetworkInterfaceASIO::NetworkInterfaceASIO() { }
+        NetworkInterfaceASIO::NetworkInterfaceASIO() : _shutdown(false) { }
 
         NetworkInterfaceASIO::~NetworkInterfaceASIO() { }
 
         std::string NetworkInterfaceASIO::getDiagnosticString() {
-            return "nothing here";
+            return "nothing to see here, move along";
+        }
+
+        void NetworkInterfaceASIO::_sendMessageToHostAndPort(const Message& m, const HostAndPort& addr) {
+            // make a messaging port
+            // send message on port
+            // don't care about response.
+        }
+
+        void NetworkInterfaceASIO::_sendRequestToHostAndPort(
+            const ReplicationExecutor::RemoteCommandRequest& request,
+            const HostAndPort& addr) {
+
+            // RemoteCommandRequest -> BSONObj
+            BSONObj query = request.cmdObj;
+
+            // BSONObj -> Message
+            BufBuilder b;
+            b.appendNum(0); // opts, check default
+            b.appendStr(request.dbname + ".$cmd");
+            b.appendNum(0); // toSkip
+            b.appendNum(0); // toReturn, don't care about responses
+            query.appendSelfToBufBuilder(b);
+
+            // wrap up the message object, add headers etc.
+            Message toSend;
+            toSend.setData(dbQuery, b.buf(), b.len()); // may need to change this type? Where from, Message?
+            toSend.header().setId(nextMessageId()); // this method lives in Message
+            toSend.header().setResponseTo(0);
+
+            // send
+            _sendMessageToHostAndPort(toSend, addr);
+        }
+
+        void NetworkInterfaceASIO::_sendRequest(const ReplicationExecutor::RemoteCommandRequest& request) {
+            _sendRequestToHostAndPort(request, request.target);
+        }
+
+        ResponseStatus NetworkInterfaceASIO::_runCommand(
+            const ReplicationExecutor::RemoteCommandRequest& request) {
+
+            try {
+                BSONObj info;
+                const Date_t requestStartDate = now();
+
+                // TODO: tunnel info through
+                _sendRequest(request);
+
+                const Date_t requestFinishDate = now();
+                //conn.done(requestFinishDate);
+                return ResponseStatus(Response(info, Milliseconds(requestFinishDate - requestStartDate)));
+            }
+            catch (const DBException& ex) {
+                return ResponseStatus(ex.toStatus());
+            }
+            catch (const std::exception& ex) {
+                return ResponseStatus(
+                                      ErrorCodes::UnknownError,
+                                      mongoutils::str::stream() <<
+                                      "Sending command " << request.cmdObj << " on database " << request.dbname <<
+                                      " over network to " << request.target.toString() << " received exception " <<
+                                      ex.what());
+            }
+        }
+
+        void NetworkInterfaceASIO::_listen() {
+            while (!_shutdown) {
+                if (_pending.empty()) {
+                    sleep(1);
+                    continue;
+                }
+
+                CommandData task = _pending.front();
+                _pending.pop_front();
+
+                ResponseStatus result = _runCommand(task.request);
+                LOG(2) << "Network status of sending " << task.request.cmdObj.firstElementFieldName() <<
+                    " to " << task.request.target << " was " << result.getStatus();
+                task.onFinish(result);
+            }
+        }
+
+        void NetworkInterfaceASIO::_launchThread(NetworkInterfaceASIO* net, const std::string& threadName) {
+            LOG(1) << "thread starting";
+            net->_listen();
+            LOG(1) << "thread ending";
         }
 
         void NetworkInterfaceASIO::startup() {
+            const std::string threadName("ReplExecASIO_listen");
+            try {
+                _workerThread = boost::make_shared<boost::thread>(stdx::bind(&NetworkInterfaceASIO::_launchThread,
+                                                                             this,
+                                                                             "aaaaah"));
+            }
+            catch (const std::exception& ex) {
+                LOG(1) << "Failed to start " << threadName << "; caught exception: " << ex.what();
+            }
+
             return;
         }
 
         void NetworkInterfaceASIO::shutdown() {
-            return;
+            _shutdown = true;
+            _workerThread->boost::thread::join();
         }
 
         void NetworkInterfaceASIO::waitForWork() {
@@ -73,6 +174,15 @@ namespace mongo {
                 const ReplicationExecutor::CallbackHandle& cbHandle,
                 const ReplicationExecutor::RemoteCommandRequest& request,
                 const RemoteCommandCompletionFn& onFinish) {
+            LOG(2) << "Scheduling " << request.cmdObj.firstElementFieldName() << " to " <<
+                request.target;
+
+            _pending.push_back(CommandData());
+
+            CommandData& cd = _pending.back();
+            cd.cbHandle = cbHandle;
+            cd.request = request;
+            cd.onFinish = onFinish;
         }
 
         void NetworkInterfaceASIO::cancelCommand(const ReplicationExecutor::CallbackHandle& cbHandle) {
