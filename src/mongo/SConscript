@@ -450,7 +450,6 @@ env.CppUnitTest("server_parameters_test",
                 [ "db/server_parameters_test.cpp" ],
                 LIBDEPS=["server_parameters"] )
 
-
 env.Library("fail_point",
             ["util/fail_point.cpp",
              "util/fail_point_registry.cpp",

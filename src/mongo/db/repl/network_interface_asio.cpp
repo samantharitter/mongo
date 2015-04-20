@@ -38,13 +38,12 @@
 #include "mongo/bson/bsonobj.h"
 #include "mongo/util/log.h"
 
-#include "mongo/util/time_support.h"
-
 namespace mongo {
     namespace repl {
 
 
-        NetworkInterfaceASIO::NetworkInterfaceASIO() : _shutdown(false) { }
+        NetworkInterfaceASIO::NetworkInterfaceASIO() :
+            _shutdown(false) { }
 
         NetworkInterfaceASIO::~NetworkInterfaceASIO() { }
 
@@ -52,7 +51,8 @@ namespace mongo {
             return "nothing to see here, move along";
         }
 
-        void NetworkInterfaceASIO::_sendMessageToHostAndPort(const Message& m, const HostAndPort& addr) {
+       void NetworkInterfaceASIO::_sendMessageToHostAndPort(const Message& m, const HostAndPort& addr) {
+            std::cout << "sending message to host and port\n";
             // make a messaging port
             // send message on port
             // don't care about response.
@@ -61,6 +61,7 @@ namespace mongo {
         void NetworkInterfaceASIO::_sendRequestToHostAndPort(
             const ReplicationExecutor::RemoteCommandRequest& request,
             const HostAndPort& addr) {
+            std::cout << "sending request to host and port\n";
 
             // RemoteCommandRequest -> BSONObj
             BSONObj query = request.cmdObj;
@@ -75,8 +76,9 @@ namespace mongo {
 
             // wrap up the message object, add headers etc.
             Message toSend;
-            toSend.setData(dbQuery, b.buf(), b.len()); // may need to change this type? Where from, Message?
-            toSend.header().setId(nextMessageId()); // this method lives in Message
+            // may need to change this type? Where from, Message?
+            toSend.setData(dbQuery, b.buf(), b.len());
+            toSend.header().setId(nextMessageId());
             toSend.header().setResponseTo(0);
 
             // send
@@ -89,17 +91,18 @@ namespace mongo {
 
         ResponseStatus NetworkInterfaceASIO::_runCommand(
             const ReplicationExecutor::RemoteCommandRequest& request) {
-
+            std::cout << "running command " << request.cmdObj
+                      << " against database " << request.dbname
+                      << " across network to " << request.target.toString() << "\n";
             try {
                 BSONObj info;
-                const Date_t requestStartDate = now();
+                const Date_t start = now();
 
                 // TODO: tunnel info through
                 _sendRequest(request);
 
-                const Date_t requestFinishDate = now();
-                //conn.done(requestFinishDate);
-                return ResponseStatus(Response(info, Milliseconds(requestFinishDate - requestStartDate)));
+                const Date_t finish = now();
+                return ResponseStatus(Response(info, Milliseconds(finish - start)));
             }
             catch (const DBException& ex) {
                 return ResponseStatus(ex.toStatus());
@@ -108,13 +111,15 @@ namespace mongo {
                 return ResponseStatus(
                                       ErrorCodes::UnknownError,
                                       mongoutils::str::stream() <<
-                                      "Sending command " << request.cmdObj << " on database " << request.dbname <<
-                                      " over network to " << request.target.toString() << " received exception " <<
-                                      ex.what());
+                                      "Sending command " << request.cmdObj <<
+                                      " on database " << request.dbname <<
+                                      " over network to " << request.target.toString()
+                                      << " received exception " << ex.what());
             }
         }
 
         void NetworkInterfaceASIO::_listen() {
+            std::cout << "listening...\n";
             while (!_shutdown) {
                 if (_pending.empty()) {
                     sleep(1);
@@ -132,12 +137,14 @@ namespace mongo {
         }
 
         void NetworkInterfaceASIO::_launchThread(NetworkInterfaceASIO* net, const std::string& threadName) {
+            std::cout << "launching thread " << threadName << "\n";
             LOG(1) << "thread starting";
             net->_listen();
             LOG(1) << "thread ending";
         }
 
         void NetworkInterfaceASIO::startup() {
+            std::cout << "starting up\n";
             const std::string threadName("ReplExecASIO_listen");
             try {
                 _workerThread = boost::make_shared<boost::thread>(stdx::bind(&NetworkInterfaceASIO::_launchThread,
@@ -151,20 +158,24 @@ namespace mongo {
         }
 
         void NetworkInterfaceASIO::shutdown() {
+            std::cout << "shutting down\n";
             _shutdown = true;
             _workerThread->boost::thread::join();
             return;
         }
 
         void NetworkInterfaceASIO::waitForWork() {
+            std::cout << "waiting for work...\n";
             return;
         }
 
         void NetworkInterfaceASIO::waitForWorkUntil(Date_t when) {
+            std::cout << "waiting for work until " << when << "...\n";
             return;
         }
 
         void NetworkInterfaceASIO::signalWorkAvailable() {
+            std::cout << "work is available, signaling\n";
             return;
         }
 
@@ -176,6 +187,7 @@ namespace mongo {
                 const ReplicationExecutor::CallbackHandle& cbHandle,
                 const ReplicationExecutor::RemoteCommandRequest& request,
                 const RemoteCommandCompletionFn& onFinish) {
+            std::cout << "beginning command\n";
             LOG(2) << "Scheduling " << request.cmdObj.firstElementFieldName() << " to " <<
                 request.target;
 
@@ -188,12 +200,14 @@ namespace mongo {
         }
 
         void NetworkInterfaceASIO::cancelCommand(const ReplicationExecutor::CallbackHandle& cbHandle) {
+            std::cout << "canceling command\n";
             return;
         }
 
         void NetworkInterfaceASIO::runCallbackWithGlobalExclusiveLock(
             const stdx::function<void (OperationContext*)>& callback) {
-
+            std::cout << "running callback with the global exclusive locl\n";
+            return;
         }
 
     } // namespace repl

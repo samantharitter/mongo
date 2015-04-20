@@ -29,6 +29,7 @@
 #pragma once
 
 #include "mongo/db/repl/replication_executor.h"
+#include "mongo/util/net/hostandport.h"
 #include "mongo/util/net/message.h"
 
 namespace mongo {
