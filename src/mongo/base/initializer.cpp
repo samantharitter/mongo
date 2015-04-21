@@ -39,16 +39,12 @@ namespace mongo {
 
     Status Initializer::execute(const InitializerContext::ArgumentVector& args,
                                 const InitializerContext::EnvironmentMap& env) const {
-        std::cout << "in execute()\n";
-
         std::vector<std::string> sortedNodes;
 
         Status status = _graph.topSort(&sortedNodes);
         if (Status::OK() != status) {
-            std::cout << "top sort on this graph failed with status " << status << "\n";
             return status;
         }
-        std::cout << "status of graph top sort was ok\n";
         InitializerContext context(args, env);
 
          for (size_t i = 0; i < sortedNodes.size(); ++i) {
@@ -61,12 +57,10 @@ namespace mongo {
              try {
                  status = fn(&context);
              } catch( const DBException& xcp ) {
-                 std::cout << "caught a DBException\n";
                  return xcp.toStatus();
              }
 
              if (Status::OK() != status) {
-                 std::cout << "status of this node was not ok\n";
                  return status;
              }
          }
@@ -75,19 +69,14 @@ namespace mongo {
 
      Status runGlobalInitializers(const InitializerContext::ArgumentVector& args,
                                   const InitializerContext::EnvironmentMap& env) {
-         std::cout << "overloaded runGlobalInitializers()\n";
         return getGlobalInitializer().execute(args, env);
     }
 
     Status runGlobalInitializers(int argc, const char* const* argv, const char* const* envp) {
-        std::cout << "runGlobalInitializers()\n";
-        std::cout << "argc: " << argc << ", argv: " << argv << ", envp: " << envp << "\n";
-
         InitializerContext::ArgumentVector args(argc);
         std::copy(argv, argv + argc, args.begin());
 
         InitializerContext::EnvironmentMap env;
-        std::cout << "here\n";
         if (envp) {
             for(; *envp; ++envp) {
                 const char* firstEqualSign = strchr(*envp, '=');
@@ -102,7 +91,6 @@ namespace mongo {
     }
 
     void runGlobalInitializersOrDie(int argc, const char* const* argv, const char* const* envp) {
-        std::cout << "runGlobalInitializersOrDie()\n";
         Status status = runGlobalInitializers(argc, argv, envp);
         if (!status.isOK()) {
             std::cerr << "Failed global initialization: " << status << std::endl;
