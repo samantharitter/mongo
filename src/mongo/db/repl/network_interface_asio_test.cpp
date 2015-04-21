@@ -43,14 +43,39 @@ namespace mongo {
         class ReplTestASIO : public mongo::unittest::Test {
         public:
             ReplTestASIO() : _messageCount(0) {
+                _net = std::unique_ptr<NetworkInterfaceASIO>(new NetworkInterfaceASIO);
             }
 
+            // todo add dtor that calls shutdown on interface
+
             void init() {
-                _net = new NetworkInterfaceASIO;
+                std::cout << "init()\n";
+                _net->startup();
             }
 
             void startServer(int port) {
                 std::cout << "starting server on port " << port << "\n";
+            }
+
+            NetworkInterfaceASIO* getNet() {
+                return _net.get();
+            }
+
+            void waitForMessageCount(int count) {
+                // there are more graceful ways to do this
+                while (_messageCount < count) {
+                    std::cout << "waiting for messages...\n";
+                    sleep(1);
+                }
+            }
+
+            void receiveMessage(const ReplicationExecutor::ResponseStatus status) {
+                std::cout << "callback called\n";
+                _messageCount++;
+            }
+
+            int getMessageCount() {
+                return _messageCount;
             }
 
             void assertMessageCount(int expected) {
@@ -63,9 +88,21 @@ namespace mongo {
         };
 
         TEST_F(ReplTestASIO, DummyTest) {
-            // blah
-            startServer(12345);
-            assertMessageCount(0);
+            int runs = 1;
+            init();
+
+            NetworkInterfaceASIO* net = getNet();
+            const ReplicationExecutor::RemoteCommandRequest request(HostAndPort("localhost", 12345),
+                                                                    "somedb",
+                                                                    BSON("hello" << "world"));
+            for (int i = 0; i < runs; i++) {
+                net->startCommand(ReplicationExecutor::CallbackHandle(),
+                                  request,
+                                  stdx::bind(&ReplTestASIO::receiveMessage, this, ResponseStatus(Status::OK())));
+            }
+
+            waitForMessageCount(runs);
+            net->shutdown();
         }
 
     } // namespace repl

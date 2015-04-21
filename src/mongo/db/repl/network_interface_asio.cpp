@@ -119,13 +119,15 @@ namespace mongo {
         }
 
         void NetworkInterfaceASIO::_listen() {
-            std::cout << "listening...\n";
-            while (!_shutdown) {
+            do {
+                // run at least once
+                std::cout << "listening...\n";
                 if (_pending.empty()) {
                     sleep(1);
                     continue;
                 }
 
+                std::cout << "handling task\n";
                 CommandData task = _pending.front();
                 _pending.pop_front();
 
@@ -133,7 +135,7 @@ namespace mongo {
                 LOG(2) << "Network status of sending " << task.request.cmdObj.firstElementFieldName() <<
                     " to " << task.request.target << " was " << result.getStatus();
                 task.onFinish(result);
-            }
+            } while (!_shutdown);
         }
 
         void NetworkInterfaceASIO::_launchThread(NetworkInterfaceASIO* net, const std::string& threadName) {
@@ -141,19 +143,21 @@ namespace mongo {
             LOG(1) << "thread starting";
             net->_listen();
             LOG(1) << "thread ending";
+            std::cout << "shutting down thread " << threadName << "\n";
         }
 
         void NetworkInterfaceASIO::startup() {
-            std::cout << "starting up\n";
+            std::cout << "Network Interface starting up...\n";
             const std::string threadName("ReplExecASIO_listen");
             try {
                 _workerThread = boost::make_shared<boost::thread>(stdx::bind(&NetworkInterfaceASIO::_launchThread,
                                                                              this,
-                                                                             "aaaaah"));
+                                                                             threadName));
             }
             catch (const std::exception& ex) {
                 LOG(1) << "Failed to start " << threadName << "; caught exception: " << ex.what();
             }
+            std::cout << "done starting up\n";
             return;
         }
 
