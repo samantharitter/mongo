@@ -302,7 +302,9 @@ env.Library('hostandport', ['util/net/hostandport.cpp'],
 env.CppUnitTest('hostandport_test', ['util/net/hostandport_test.cpp'],
                 LIBDEPS=['hostandport'])
 
+# todo, perhaps put connection in its own library target?
 env.Library('network', [
+            "util/net/connection.cpp",
             "util/net/sock.cpp",
             "util/net/socket_poll.cpp",
             "util/net/ssl_expiration.cpp",
@@ -312,14 +314,25 @@ env.Library('network', [
             "util/net/message.cpp",
             "util/net/message_port.cpp",
             "util/net/listen.cpp" ],
-            LIBDEPS=['$BUILD_DIR/mongo/util/concurrency/ticketholder',
-                     '$BUILD_DIR/mongo/util/options_parser/options_parser',
-                     'background_job',
-                     'fail_point',
-                     'foundation',
-                     'hostandport',
-                     'server_options_core',
+            LIBDEPS=[
+                "$BUILD_DIR/third_party/shim_asio",
+                '$BUILD_DIR/mongo/util/concurrency/ticketholder',
+                '$BUILD_DIR/mongo/util/options_parser/options_parser',
+                'background_job',
+                'fail_point',
+                'foundation',
+                'hostandport',
+                'server_options_core',
             ])
+
+env.CppUnitTest(
+    target='connection_test',
+    source=[
+        "util/net/connection_test.cpp",
+    ],
+    LIBDEPS=[
+        'network',
+    ])
 
 env.Library(
     target='index_key_validate',
@@ -1038,14 +1051,7 @@ env.Library("db_shared",
       "util/net/poc.cpp" ],
     LIBDEPS=[
         "$BUILD_DIR/third_party/shim_asio",
-         "message_server_port",
-  #      "coredb",
- #       "coreserver",
-#        "mongodandmongos",
-#        "mongodwebserver",
-#        "ntservice",
-#        "serveronly",
-#        "mongod_options",
+        "message_server_port",
     ])
 
 serveronlyEnv = env.Clone()
