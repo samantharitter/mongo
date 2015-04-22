@@ -58,11 +58,14 @@ env.Library(
         # '$BUILD_DIR/mongo/db/query/lite_parsed_query',
     ])
 
-env.CppUnitTest('network_interface_asio_test',
-                'network_interface_asio_test.cpp',
-                LIBDEPS=[
-                    'network_interface_asio',
-                ])
+env.CppUnitTest(
+    target='network_interface_asio_test',
+    source= [
+        'network_interface_asio_test.cpp',
+    ],
+    LIBDEPS=[
+        'network_interface_asio',
+    ])
 
 env.Library(
     target='replication_executor_test_fixture',
