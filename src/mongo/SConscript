@@ -325,6 +325,13 @@ env.Library('network', [
                 'server_options_core',
             ])
 
+env.Library(
+    target='mock_socket',
+    source=[
+        "util/net/mock_socket.cpp",
+    ],
+    LIBDEPS=[])
+
 env.CppUnitTest(
     target='connection_test',
     source=[
@@ -332,6 +339,7 @@ env.CppUnitTest(
     ],
     LIBDEPS=[
         'network',
+        'mock_socket'
     ])
 
 env.Library(
