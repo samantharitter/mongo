@@ -33,6 +33,7 @@
 #include "asio.hpp"
 
 #include "mongo/util/net/message.h"
+#include "mongo/util/net/socket_interface.h"
 
 namespace mongo {
    namespace net {
@@ -40,29 +41,47 @@ namespace mongo {
       using asio::ip::tcp;
 
       // tcp::socket -> basic_stream_socket<tcp>
-      class MockSocketASIO {
+      class MockSocketASIO : public SocketInterface {
       public:
 
-         MockSocketASIO();
+         MockSocketASIO(asio::io_service& io_service);
 
          // need to inherit from tcp::socket, stub out basic socket functions:
-         // send
+
+         // override send methods
+         std::size_t send(const asio::const_buffer& buf) { return _send(buf); }
+         std::size_t send(const asio::const_buffer& buf,
+                          asio::socket_base::message_flags flags) { return _send(buf); }
+         std::size_t send(const asio::const_buffer& buf,
+                          asio::socket_base::message_flags flags,
+                          asio::error_code& ec) { return _send(buf); }
+
          // recv
+         std::size_t receive(const asio::mutable_buffer& buf) { return _recv(buf); }
+         std::size_t receive(const asio::mutable_buffer& buf,
+                             asio::socket_base::message_flags flags) { return _recv(buf); }
+         std::size_t receive(const asio::mutable_buffer& buf,
+                             asio::socket_base::message_flags flags,
+                             asio::error_code* ec) { return _recv(buf); }
+
          // async_send
          // async_recv
 
-         // have a send queue onto which we can push messages
-         void pushSend(const asio::const_buffer&& buf /* IN */);
+         // have a queue onto which we can push messages remote will receive
+         void pushRecv(const asio::const_buffer&& buf /* IN */);
 
-         // have a receive queue from which we can read messages
-         bool pullRecv(const asio::mutable_buffer& buf /* OUT */);
+         // have a receive queue from which we can read messages remote has sent
+         std::size_t pullSent(const asio::mutable_buffer& buf /* OUT */);
 
          // utility function to convert Message class to bytes?
          void messageToBuf(const Message& m, const asio::mutable_buffer& buf /* OUT */);
 
       private:
-         std::queue<asio::const_buffer> _toSend;
-         std::queue<asio::const_buffer> _recvd;
+         std::size_t _send(const asio::const_buffer& buf);
+         std::size_t _recv(const asio::mutable_buffer& buf);
+
+         std::queue<asio::const_buffer> _sent;
+         std::queue<asio::const_buffer> _toReceive;
       };
 
    } // namespace net

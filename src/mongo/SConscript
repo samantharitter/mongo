@@ -330,7 +330,18 @@ env.Library(
     source=[
         "util/net/mock_socket.cpp",
     ],
-    LIBDEPS=[])
+    LIBDEPS=[
+        "$BUILD_DIR/third_party/shim_asio",
+    ])
+
+env.CppUnitTest(
+    target='mock_socket_test',
+    source=[
+        "util/net/mock_socket_test.cpp",
+    ],
+    LIBDEPS=[
+        'mock_socket',
+    ])
 
 env.CppUnitTest(
     target='connection_test',

@@ -26,48 +26,28 @@
  *    it in the license file.
  */
 
-#include "mock_socket.h"
+#pragma once
+
+#include "asio.hpp"
 
 namespace mongo {
-    namespace net {
+   namespace net{
 
-        MockSocketASIO::MockSocketASIO(asio::io_service& io_service) {}
+      class SocketInterface {
+      public:
 
-        std::size_t MockSocketASIO::_send(const asio::const_buffer& buf) {
-            std::cout << "mock send\n";
-            _sent.push(buf);
-            return asio::buffer_size(buf);
-        }
+         virtual ~SocketInterface() {}
 
-        std::size_t MockSocketASIO::_recv(const asio::mutable_buffer& buf) {
-            std::cout << "mock receive\n";
-            if (!_toReceive.empty()) {
-                asio::buffer_copy(buf, _toReceive.front());
-                _toReceive.pop();
-                return asio::buffer_size(buf);
-            }
-            return 0;
-        }
+         // generic send
+         // TODO these should not rely on ASIO types.
+         virtual std::size_t send(const asio::const_buffer& buf) = 0;
 
-        void MockSocketASIO::pushRecv(const asio::const_buffer&& buf /* IN */) {
-            std::cout << "pushRecv()\n";
-            _toReceive.push(std::move(buf));
-        }
+         // generic receive
+         virtual std::size_t receive(const asio::mutable_buffer& buf) = 0;
 
-        std::size_t MockSocketASIO::pullSent(const asio::mutable_buffer& buf /* OUT */) {
-            std::cout << "pullSent()";
-            if (!_sent.empty()) {
-                asio::buffer_copy(buf, _sent.front());
-                _sent.pop();
-                return asio::buffer_size(buf);
-            }
-            return 0;
-        }
+      protected:
+         SocketInterface() {}
+      };
 
-        // utility function to convert Message class to bytes?
-        void MockSocketASIO::messageToBuf(const Message& m,
-                                          const asio::mutable_buffer& buf /* OUT */) {
-            std::cout << "messageToBuf()";
-        }
-    } // namespace net
+   } // namespace net
 } // namespace mongo
