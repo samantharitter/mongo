@@ -41,6 +41,7 @@
 namespace mongo {
     namespace repl {
 
+        using asio::ip::tcp;
 
         NetworkInterfaceASIO::NetworkInterfaceASIO() :
             _shutdown(false) { }
@@ -51,22 +52,11 @@ namespace mongo {
             return "nothing to see here, move along";
         }
 
-       void NetworkInterfaceASIO::_sendMessageToHostAndPort(const Message& m, const HostAndPort& addr) {
-            std::cout << "sending message to host and port\n";
-            // make a messaging port
-            // send message on port
-            // don't care about response.
-        }
-
-        void NetworkInterfaceASIO::_sendRequestToHostAndPort(
-            const ReplicationExecutor::RemoteCommandRequest& request,
-            const HostAndPort& addr) {
-            std::cout << "sending request to host and port\n";
-
-            // RemoteCommandRequest -> BSONObj
+        // TODO: need different handlers for different types of requests
+        void NetworkInterfaceASIO::_messageFromRequest(const ReplicationExecutor::RemoteCommandRequest& request,
+                                                       Message toSend) {
             BSONObj query = request.cmdObj;
 
-            // BSONObj -> Message
             BufBuilder b;
             b.appendNum(0); // opts, check default
             b.appendStr(request.dbname + ".$cmd");
@@ -75,47 +65,116 @@ namespace mongo {
             query.appendSelfToBufBuilder(b);
 
             // wrap up the message object, add headers etc.
-            Message toSend;
-            // may need to change this type? Where from, Message?
-            toSend.setData(dbQuery, b.buf(), b.len());
+            toSend.setData(dbQuery, b.buf(), b.len()); // must b outlive toSend?
             toSend.header().setId(nextMessageId());
             toSend.header().setResponseTo(0);
-
-            // send
-            _sendMessageToHostAndPort(toSend, addr);
         }
 
-        void NetworkInterfaceASIO::_sendRequest(const ReplicationExecutor::RemoteCommandRequest& request) {
-            _sendRequestToHostAndPort(request, request.target);
+        void NetworkInterfaceASIO::_asyncSendSimpleMessage(
+            tcp::socket sock,
+            const CommandData& cmd,
+            const asio::const_buffer& buf,
+            const Date_t start) {
+            auto self(shared_from_this());
+
+            asio::async_write(
+                              sock, asio::buffer(buf),
+                              [this, self, cmd, start](std::error_code ec, std::size_t /*length*/) {
+                                  std::cout << "async_write\n";
+                                  if (ec) {
+                                      // TODO handle legacy command errors and retry
+                                      std::cout << "a network error occurred :(\n";
+                                      _networkErrorCallback(cmd, ec);
+                                  } else {
+                                      _completedWriteCallback(cmd, start);
+                                  }
+                              });
         }
 
-        ResponseStatus NetworkInterfaceASIO::_runCommand(
-            const ReplicationExecutor::RemoteCommandRequest& request) {
-            std::cout << "running command " << request.cmdObj
-                      << " against database " << request.dbname
-                      << " across network to " << request.target.toString() << "\n";
-            try {
-                BSONObj info;
-                const Date_t start = now();
+        void NetworkInterfaceASIO::_asyncSendComplicatedMessage(
+            tcp::socket sock,
+            const CommandData& cmd,
+            std::vector<std::pair<char*, int>> data,
+            std::vector<std::pair<char*, int>>::const_iterator i,
+            const Date_t start) {
+            auto self(shared_from_this());
 
-                // TODO: tunnel info through
-                _sendRequest(request);
+            // if we are done, call callback from here
+            if (i == data.end()) {
+                _completedWriteCallback(cmd, start);
+            }
 
-                const Date_t finish = now();
-                return ResponseStatus(Response(info, Milliseconds(finish - start)));
+            // otherwise, send another buffer
+            asio::const_buffer buf(i->first, i->second); // data, length
+            i++;
+
+            asio::async_write(
+                              sock, asio::buffer(buf),
+                              [this, self, data, i, &cmd, sock, start]
+                              (std::error_code ec, std::size_t) {
+                   if (ec) {
+                       std::cout << "a network error sending complicated message\n";
+                       _networkErrorCallback(cmd, ec);
+                   } else {
+                       _asyncSendComplicatedMessage(sock, cmd, data, i, start);
+                   }
+               });
+        }
+
+        void NetworkInterfaceASIO::_completedWriteCallback(const CommandData& cmd, const Date_t start) {
+            std::cout << "completed the write\n";
+
+            const Date_t end = now();
+
+            // TODO make this real
+            BSONObj output;
+
+            // call the request object's callback fn
+            ResponseStatus status(Response(output, Milliseconds(end - start)));
+            cmd.onFinish(status);
+        }
+
+        void NetworkInterfaceASIO::_networkErrorCallback(const CommandData& cmd, std::error_code ec) {
+            std::cout << "in error callback handler\n";
+        }
+
+        void NetworkInterfaceASIO::_asyncRunCmd(const CommandData& cmd) {
+            ReplicationExecutor::RemoteCommandRequest request = cmd.request;
+            HostAndPort addr = request.target;
+            const Date_t start = now();
+
+            // get a socket to use for this operation, connected to HostAndPort
+            tcp::socket sock(_io_service);
+
+            // TODO use a non-blocking connect, store network state
+            tcp::resolver resolver(_io_service);
+            asio::connect(sock, resolver.resolve({addr.host(), std::to_string(addr.port())}));
+
+            // translate request into Message
+            Message m;
+            _messageFromRequest(request, m);
+
+            // async send
+            if (m.empty()) {
+                // call into callback directly
+                _completedWriteCallback(cmd, start);
+            } else if (m._buf!= 0) {
+                // simple send
+                asio::const_buffer buf(m._buf, MsgData::ConstView(m._buf).getLen());
+                _asyncSendSimpleMessage(std::move(sock), cmd, buf, start);
+            } else {
+                // complex send
+                std::vector<std::pair<char *, int>> data = m._data;
+                std::vector<std::pair<char *, int>>::const_iterator i = data.begin();
+                _asyncSendComplicatedMessage(std::move(sock), cmd, data, i, start);
             }
-            catch (const DBException& ex) {
-                return ResponseStatus(ex.toStatus());
-            }
-            catch (const std::exception& ex) {
-                return ResponseStatus(
-                                      ErrorCodes::UnknownError,
-                                      mongoutils::str::stream() <<
-                                      "Sending command " << request.cmdObj <<
-                                      " on database " << request.dbname <<
-                                      " over network to " << request.target.toString()
-                                      << " received exception " << ex.what());
-            }
+        }
+
+        void NetworkInterfaceASIO::_runCommand(const CommandData& cmd) {
+            std::cout << "running command " << cmd.request.cmdObj
+                      << " against database " << cmd.request.dbname
+                      << " across network to " << cmd.request.target.toString() << "\n";
+            _asyncRunCmd(cmd);
         }
 
         void NetworkInterfaceASIO::_listen() {
@@ -131,10 +190,7 @@ namespace mongo {
                 CommandData task = _pending.front();
                 _pending.pop_front();
 
-                ResponseStatus result = _runCommand(task.request);
-                LOG(2) << "Network status of sending " << task.request.cmdObj.firstElementFieldName() <<
-                    " to " << task.request.target << " was " << result.getStatus();
-                task.onFinish(result);
+                _runCommand(task);
             } while (!_shutdown);
         }
 

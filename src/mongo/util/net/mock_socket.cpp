@@ -36,7 +36,7 @@ namespace mongo {
         std::size_t MockSocketASIO::_send(const asio::const_buffer& buf) {
             std::cout << "mock send\n";
             _sent.push(buf);
-            return asio::buffer_size(buf);
+            return asio::buffer_size(_sent.front());
         }
 
         std::size_t MockSocketASIO::_recv(const asio::mutable_buffer& buf) {
@@ -55,11 +55,12 @@ namespace mongo {
         }
 
         std::size_t MockSocketASIO::pullSent(const asio::mutable_buffer& buf /* OUT */) {
-            std::cout << "pullSent()";
+            std::cout << "pullSent()\n";
             if (!_sent.empty()) {
-                asio::buffer_copy(buf, _sent.front());
+                const asio::const_buffer temp = _sent.front();
+                asio::buffer_copy(buf, temp);
                 _sent.pop();
-                return asio::buffer_size(buf);
+                return asio::buffer_size(temp);
             }
             return 0;
         }
@@ -67,7 +68,7 @@ namespace mongo {
         // utility function to convert Message class to bytes?
         void MockSocketASIO::messageToBuf(const Message& m,
                                           const asio::mutable_buffer& buf /* OUT */) {
-            std::cout << "messageToBuf()";
+            std::cout << "messageToBuf()\n";
         }
     } // namespace net
 } // namespace mongo

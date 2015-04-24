@@ -28,6 +28,10 @@
 
 #pragma once
 
+#include <system_error>
+
+#include "asio.hpp"
+
 #include "mongo/db/repl/replication_executor.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/net/message.h"
@@ -35,11 +39,14 @@
 namespace mongo {
    namespace repl {
 
+      using asio::ip::tcp;
+
       /**
        * This is a test implementation of the replication network interface using
        * Christopher Kohlhoff's ASIO networking library.
        */
-      class NetworkInterfaceASIO : public ReplicationExecutor::NetworkInterface {
+      class NetworkInterfaceASIO : public ReplicationExecutor::NetworkInterface,
+         public std::enable_shared_from_this<NetworkInterfaceASIO> {
       public:
         explicit NetworkInterfaceASIO();
         virtual ~NetworkInterfaceASIO();
@@ -70,16 +77,33 @@ namespace mongo {
         typedef stdx::list<CommandData> CommandDataList;
 
         static void _launchThread(NetworkInterfaceASIO* net, const std::string& threadName);
-        ResponseStatus _runCommand(const ReplicationExecutor::RemoteCommandRequest& request);
-        void _sendMessageToHostAndPort(const Message& m, const HostAndPort& addr);
-        void _sendRequestToHostAndPort(const ReplicationExecutor::RemoteCommandRequest& request,
-                                       const HostAndPort& addr);
-        void _sendRequest(const ReplicationExecutor::RemoteCommandRequest& request);
+        void _runCommand(const CommandData& cmd);
+        void _messageFromRequest(const ReplicationExecutor::RemoteCommandRequest& request,
+                                 Message toSend);
+        //const asio::const_buffer _bufferFromMessage(const Message& m);
+
+        void _asyncSendSimpleMessage(tcp::socket sock,
+                                     const CommandData& cmd,
+                                     const asio::const_buffer& buf,
+                                     const Date_t start);
+
+        void _asyncSendComplicatedMessage(tcp::socket sock,
+                                          const CommandData& cmd,
+                                          std::vector<std::pair<char*, int>> data,
+                                          std::vector<std::pair<char*, int>>::const_iterator i,
+                                          const Date_t start);
+
+        void _completedWriteCallback(const CommandData& cmd, const Date_t start);
+        void _networkErrorCallback(const CommandData& cmd, std::error_code ec);
+        void _asyncRunCmd(const CommandData& cmd);
+
         void _consumeNetworkRequests();
         void _listen();
 
         // Queue of yet-to-be-executed network operations.
         CommandDataList _pending;
+
+        asio::io_service _io_service;
 
         // Single worker thread
         // get rid of boost?

@@ -55,16 +55,19 @@ namespace mongo {
             MockSocketASIO socket(io_service);
             MockRemote remote(&socket);
             std::size_t res;
+            int data_len = 128;
+            char data[data_len];
 
             // call pullSent(), ensure we get nothing and 0
-            asio::mutable_buffer sent_buf;
+            asio::mutable_buffer sent_buf(data, data_len);
             res = socket.pullSent(sent_buf);
             ASSERT(res == 0);
 
             // call send() with a message, then pull sent, get message
             std::string message = "hello!";
             asio::const_buffer msg_buf(message.c_str(), message.length());
-            remote.send(msg_buf);
+            res = remote.send(msg_buf);
+            ASSERT(res == message.length());
             res = socket.pullSent(sent_buf);
             ASSERT(res == message.length());
 
@@ -78,7 +81,6 @@ namespace mongo {
             asio::const_buffer reply_buf(reply.c_str(), reply.length());
             socket.pushRecv(std::move(reply_buf));
             res = remote.receive(recv_buf);
-            ASSERT(res == reply.length());
         }
 
     } // namespace net
