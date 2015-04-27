@@ -37,6 +37,7 @@
 
 #include "mongo/bson/bsonobj.h"
 #include "mongo/util/log.h"
+#include "mongo/stdx/memory.h"
 
 namespace mongo {
     namespace repl {
@@ -70,58 +71,52 @@ namespace mongo {
             toSend.header().setResponseTo(0);
         }
 
-        void NetworkInterfaceASIO::_asyncSendSimpleMessage(
-            tcp::socket sock,
-            const CommandData& cmd,
-            const asio::const_buffer& buf,
-            const Date_t start) {
+        void NetworkInterfaceASIO::_asyncSendSimpleMessage(const std::unique_ptr<AsyncOp>& op,
+                                                           const asio::const_buffer& buf) {
             auto self(shared_from_this());
 
             asio::async_write(
-                              sock, asio::buffer(buf),
-                              [this, self, cmd, start](std::error_code ec, std::size_t /*length*/) {
+                              op->_sock, asio::buffer(buf),
+                              [this, self, &op](std::error_code ec, std::size_t /*length*/) {
                                   std::cout << "async_write\n";
                                   if (ec) {
                                       // TODO handle legacy command errors and retry
                                       std::cout << "a network error occurred :(\n";
-                                      _networkErrorCallback(cmd, ec);
+                                      _networkErrorCallback(op, ec);
                                   } else {
-                                      _completedWriteCallback(cmd, start);
+                                      _completedWriteCallback(op);
                                   }
                               });
         }
 
         void NetworkInterfaceASIO::_asyncSendComplicatedMessage(
-            tcp::socket sock,
-            const CommandData& cmd,
-            std::vector<std::pair<char*, int>> data,
-            std::vector<std::pair<char*, int>>::const_iterator i,
-            const Date_t start) {
+               const std::unique_ptr<AsyncOp>& op,
+               std::vector<std::pair<char*, int>> data,
+               std::vector<std::pair<char*, int>>::const_iterator i) {
             auto self(shared_from_this());
 
             // if we are done, call callback from here
             if (i == data.end()) {
-                _completedWriteCallback(cmd, start);
+                _completedWriteCallback(op);
             }
 
             // otherwise, send another buffer
             asio::const_buffer buf(i->first, i->second); // data, length
             i++;
 
-            asio::async_write(
-                              sock, asio::buffer(buf),
-                              [this, self, data, i, &cmd, sock, start]
+            asio::async_write(op->_sock, asio::buffer(buf),
+                              [this, self, data, i, &op]
                               (std::error_code ec, std::size_t) {
                    if (ec) {
                        std::cout << "a network error sending complicated message\n";
-                       _networkErrorCallback(cmd, ec);
+                       _networkErrorCallback(op, ec);
                    } else {
-                       _asyncSendComplicatedMessage(sock, cmd, data, i, start);
+                       _asyncSendComplicatedMessage(op, data, i);
                    }
                });
         }
 
-        void NetworkInterfaceASIO::_completedWriteCallback(const CommandData& cmd, const Date_t start) {
+        void NetworkInterfaceASIO::_completedWriteCallback(const std::unique_ptr<AsyncOp>& op) {
             std::cout << "completed the write\n";
 
             const Date_t end = now();
@@ -130,51 +125,49 @@ namespace mongo {
             BSONObj output;
 
             // call the request object's callback fn
-            ResponseStatus status(Response(output, Milliseconds(end - start)));
-            cmd.onFinish(status);
+            ResponseStatus status(Response(output, Milliseconds(end - op->_start)));
+            op->_cmd.onFinish(status);
         }
 
-        void NetworkInterfaceASIO::_networkErrorCallback(const CommandData& cmd, std::error_code ec) {
+        void NetworkInterfaceASIO::_networkErrorCallback(const std::unique_ptr<AsyncOp>& op,
+                                                         std::error_code ec) {
             std::cout << "in error callback handler\n";
         }
 
-        void NetworkInterfaceASIO::_asyncRunCmd(const CommandData& cmd) {
+        void NetworkInterfaceASIO::_asyncRunCmd(const CommandData&& cmd) {
             ReplicationExecutor::RemoteCommandRequest request = cmd.request;
-            HostAndPort addr = request.target;
-            const Date_t start = now();
 
             // get a socket to use for this operation, connected to HostAndPort
+            // but put it on the heap
             tcp::socket sock(_io_service);
 
-            // TODO use a non-blocking connect, store network state
-            tcp::resolver resolver(_io_service);
-            asio::connect(sock, resolver.resolve({addr.host(), std::to_string(addr.port())}));
+            std::unique_ptr<AsyncOp> op = stdx::make_unique<AsyncOp>(std::move(cmd), now());
 
             // translate request into Message
             Message m;
-            _messageFromRequest(request, m);
+            _messageFromRequest(op->_cmd.request, m);
 
             // async send
             if (m.empty()) {
                 // call into callback directly
-                _completedWriteCallback(cmd, start);
+                _completedWriteCallback(op);
             } else if (m._buf!= 0) {
                 // simple send
                 asio::const_buffer buf(m._buf, MsgData::ConstView(m._buf).getLen());
-                _asyncSendSimpleMessage(std::move(sock), cmd, buf, start);
+                _asyncSendSimpleMessage(op, buf);
             } else {
                 // complex send
                 std::vector<std::pair<char *, int>> data = m._data;
                 std::vector<std::pair<char *, int>>::const_iterator i = data.begin();
-                _asyncSendComplicatedMessage(std::move(sock), cmd, data, i, start);
+                _asyncSendComplicatedMessage(op, data, i);
             }
         }
 
-        void NetworkInterfaceASIO::_runCommand(const CommandData& cmd) {
+        void NetworkInterfaceASIO::_runCommand(const CommandData&& cmd) {
             std::cout << "running command " << cmd.request.cmdObj
                       << " against database " << cmd.request.dbname
                       << " across network to " << cmd.request.target.toString() << "\n";
-            _asyncRunCmd(cmd);
+            _asyncRunCmd(std::move(cmd));
         }
 
         void NetworkInterfaceASIO::_listen() {
@@ -190,7 +183,7 @@ namespace mongo {
                 CommandData task = _pending.front();
                 _pending.pop_front();
 
-                _runCommand(task);
+                _runCommand(std::move(task));
             } while (!_shutdown);
         }
 

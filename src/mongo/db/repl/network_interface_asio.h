@@ -66,36 +66,58 @@ namespace mongo {
                 const stdx::function<void (OperationContext*)>& callback);
 
       private:
+
         /**
          * Information describing an in-flight command.
          */
         struct CommandData {
-            ReplicationExecutor::CallbackHandle cbHandle;
-            ReplicationExecutor::RemoteCommandRequest request;
-            RemoteCommandCompletionFn onFinish;
+           ReplicationExecutor::CallbackHandle cbHandle;
+           ReplicationExecutor::RemoteCommandRequest request;
+           RemoteCommandCompletionFn onFinish;
         };
         typedef stdx::list<CommandData> CommandDataList;
 
+        /**
+         * A helper type for async networking operations
+         */
+        class AsyncOp {
+        public:
+        AsyncOp(const CommandData&& cmd, Date_t now) :
+              _start(now),
+              _cmd(cmd),
+              _service(),
+              _sock(_service)
+              {
+                 // connect socket
+                 // TODO use a non-blocking connect, store network state
+                 HostAndPort addr = _cmd.request.target;
+                 tcp::resolver resolver(_service);
+                 asio::connect(_sock, resolver.resolve({addr.host(), std::to_string(addr.port())}));
+              }
+
+           const Date_t _start;
+           CommandData _cmd;
+           asio::io_service _service;
+           tcp::socket _sock;
+        };
+
         static void _launchThread(NetworkInterfaceASIO* net, const std::string& threadName);
-        void _runCommand(const CommandData& cmd);
+        void _runCommand(const CommandData&& cmd);
+        void _asyncRunCmd(const CommandData&& cmd);
+
+        // todo make free function
         void _messageFromRequest(const ReplicationExecutor::RemoteCommandRequest& request,
                                  Message toSend);
-        //const asio::const_buffer _bufferFromMessage(const Message& m);
 
-        void _asyncSendSimpleMessage(tcp::socket sock,
-                                     const CommandData& cmd,
-                                     const asio::const_buffer& buf,
-                                     const Date_t start);
+        void _asyncSendSimpleMessage(const std::unique_ptr<AsyncOp>& op,
+                                     const asio::const_buffer& buf);
 
-        void _asyncSendComplicatedMessage(tcp::socket sock,
-                                          const CommandData& cmd,
+        void _asyncSendComplicatedMessage(const std::unique_ptr<AsyncOp>& op,
                                           std::vector<std::pair<char*, int>> data,
-                                          std::vector<std::pair<char*, int>>::const_iterator i,
-                                          const Date_t start);
+                                          std::vector<std::pair<char*, int>>::const_iterator i);
 
-        void _completedWriteCallback(const CommandData& cmd, const Date_t start);
-        void _networkErrorCallback(const CommandData& cmd, std::error_code ec);
-        void _asyncRunCmd(const CommandData& cmd);
+        void _completedWriteCallback(const std::unique_ptr<AsyncOp>& op);
+        void _networkErrorCallback(const std::unique_ptr<AsyncOp>& op, std::error_code ec);
 
         void _consumeNetworkRequests();
         void _listen();
@@ -105,9 +127,6 @@ namespace mongo {
 
         asio::io_service _io_service;
 
-        // Single worker thread
-        // get rid of boost?
-        //boost::thread _workerThread;
         boost::shared_ptr<boost::thread> _workerThread;
 
         bool _shutdown;
