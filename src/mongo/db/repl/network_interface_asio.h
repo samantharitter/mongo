@@ -32,6 +32,8 @@
 
 #include "asio.hpp"
 
+#include "boost/thread.hpp"
+
 #include "mongo/db/repl/replication_executor.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/net/message.h"
@@ -82,22 +84,26 @@ namespace mongo {
          */
         class AsyncOp {
         public:
-        AsyncOp(const CommandData&& cmd, Date_t now) :
-              _start(now),
+        AsyncOp(const CommandData&& cmd, Date_t now, asio::io_service* service) :
+           _start(now),
               _cmd(cmd),
-              _service(),
-              _sock(_service)
+              _service(service),
+              _sock(*_service)
               {
                  // connect socket
                  // TODO use a non-blocking connect, store network state
                  HostAndPort addr = _cmd.request.target;
-                 tcp::resolver resolver(_service);
+                 tcp::resolver resolver(*_service);
                  asio::connect(_sock, resolver.resolve({addr.host(), std::to_string(addr.port())}));
+              }
+
+              ~AsyncOp() {
+                 std::cout << "address of this object is " << this << std::flush;
               }
 
            const Date_t _start;
            CommandData _cmd;
-           asio::io_service _service;
+           asio::io_service* _service;
            tcp::socket _sock;
         };
 
@@ -107,7 +113,7 @@ namespace mongo {
 
         // todo make free function
         void _messageFromRequest(const ReplicationExecutor::RemoteCommandRequest& request,
-                                 Message toSend);
+                                 Message& toSend);
 
         void _asyncSendSimpleMessage(const std::unique_ptr<AsyncOp>& op,
                                      const asio::const_buffer& buf);
@@ -128,6 +134,7 @@ namespace mongo {
         asio::io_service _io_service;
 
         boost::shared_ptr<boost::thread> _workerThread;
+        boost::thread _serviceRunner;
 
         bool _shutdown;
       };
