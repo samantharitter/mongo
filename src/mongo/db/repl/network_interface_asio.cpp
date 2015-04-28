@@ -32,8 +32,12 @@
 
 #include "mongo/db/repl/network_interface_asio.h"
 
+#include <chrono>
+
 #include <boost/make_shared.hpp>
 #include <boost/thread.hpp>
+
+#include "asio/basic_deadline_timer.hpp"
 
 #include "mongo/bson/bsonobj.h"
 #include "mongo/util/log.h"
@@ -80,28 +84,26 @@ namespace mongo {
             std::cout << "NETWORK_INTERFACE_ASIO: done!\n" << std::flush;
         }
 
-        void NetworkInterfaceASIO::_asyncSendSimpleMessage(const std::unique_ptr<AsyncOp>& op,
+        void NetworkInterfaceASIO::_asyncSendSimpleMessage(const boost::shared_ptr<AsyncOp> op,
                                                            const asio::const_buffer& buf) {
-            std::cout << "address of op:" << op.get() << std::flush;
             std::cout << "NETWORK_INTERFACE_ASIO: sending simple message\n" << std::flush;
             asio::async_write(
-                              op->_sock, asio::buffer(buf),
-                              [this, &op](std::error_code ec, std::size_t /*length*/) {
-                                  std::cout << "address of op:" << &op << std::flush;
-                                  std::cout << "NETWORK_INTERFACE_ASIO: async_write\n" << std::flush;
-                                  if (ec) {
-                                      // TODO handle legacy command errors and retry
-                                      std::cout << "NETWORK_INTERFACE_ASIO: a network error occurred :(\n" << std::flush;
-                                      _networkErrorCallback(op, ec);
-                                  } else {
-                                      std::cout << "NETWORK_INTERFACE_ASIO: send complete\n" << std::flush;
-                                      _completedWriteCallback(op);
-                                  }
-                              });
+                op->_sock, asio::buffer(buf),
+                [this, op](std::error_code ec, std::size_t /*length*/) {
+                    std::cout << "NETWORK_INTERFACE_ASIO: async_write\n" << std::flush;
+                    if (ec) {
+                        // TODO handle legacy command errors and retry
+                        std::cout << "NETWORK_INTERFACE_ASIO: a network error occurred\n" << std::flush;
+                        _networkErrorCallback(op, ec);
+                    } else {
+                        std::cout << "NETWORK_INTERFACE_ASIO: send complete\n" << std::flush;
+                        _completedWriteCallback(op);
+                    }
+                });
         }
 
         void NetworkInterfaceASIO::_asyncSendComplicatedMessage(
-               const std::unique_ptr<AsyncOp>& op,
+               const boost::shared_ptr<AsyncOp> op,
                std::vector<std::pair<char*, int>> data,
                std::vector<std::pair<char*, int>>::const_iterator i) {
             std::cout << "NETWORK_INTERFACE_ASIO: sending complicated message\n" << std::flush;
@@ -115,7 +117,7 @@ namespace mongo {
             i++;
 
             asio::async_write(op->_sock, asio::buffer(buf),
-                              [this, data, i, &op]
+                              [this, data, i, op]
                               (std::error_code ec, std::size_t) {
                    if (ec) {
                        std::cout << "NETWORK_INTERFACE_ASIO: a network error sending complicated message\n" << std::flush;
@@ -126,7 +128,7 @@ namespace mongo {
                });
         }
 
-        void NetworkInterfaceASIO::_completedWriteCallback(const std::unique_ptr<AsyncOp>& op) {
+        void NetworkInterfaceASIO::_completedWriteCallback(const boost::shared_ptr<AsyncOp> op) {
             std::cout << "NETWORK_INTERFACE_ASIO: completed the write\n" << std::flush;
             const Date_t end = now();
 
@@ -138,21 +140,16 @@ namespace mongo {
             op->_cmd.onFinish(status);
         }
 
-        void NetworkInterfaceASIO::_networkErrorCallback(const std::unique_ptr<AsyncOp>& op,
+        void NetworkInterfaceASIO::_networkErrorCallback(const boost::shared_ptr<AsyncOp> op,
                                                          std::error_code ec) {
             std::cout << "NETWORK_INTERFACE_ASIO: in error callback handler\n" << std::flush;
         }
 
         void NetworkInterfaceASIO::_asyncRunCmd(const CommandData&& cmd) {
             ReplicationExecutor::RemoteCommandRequest request = cmd.request;
-            std::cout << "NETWORK_INTERFACE_ASIO: asyncRuNCommand\n" << std::flush;
+            std::cout << "NETWORK_INTERFACE_ASIO: asyncRunCommand\n" << std::flush;
 
-            // get a socket to use for this operation, connected to HostAndPort
-            // but put it on the heap
-            //tcp::socket sock(_io_service);
-
-            std::unique_ptr<AsyncOp> op = stdx::make_unique<AsyncOp>(std::move(cmd), now(),
-                                                                     &_io_service);
+            boost::shared_ptr<AsyncOp> op(boost::make_shared<AsyncOp>(std::move(cmd), now(), &_io_service));
 
             // translate request into Message
             Message m;
@@ -186,54 +183,42 @@ namespace mongo {
             _asyncRunCmd(std::move(cmd));
         }
 
-        void NetworkInterfaceASIO::_listen() {
-            do {
-                // run at least once
-                std::cout << "NETWORK_INTERFACE_ASIO: listening...\n" << std::flush;
-                if (_pending.empty()) {
-                    sleep(10);
-                    continue;
-                }
+        // TODO: need some kind of timer to keep service alive
+        // may need to continuously enqueue the timer on the service from its handler
+        // look at deadline timer
+        void NetworkInterfaceASIO::_killTime() {
+            if (_shutdown) return;
 
-                std::cout << "NETWORK_INTERFACE_ASIO: handling task\n" << std::flush;
-                CommandData task = _pending.front();
-                _pending.pop_front();
+            asio::steady_timer timer(_io_service);
+            timer.expires_after(std::chrono::seconds(10));
 
-                _runCommand(std::move(task));
-            } while (!_shutdown);
+            timer.async_wait([this](const asio::error_code& ec) {
+                    if (ec) {
+                        std::cout << "NETWORK_INTERFACE_ASIO: timer returned an error: " << ec << "\n" << std::flush;
+                        // TODO why do we always get an error?
+                        sleep(1);
+                    }
+                    _killTime();
+                });
         }
 
-        void NetworkInterfaceASIO::_launchThread(NetworkInterfaceASIO* net, const std::string& threadName) {
-            std::cout << "NETWORK_INTERFACE_ASIO: launching thread " << threadName << "\n" << std::flush;
-            LOG(1) << "thread starting";
-            net->_listen();
-            LOG(1) << "thread ending";
-            std::cout << "NETWORK_INTERFACE_ASIO: shutting down thread " << threadName << "\n" << std::flush;
-        }
-
-        // TODO: function that launches the io_service
-
-        // ditch the queue and the condition variable and stuff, let ASIO handle that.
-        // replication executor should call directly into thing that launches async_write
-        // no threads to wait on thing.
-
-        // could store the AOs in a std::set (protect with a lock), then use it in callback, then delete
+        // can we tell executor that work has started and not tell it to finish?  Will it listen?
 
         void NetworkInterfaceASIO::startup() {
             std::cout << "NETWORK_INTERFACE_ASIO: Network Interface starting up...\n" << std::flush;
-            //const std::string threadName("ReplExecASIO_listen");
-            // try {
-            //     _workerThread = boost::make_shared<boost::thread>(stdx::bind(&NetworkInterfaceASIO::_launchThread,
-            //                                                                  this,
-            //                                                                  threadName));
-            // }
-            // catch (const std::exception& ex) {
-            //     LOG(1) << "Failed to start " << threadName << "; caught exception: " << ex.what();
-            // }
 
-            // TODO: launch io service
+            // must schedule some work for the io_service to do
+            _killTime();
+
             _serviceRunner = boost::thread([this]() {
-                    _io_service.run();
+                    std::cout << "NETWORK_INTERFACE_ASIO: running io_service\n" << std::flush;
+
+                    while (!_shutdown) {
+                        std::cout << "NET: about to run one\n";
+                        auto res = _io_service.run();
+                        std::cout << "NET: done running one, returned " << res << "\n";
+                    }
+                    std::cout << "service.run() returned\n" << std::flush;
                 });
 
             std::cout << "NETWORK_INTERFACE_ASIO: done starting up\n" << std::flush;
@@ -244,7 +229,6 @@ namespace mongo {
             std::cout << "NETWORK_INTERFACE_ASIO: shutting down\n" << std::flush;
 
             _shutdown = true;
-            //_workerThread->boost::thread::join();
 
             _io_service.stop();
             _serviceRunner.join();
@@ -274,16 +258,16 @@ namespace mongo {
                 const ReplicationExecutor::CallbackHandle& cbHandle,
                 const ReplicationExecutor::RemoteCommandRequest& request,
                 const RemoteCommandCompletionFn& onFinish) {
+
             std::cout << "NETWORK_INTERFACE_ASIO: beginning command\n" << std::flush;
             LOG(2) << "Scheduling " << request.cmdObj.firstElementFieldName() << " to " <<
                 request.target;
 
-            _pending.push_back(CommandData());
-
-            CommandData& cd = _pending.back();
+            CommandData cd = CommandData();
             cd.cbHandle = cbHandle;
             cd.request = request;
             cd.onFinish = onFinish;
+            _runCommand(std::move(cd));
         }
 
         void NetworkInterfaceASIO::cancelCommand(const ReplicationExecutor::CallbackHandle& cbHandle) {

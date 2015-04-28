@@ -58,6 +58,11 @@ namespace mongo {
             void init() {
                 std::cout << "TEST: init()\n" << std::flush;
                 _net->startup();
+
+                // run io service
+                _serviceRunner = boost::thread([this]() {
+                        _service.run();
+                    });
             }
 
             void listen(int port) {
@@ -73,6 +78,7 @@ namespace mongo {
 
                 // todo make this async.
                 while (!_shutdown) {
+                    std::cout << "TEST: waiting for connections...\n" << std::flush;
                     tcp::socket sock(_service);
                     asio::error_code ec;
                     _acceptor.accept(sock, ec);
@@ -80,12 +86,22 @@ namespace mongo {
                     std::cout << "TEST: accepted a connection wooot.\n" << std::flush;
 
                     char c[256];
-                    sock.receive(asio::buffer(c, 256));
+                    auto buf(asio::buffer(c, 256));
 
-                    std::cout << "TEST: received message " << c << "\n" << std::flush;
+                    try {
+                        size_t res;
+                        do {
+                            res = sock.read_some(buf);
+                            std::cout << "TEST: received " << res << " bytes\n";
+                        } while (res > 0);
+                    } catch(const std::exception& e) {
+                        std::cout << "TEST: caught an exception in read: " << e.what() << "\n";
+                    }
+
+                    std::string s(c);
+                    std::cout << "TEST: received message " << s << ", closing socket\n" << std::flush;
 
                     sock.close();
-                    sleep(1);
                 }
             }
 
@@ -107,6 +123,9 @@ namespace mongo {
                 _shutdown = true;
                 _acceptor.close();
                 _listener->boost::thread::join();
+
+                _service.stop();
+                _serviceRunner.join();
             }
 
             boost::shared_ptr<NetworkInterfaceASIO> getNet() {
@@ -126,14 +145,6 @@ namespace mongo {
                 _messageCount++;
             }
 
-            int getMessageCount() {
-                return _messageCount;
-            }
-
-            void assertMessageCount(int expected) {
-                ASSERT(_messageCount == expected);
-            }
-
         private:
             int _messageCount;
             bool _shutdown;
@@ -141,6 +152,7 @@ namespace mongo {
             asio::io_service _service;
             tcp::acceptor _acceptor;
             boost::shared_ptr<NetworkInterfaceASIO> _net;
+            boost::thread _serviceRunner;
         };
 
         TEST_F(ReplTestASIO, DummyTest) {
@@ -158,6 +170,8 @@ namespace mongo {
             const ReplicationExecutor::RemoteCommandRequest request(HostAndPort("localhost", port),
                                                                     "somedb",
                                                                     BSON("hello" << "world"));
+            sleep(3); // test needs a delay??
+
             for (int i = 0; i < runs; i++) {
                 std::cout << "TEST: enqueuing work\n" << std::flush;
                 net->startCommand(ReplicationExecutor::CallbackHandle(),

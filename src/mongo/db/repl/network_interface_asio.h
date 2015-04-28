@@ -95,6 +95,7 @@ namespace mongo {
                  HostAndPort addr = _cmd.request.target;
                  tcp::resolver resolver(*_service);
                  asio::connect(_sock, resolver.resolve({addr.host(), std::to_string(addr.port())}));
+                 //std::cout << x;
               }
 
               ~AsyncOp() {
@@ -107,7 +108,8 @@ namespace mongo {
            tcp::socket _sock;
         };
 
-        static void _launchThread(NetworkInterfaceASIO* net, const std::string& threadName);
+        void _killTime();
+
         void _runCommand(const CommandData&& cmd);
         void _asyncRunCmd(const CommandData&& cmd);
 
@@ -115,26 +117,20 @@ namespace mongo {
         void _messageFromRequest(const ReplicationExecutor::RemoteCommandRequest& request,
                                  Message& toSend);
 
-        void _asyncSendSimpleMessage(const std::unique_ptr<AsyncOp>& op,
+        void _asyncSendSimpleMessage(const boost::shared_ptr<AsyncOp> op,
                                      const asio::const_buffer& buf);
 
-        void _asyncSendComplicatedMessage(const std::unique_ptr<AsyncOp>& op,
+        void _asyncSendComplicatedMessage(const boost::shared_ptr<AsyncOp> op,
                                           std::vector<std::pair<char*, int>> data,
                                           std::vector<std::pair<char*, int>>::const_iterator i);
 
-        void _completedWriteCallback(const std::unique_ptr<AsyncOp>& op);
-        void _networkErrorCallback(const std::unique_ptr<AsyncOp>& op, std::error_code ec);
-
-        void _consumeNetworkRequests();
-        void _listen();
-
-        // Queue of yet-to-be-executed network operations.
-        CommandDataList _pending;
+        void _completedWriteCallback(const boost::shared_ptr<AsyncOp> op);
+        void _networkErrorCallback(const boost::shared_ptr<AsyncOp> op, std::error_code ec);
 
         asio::io_service _io_service;
 
-        boost::shared_ptr<boost::thread> _workerThread;
         boost::thread _serviceRunner;
+        std::set<AsyncOp> _active_ops;
 
         bool _shutdown;
       };
