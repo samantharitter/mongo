@@ -80,7 +80,6 @@ namespace mongo {
 
                 std::string s(c);
                 std::cout << "TEST: received message " << s << "\n" << std::flush;
-                //parseMessage(buf, res);
 
                 for(int i = 0; i < 256; i++) {
                     std::cout << c[i];
@@ -99,18 +98,71 @@ namespace mongo {
                                            if (ec) {
                                                std::cout << "TEST: accept error\n";
                                            } else {
-                                               after_accept(sock);
+                                               handleIncomingMsg(sock);
+                                               //after_accept(sock);
                                            }
                                            do_accept();
                     });
             }
 
-            // TODO: async method to recv MSGHEADER, completion handler calls method to
-            // recv MSG body.
+            void process(Message& m) {
+                // this is here as an example of where we might interface
+                // with the current message-handling framework in mongod
+                // after some logic this method would hand off to assembleResponse()
+            }
 
-            void parseMessage(asio::mutable_buffer buf, size_t bytes) {
-                // assumptions:
-                // - @buf contains an entire message
+            void recvMsgBody(boost::shared_ptr<tcp::socket> sock,
+                             boost::shared_ptr<MSGHEADER::Value> header,
+                             int headerLen) {
+                std::cout << "TEST: recvMsgBody()\n";
+
+                // todo: error checking on len
+                // len = whole message length, data + header
+                int len = header->constView().getMessageLength();
+
+                // todo: server code uses crazy padding hack, investigate.
+                boost::shared_ptr<char[len]> buf(new char[len]);
+                boost::shared_ptr<MsgData::View> md(boost::make_shared<MsgData::View>(buf.get()));
+
+                // copy header data into master buffer
+                memcpy(md->view2ptr(), header.get(), headerLen);
+                int bodyLength = len - headerLen;
+
+                std::cout << "receiving message\n" << std::flush;
+
+                // receive remaining data into md->data
+                asio::async_read(*sock, asio::buffer(md->data(), bodyLength),
+                                 [this, md, buf](asio::error_code ec, size_t bytes) {
+                                     if (ec) {
+                                         std::cout << "TEST: error receiving message body\n" << std::flush;
+                                     } else {
+                                         std::cout << "TEST: received message body\n" << std::flush;
+                                         Message m;
+                                         m.setData(md->view2ptr(), true);
+                                         process(m);
+                                     }
+                                 });
+
+                std::cout << "returning from recvMsgBody\n" << std::flush;
+            }
+
+            void handleIncomingMsg(boost::shared_ptr<tcp::socket> sock) {
+                std::cout << "TEST: handleIncomingMsg()\n";
+
+                // flow is:
+                // 1. receive header
+                boost::shared_ptr<MSGHEADER::Value> header(boost::make_shared<MSGHEADER::Value>());
+                int headerLen = sizeof(MSGHEADER::Value);
+
+                asio::async_read(*sock, asio::buffer((char *)(header.get()), headerLen),
+                    [this, sock, header, headerLen](asio::error_code ec, size_t bytes) {
+                    if (ec) {
+                        std::cout << "TEST: error receiving header\n" << std::flush;
+                    } else {
+                        std::cout << "TEST: received message header\n" << std::flush;
+                        recvMsgBody(sock, header, headerLen);
+                    }
+                });
             }
 
             void startServer(int port) {
