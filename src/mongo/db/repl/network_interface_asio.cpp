@@ -89,14 +89,13 @@ namespace mongo {
             std::cout << "NETWORK_INTERFACE_ASIO: sending simple message\n" << std::flush;
             asio::async_write(
                 op->_sock, asio::buffer(buf),
-                [this, op](std::error_code ec, std::size_t /*length*/) {
-                    std::cout << "NETWORK_INTERFACE_ASIO: async_write\n" << std::flush;
+                [this, op](std::error_code ec, std::size_t bytes) {
                     if (ec) {
                         // TODO handle legacy command errors and retry
                         std::cout << "NETWORK_INTERFACE_ASIO: a network error occurred\n" << std::flush;
                         _networkErrorCallback(op, ec);
                     } else {
-                        std::cout << "NETWORK_INTERFACE_ASIO: send complete\n" << std::flush;
+                        std::cout << "NETWORK_INTERFACE_ASIO: sent " << bytes << " bytes\n" << std::flush;
                         _completedWriteCallback(op);
                     }
                 });
@@ -120,9 +119,10 @@ namespace mongo {
                               [this, data, i, op]
                               (std::error_code ec, std::size_t) {
                    if (ec) {
-                       std::cout << "NETWORK_INTERFACE_ASIO: a network error sending complicated message\n" << std::flush;
+                       std::cout << "NETWORK_INTERFACE_ASIO: error sending complicated message\n" << std::flush;
                        _networkErrorCallback(op, ec);
                    } else {
+                       std::cout << "NETWORK_INTERFACE_ASIO: calling send again\n";
                        _asyncSendComplicatedMessage(op, data, i);
                    }
                });
@@ -183,9 +183,7 @@ namespace mongo {
             _asyncRunCmd(std::move(cmd));
         }
 
-        // TODO: need some kind of timer to keep service alive
-        // may need to continuously enqueue the timer on the service from its handler
-        // look at deadline timer
+        // TODO: look at other ways of doing this
         void NetworkInterfaceASIO::_killTime() {
             if (_shutdown) return;
 

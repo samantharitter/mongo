@@ -58,15 +58,63 @@ namespace mongo {
             void init() {
                 std::cout << "TEST: init()\n" << std::flush;
                 _net->startup();
+            }
 
-                // run io service
-                _serviceRunner = boost::thread([this]() {
-                        _service.run();
+            void after_accept(boost::shared_ptr<tcp::socket> sock) {
+                std::cout << "TEST: in after_accept()\n";
+                char c[256];
+                for(int i = 0; i < 256; i++) {
+                    c[i] = '\0';
+                }
+                auto buf(asio::buffer(c, 256));
+                size_t res;
+
+                try {
+                    do {
+                        res = sock->read_some(buf);
+                        std::cout << "TEST: received " << res << " bytes\n";
+                    } while (res > 0);
+                } catch(const std::exception& e) {
+                    std::cout << "TEST: caught an exception in read: " << e.what() << "\n";
+                }
+
+                std::string s(c);
+                std::cout << "TEST: received message " << s << "\n" << std::flush;
+                //parseMessage(buf, res);
+
+                for(int i = 0; i < 256; i++) {
+                    std::cout << c[i];
+                }
+                std::cout << "\n" << std::flush;
+
+                sock->close();
+            }
+
+            void do_accept() {
+                std::cout << "TEST: beginning do_accept()\n" << std::flush;
+
+                boost::shared_ptr<tcp::socket> sock(boost::make_shared<tcp::socket>(_service));
+                _acceptor.async_accept(*sock,
+                                       [this, sock](std::error_code ec) {
+                                           if (ec) {
+                                               std::cout << "TEST: accept error\n";
+                                           } else {
+                                               after_accept(sock);
+                                           }
+                                           do_accept();
                     });
             }
 
-            void listen(int port) {
-                std::cout << "TEST: test server listening...\n" << std::flush;
+            // TODO: async method to recv MSGHEADER, completion handler calls method to
+            // recv MSG body.
+
+            void parseMessage(asio::mutable_buffer buf, size_t bytes) {
+                // assumptions:
+                // - @buf contains an entire message
+            }
+
+            void startServer(int port) {
+                std::cout << "TEST: launching thread to listen on port " << port << "\n" << std::flush;
                 tcp::resolver resolver(_service);
                 tcp::endpoint endpoint = *resolver.resolve({"localhost", std::to_string(port)});
 
@@ -76,45 +124,14 @@ namespace mongo {
                 _acceptor.bind(endpoint);
                 _acceptor.listen();
 
-                // todo make this async.
-                while (!_shutdown) {
-                    std::cout << "TEST: waiting for connections...\n" << std::flush;
-                    tcp::socket sock(_service);
-                    asio::error_code ec;
-                    _acceptor.accept(sock, ec);
+                do_accept();
 
-                    std::cout << "TEST: accepted a connection wooot.\n" << std::flush;
-
-                    char c[256];
-                    auto buf(asio::buffer(c, 256));
-
-                    try {
-                        size_t res;
-                        do {
-                            res = sock.read_some(buf);
-                            std::cout << "TEST: received " << res << " bytes\n";
-                        } while (res > 0);
-                    } catch(const std::exception& e) {
-                        std::cout << "TEST: caught an exception in read: " << e.what() << "\n";
-                    }
-
-                    std::string s(c);
-                    std::cout << "TEST: received message " << s << ", closing socket\n" << std::flush;
-
-                    sock.close();
-                }
-            }
-
-            void startServer(int port) {
-                std::cout << "TEST: launching thread to listen on port " << port << "\n" << std::flush;
-                try {
-                    _listener = boost::make_shared<boost::thread>(stdx::bind(&ReplTestASIO::listen,
-                                                                             this,
-                                                                             port));
-                } catch (const std::exception& ex) {
-                    std::cout << "TEST: failed to start test server, caught exception: "
-                              << ex.what() << "\n" << std::flush;
-                }
+                // run io service
+                _serviceRunner = boost::thread([this]() {
+                        std::cout << "TEST: run() starting\n" << std::flush;
+                        _service.run();
+                        std::cout << "TEST: run() has returned\n" << std::flush;
+                    });
                 std::cout << "TEST: done launching server\n" << std::flush;
             }
 
@@ -141,7 +158,7 @@ namespace mongo {
             }
 
             void receiveMessage(const ReplicationExecutor::ResponseStatus status) {
-                std::cout << "TEST: callback called\n" << std::flush;
+                std::cout << "TEST: request completion handler called\n" << std::flush;
                 _messageCount++;
             }
 
