@@ -234,6 +234,10 @@ namespace mongo {
                 return header().getOpCode();
             }
 
+            int32_t getOpcode() const {
+               return header().getOpCode();
+            }
+
             const char* data() const {
                 return storage().view(offsetof(Layout, data));
             }

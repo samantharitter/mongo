@@ -95,12 +95,9 @@ namespace mongo {
                  HostAndPort addr = _cmd.request.target;
                  tcp::resolver resolver(*_service);
                  asio::connect(_sock, resolver.resolve({addr.host(), std::to_string(addr.port())}));
-                 //std::cout << x;
               }
 
-              ~AsyncOp() {
-                 std::cout << "address of this object is " << this << std::flush;
-              }
+           //~AsyncOp() {}
 
            const Date_t _start;
            CommandData _cmd;
