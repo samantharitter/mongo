@@ -66,6 +66,8 @@ namespace mongo {
                                                        Message& toSend) {
             std::cout << "NETWORK_INTERFACE_ASIO: _messageFromRequest\n" << std::flush;
             BSONObj query = request.cmdObj;
+            verify(query.isValid());
+            std::cout << "query as jsonstring is " << query.jsonString() << "\n";
 
             BufBuilder b;
             b.appendNum(0); // opts, check default
@@ -74,14 +76,10 @@ namespace mongo {
             b.appendNum(0); // toReturn, don't care about responses
             query.appendSelfToBufBuilder(b);
 
-            std::cout << "NETWORK_INTERFACE_ASIO: making bson obj into message\n" << std::flush;
-
             // wrap up the message object, add headers etc.
             toSend.setData(dbQuery, b.buf(), b.len()); // must b outlive toSend?
             toSend.header().setId(nextMessageId());
             toSend.header().setResponseTo(0);
-
-            std::cout << "NETWORK_INTERFACE_ASIO: done!\n" << std::flush;
         }
 
         void NetworkInterfaceASIO::_asyncSendSimpleMessage(const boost::shared_ptr<AsyncOp> op,

@@ -8,6 +8,10 @@ env.Library('connectionstring',
             ["connection_string.cpp"],
             LIBDEPS=[])
 
+env.Library(
+    target='dbmessage',
+    source=["$BUILD_DIR/mongo/db/dbmessage.cpp"],
+    LIBDEPS=[])
 
 env.Library('clientdriver', [
             "connection_string_connect.cpp",
@@ -24,9 +28,10 @@ env.Library('clientdriver', [
             'sasl_plain_client_conversation.cpp',
             'sasl_scramsha1_client_conversation.cpp',
             "syncclusterconnection.cpp",
-            "$BUILD_DIR/mongo/db/dbmessage.cpp"
+#            "$BUILD_DIR/mongo/db/dbmessage.cpp"
             ],
             LIBDEPS=['connectionstring',
+                     'dbmessage',
                      '$BUILD_DIR/mongo/db/auth/authcommon',
                      '$BUILD_DIR/mongo/crypto/scramauth',
                      '$BUILD_DIR/mongo/util/net/command_status',

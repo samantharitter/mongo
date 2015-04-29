@@ -33,9 +33,12 @@
 #include <boost/make_shared.hpp>
 #include <boost/thread.hpp>
 
+#include "mongo/db/dbmessage.h"
+#include "mongo/db/namespace_string.h"
 #include "mongo/db/repl/network_interface_asio.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/log.h"
+#include "mongo/util/net/message.h"
 
 namespace mongo {
     namespace repl {
@@ -60,35 +63,6 @@ namespace mongo {
                 _net->startup();
             }
 
-            void after_accept(boost::shared_ptr<tcp::socket> sock) {
-                std::cout << "TEST: in after_accept()\n";
-                char c[256];
-                for(int i = 0; i < 256; i++) {
-                    c[i] = '\0';
-                }
-                auto buf(asio::buffer(c, 256));
-                size_t res;
-
-                try {
-                    do {
-                        res = sock->read_some(buf);
-                        std::cout << "TEST: received " << res << " bytes\n";
-                    } while (res > 0);
-                } catch(const std::exception& e) {
-                    std::cout << "TEST: caught an exception in read: " << e.what() << "\n";
-                }
-
-                std::string s(c);
-                std::cout << "TEST: received message " << s << "\n" << std::flush;
-
-                for(int i = 0; i < 256; i++) {
-                    std::cout << c[i];
-                }
-                std::cout << "\n" << std::flush;
-
-                sock->close();
-            }
-
             void do_accept() {
                 std::cout << "TEST: beginning do_accept()\n" << std::flush;
 
@@ -99,7 +73,6 @@ namespace mongo {
                                                std::cout << "TEST: accept error\n";
                                            } else {
                                                handleIncomingMsg(sock);
-                                               //after_accept(sock);
                                            }
                                            do_accept();
                     });
@@ -109,6 +82,29 @@ namespace mongo {
                 // this is here as an example of where we might interface
                 // with the current message-handling framework in mongod
                 // after some logic this method would hand off to assembleResponse()
+                MsgData::ConstView header(m.header().view2ptr());
+                std::cout << "TEST: received a message: " << m.toString() << std::flush;
+
+                // get command out of message
+                int op = m.operation();
+                if (op == dbQuery) {
+                    DbMessage d(m);
+                    QueryMessage q(d);
+
+                    // if is command:
+                    const NamespaceString nsString(d.getns());
+                    if (nsString.isCommand()) {
+                        std::cout << "command " << q.query << " on " << q.ns << "\n";
+                    } else {
+                        std::cout << "query " << q.query << " on " << q.ns << "\n";
+                    }
+                } else if (op == dbGetMore) {
+                    DbMessage d(m);
+                    std::cout << "getmore on " << d.getns() << " for cursorid " << d.pullInt64() << "\n";
+                } else {
+                    std::cout << "something else\n";
+                }
+                std::cout << std::flush;
             }
 
             void recvMsgBody(boost::shared_ptr<tcp::socket> sock,
@@ -121,7 +117,7 @@ namespace mongo {
                 int len = header->constView().getMessageLength();
 
                 // todo: server code uses crazy padding hack, investigate.
-                boost::shared_ptr<char[len]> buf(new char[len]);
+                boost::shared_ptr<char[]> buf(new char[len]);
                 boost::shared_ptr<MsgData::View> md(boost::make_shared<MsgData::View>(buf.get()));
 
                 // copy header data into master buffer
@@ -142,15 +138,11 @@ namespace mongo {
                                          process(m);
                                      }
                                  });
-
-                std::cout << "returning from recvMsgBody\n" << std::flush;
             }
 
             void handleIncomingMsg(boost::shared_ptr<tcp::socket> sock) {
                 std::cout << "TEST: handleIncomingMsg()\n";
 
-                // flow is:
-                // 1. receive header
                 boost::shared_ptr<MSGHEADER::Value> header(boost::make_shared<MSGHEADER::Value>());
                 int headerLen = sizeof(MSGHEADER::Value);
 
@@ -238,8 +230,8 @@ namespace mongo {
             boost::shared_ptr<NetworkInterfaceASIO> net = getNet();
             const ReplicationExecutor::RemoteCommandRequest request(HostAndPort("localhost", port),
                                                                     "somedb",
-                                                                    BSON("hello" << "world"));
-            sleep(3); // test needs a delay??
+                                                                    BSON( "a" << GTE << 0 ));
+            //sleep(3); // test needs a delay??
 
             for (int i = 0; i < runs; i++) {
                 std::cout << "TEST: enqueuing work\n" << std::flush;
