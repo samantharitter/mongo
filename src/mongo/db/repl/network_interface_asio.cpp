@@ -67,7 +67,6 @@ namespace mongo {
             std::cout << "NETWORK_INTERFACE_ASIO: _messageFromRequest\n" << std::flush;
             BSONObj query = request.cmdObj;
             verify(query.isValid());
-            std::cout << "query as jsonstring is " << query.jsonString() << "\n";
 
             BufBuilder b;
             b.appendNum(0); // opts, check default
@@ -96,6 +95,7 @@ namespace mongo {
                         std::cout << "NETWORK_INTERFACE_ASIO: sent " << bytes << " bytes\n" << std::flush;
                         _completedWriteCallback(op);
                     }
+                    std::cout << "NETWORK_INTERFACE_ASIO: done sending simple message\n" << std::flush;
                 });
         }
 
@@ -136,6 +136,7 @@ namespace mongo {
             // call the request object's callback fn
             ResponseStatus status(Response(output, Milliseconds(end - op->_start)));
             op->_cmd.onFinish(status);
+            std::cout << "NETWORK_INTERFACE_ASIO: successfully called onFinish\n" << std::flush;
         }
 
         void NetworkInterfaceASIO::_networkErrorCallback(const boost::shared_ptr<AsyncOp> op,
@@ -183,10 +184,10 @@ namespace mongo {
 
         // TODO: look at other ways of doing this
         void NetworkInterfaceASIO::_killTime() {
-            if (_shutdown) return;
+            std::cout << "NETWORK_INTERFACE_ASIO: killing time\n" << std::flush;
 
             asio::steady_timer timer(_io_service);
-            timer.expires_after(std::chrono::seconds(10));
+            timer.expires_after(std::chrono::seconds(1));
 
             timer.async_wait([this](const asio::error_code& ec) {
                     if (ec) {
@@ -194,7 +195,12 @@ namespace mongo {
                         // TODO why do we always get an error?
                         sleep(1);
                     }
-                    _killTime();
+
+                    if (_shutdown) {
+                        std::cout << "NETWORK_INTERFACE_ASIO: in shutdown, timer returning\n" << std::flush;
+                    } else {
+                        _killTime();
+                    }
                 });
         }
 
@@ -223,11 +229,11 @@ namespace mongo {
 
         void NetworkInterfaceASIO::shutdown() {
             std::cout << "NETWORK_INTERFACE_ASIO: shutting down\n" << std::flush;
-
             _shutdown = true;
 
             _io_service.stop();
             _serviceRunner.join();
+            std::cout << "NETWORK_INTERFACE_ASIO: successfully shut down\n" << std::flush;
             return;
         }
 

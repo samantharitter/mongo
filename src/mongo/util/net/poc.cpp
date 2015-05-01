@@ -41,8 +41,6 @@
 
 namespace mongo {
 
-    //    extern PortMessageServer* centralServer;
-
     void PocMessageHandler::process(Message& m,
                                     AbstractMessagingPort* port,
                                     LastError* le) {

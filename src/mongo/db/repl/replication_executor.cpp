@@ -84,6 +84,7 @@ namespace {
 
     void ReplicationExecutor::run() {
         setThreadName("ReplicationExecutor");
+        std::cout << "REPLICATION_EXECUTOR: starting up network interface\n";
         _networkInterface->startup();
         _dblockWorkers.startThreads();
         std::pair<WorkItem, CallbackHandle> work;
@@ -99,6 +100,7 @@ namespace {
             signalEvent(work.first.finishedEvent);
         }
         finishShutdown();
+        std::cout << "REPLICATION_EXECUTOR: shutting down network interface\n";
         _networkInterface->shutdown();
     }
 
@@ -126,6 +128,7 @@ namespace {
 
             readyWork->isCanceled = true;
         }
+        std::cout << "REPLICATION_EXECUTOR: signaling work available\n";
         _networkInterface->signalWorkAvailable();
     }
 
@@ -188,6 +191,7 @@ namespace {
         _signaledEvents.splice(_signaledEvents.end(), _unsignaledEvents, event._iter);
         if (!event._iter->waiters.empty()) {
             _readyQueue.splice(_readyQueue.end(), event._iter->waiters);
+            std::cout << "REPLICATION_EXECUTOR: singalEvent_inlock, signaling work available\n";
             _networkInterface->signalWorkAvailable();
         }
         event._iter->isSignaledCondition->notify_all();
@@ -258,7 +262,7 @@ namespace {
             const CallbackHandle& cbHandle,
             const uint64_t expectedHandleGeneration,
             const RemoteCommandCallbackFn& cb) {
-
+        std::cout << "REPLICATION_EXECUTOR: _finishRemoteCommand\n";
         const WorkQueue::iterator iter = cbHandle._iter;
         boost::lock_guard<boost::mutex> lk(_mutex);
         if (_inShutdown) {
@@ -295,6 +299,7 @@ namespace {
                            scheduledRequest));
         if (handle.isOK()) {
             handle.getValue()._iter->isNetworkOperation = true;
+            std::cout << "REPLICATION_EXECUTOR: starting a command\n";
             _networkInterface->startCommand(
                     handle.getValue(),
                     scheduledRequest,
@@ -311,6 +316,7 @@ namespace {
 
     StatusWith<ReplicationExecutor::CallbackHandle> ReplicationExecutor::scheduleWork(
             const CallbackFn& work) {
+        std::cout << "REPLICATION_EXECUTOR: scheduleWork(), signaling work available\n";
         boost::lock_guard<boost::mutex> lk(_mutex);
         _networkInterface->signalWorkAvailable();
         return enqueueWork_inlock(&_readyQueue, work);
@@ -389,6 +395,7 @@ namespace {
         cbHandle._iter->isCanceled = true;
         if (cbHandle._iter->isNetworkOperation) {
             lk.unlock();
+            std::cout << "REPLICATION_EXECUTOR: cancelling command\n";
             _networkInterface->cancelCommand(cbHandle);
         }
     }
@@ -411,9 +418,11 @@ namespace {
             }
             lk.unlock();
             if (nextWakeupDate == Date_t(~0ULL)) {
+                std::cout << "REPLICATION_EXECUTOR: waiting for work\n";
                 _networkInterface->waitForWork();
             }
             else {
+                std::cout << "REPLICATION_EXECUTOR: waiting for work until nextWakeupDate\n";
                 _networkInterface->waitForWorkUntil(nextWakeupDate);
             }
             lk.lock();

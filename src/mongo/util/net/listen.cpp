@@ -351,7 +351,7 @@ namespace mongo {
                     pnewSock->secureAccepted(_ssl);
                 }
 #endif
-                std::cout << "setting global listening socket in listener.cpp\n";
+                //std::cout << "setting global listening socket in listener.cpp\n";
                 listeningSocket = pnewSock.get();
                 socketSet = true;
                 accepted( pnewSock , myConnectionNumber );

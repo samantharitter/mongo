@@ -66,12 +66,18 @@ namespace mongo {
             void do_accept() {
                 std::cout << "TEST: beginning do_accept()\n" << std::flush;
 
+                // TODO there should be a way of doing this from within IO service
+                if (_shutdown) {
+                    return;
+                }
+
                 boost::shared_ptr<tcp::socket> sock(boost::make_shared<tcp::socket>(_service));
                 _acceptor.async_accept(*sock,
                                        [this, sock](std::error_code ec) {
                                            if (ec) {
-                                               std::cout << "TEST: accept error\n";
+                                               std::cout << "TEST: accept error\n" << std::flush;
                                            } else {
+                                               std::cout << "TEST: handling new accepted connection\n" << std::flush;
                                                handleIncomingMsg(sock);
                                            }
                                            do_accept();
@@ -83,7 +89,7 @@ namespace mongo {
                 // with the current message-handling framework in mongod
                 // after some logic this method would hand off to assembleResponse()
                 MsgData::ConstView header(m.header().view2ptr());
-                std::cout << "TEST: received a message: " << m.toString() << std::flush;
+                std::cout << "TEST: received a message: " << m.toString() << "\n";
 
                 // get command out of message
                 int op = m.operation();
@@ -104,7 +110,7 @@ namespace mongo {
                 } else {
                     std::cout << "something else\n";
                 }
-                std::cout << std::flush;
+                std::cout << "TEST: done processing message\n" << std::flush;
             }
 
             void recvMsgBody(boost::shared_ptr<tcp::socket> sock,
@@ -175,6 +181,7 @@ namespace mongo {
                         std::cout << "TEST: run() starting\n" << std::flush;
                         _service.run();
                         std::cout << "TEST: run() has returned\n" << std::flush;
+                        _acceptor.close();
                     });
                 std::cout << "TEST: done launching server\n" << std::flush;
             }
@@ -182,8 +189,6 @@ namespace mongo {
             void stopServer() {
                 std::cout << "TEST: shutting down test server\n" << std::flush;
                 _shutdown = true;
-                _acceptor.close();
-                _listener->boost::thread::join();
 
                 _service.stop();
                 _serviceRunner.join();
@@ -195,10 +200,11 @@ namespace mongo {
 
             void waitForMessageCount(int count) {
                 // there are more graceful ways to do this
+                std::cout << "TEST: waiting for messages...\n" << std::flush;
                 while (_messageCount < count) {
-                    std::cout << "TEST: waiting for messages...\n" << std::flush;
-                    sleep(100);
+                    sleep(1);
                 }
+                std::cout << "TEST: got messages, returning\n" << std::flush;
             }
 
             void receiveMessage(const ReplicationExecutor::ResponseStatus status) {
@@ -209,7 +215,6 @@ namespace mongo {
         private:
             int _messageCount;
             bool _shutdown;
-            boost::shared_ptr<boost::thread> _listener;
             asio::io_service _service;
             tcp::acceptor _acceptor;
             boost::shared_ptr<NetworkInterfaceASIO> _net;
@@ -231,7 +236,6 @@ namespace mongo {
             const ReplicationExecutor::RemoteCommandRequest request(HostAndPort("localhost", port),
                                                                     "somedb",
                                                                     BSON( "a" << GTE << 0 ));
-            //sleep(3); // test needs a delay??
 
             for (int i = 0; i < runs; i++) {
                 std::cout << "TEST: enqueuing work\n" << std::flush;
@@ -241,6 +245,7 @@ namespace mongo {
             }
 
             waitForMessageCount(runs);
+            std::cout << "TEST: shutting down\n" << std::flush;
             net->shutdown();
             stopServer();
         }

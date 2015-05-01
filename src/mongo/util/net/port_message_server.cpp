@@ -198,7 +198,7 @@ namespace {
         TicketHolderReleaser connTicketReleaser( &Listener::globalTicketHolder );
 
         int done = 0;
-        std::cout << "in handleIncomingMsg()\n";
+        //std::cout << "in handleIncomingMsg()\n";
 
         invariant(arg);
         scoped_ptr<MessagingPortWithHandler> portWithHandler(
@@ -221,7 +221,7 @@ namespace {
                 portWithHandler->psock->clearCounters();
 
                 if (!portWithHandler->recv(m)) {
-                    std::cout << "nothing to receive\n";
+                    //std::cout << "nothing to receive\n";
                     if (!serverGlobalParams.quiet) {
                         int conns = Listener::globalTicketHolder.used()-1;
                         const char* word = (conns == 1 ? " connection" : " connections");
@@ -276,7 +276,7 @@ namespace {
         handler->disconnected(portWithHandler.get());
 
 
-        std::cout << "exiting port message server's handleIncomingMessages";
+        //std::cout << "exiting port message server's handleIncomingMessages";
         return NULL;
     }
 
