@@ -56,13 +56,12 @@ namespace mongo {
                     });
             }
 
+            // will block
             void runCommand(std::string cmd, int id) {
                 std::cout << "DB: running a command: " << cmd << "\n" << std::flush;
                 std::cout << "DB: This might take a while. Please, have a seat.\n" << std::flush;
                 sleep(5);
                 std::cout << "DB: all done!\n" << std::flush;
-
-                // tell network layer that connection 'id' is unblocked
             }
 
             void shutdown() {
