@@ -325,6 +325,15 @@ env.Library('network', [
                 'server_options_core',
             ])
 
+env.CppUnitTest(
+    target='post_example',
+    source=[
+        'util/net/post_example.cpp',
+    ],
+    LIBDEPS=[
+        "$BUILD_DIR/third_party/shim_asio",
+    ])
+
 env.Library(
     target='mock_socket',
     source=[
