@@ -50,6 +50,7 @@ namespace mongo {
 
         NetworkInterfaceASIO::NetworkInterfaceASIO() :
             _io_service(),
+            _timer(_io_service),
             _shutdown(false)
         {
             std::cout << "NETWORK_INTERFACE_ASIO: NetworkInterfaceASIO constructor\n" << std::flush;
@@ -182,44 +183,13 @@ namespace mongo {
             _asyncRunCmd(std::move(cmd));
         }
 
-        // TODO: look at other ways of doing this
-        void NetworkInterfaceASIO::_killTime() {
-            std::cout << "NETWORK_INTERFACE_ASIO: killing time\n" << std::flush;
-
-            asio::steady_timer timer(_io_service);
-            timer.expires_after(std::chrono::seconds(1));
-
-            timer.async_wait([this](const asio::error_code& ec) {
-                    if (ec) {
-                        std::cout << "NETWORK_INTERFACE_ASIO: timer returned an error: " << ec << "\n" << std::flush;
-                        // TODO why do we always get an error?
-                        sleep(1);
-                    }
-
-                    if (_shutdown) {
-                        std::cout << "NETWORK_INTERFACE_ASIO: in shutdown, timer returning\n" << std::flush;
-                    } else {
-                        _killTime();
-                    }
-                });
-        }
-
-        // can we tell executor that work has started and not tell it to finish?  Will it listen?
-
         void NetworkInterfaceASIO::startup() {
             std::cout << "NETWORK_INTERFACE_ASIO: Network Interface starting up...\n" << std::flush;
 
-            // must schedule some work for the io_service to do
-            _killTime();
-
-            _serviceRunner = boost::thread([this]() {
+            _serviceRunner = std::thread([this]() {
                     std::cout << "NETWORK_INTERFACE_ASIO: running io_service\n" << std::flush;
-
-                    while (!_shutdown) {
-                        std::cout << "NET: about to run one\n";
-                        auto res = _io_service.run();
-                        std::cout << "NET: done running one, returned " << res << "\n";
-                    }
+                    asio::io_service::work work(_io_service);
+                    _io_service.run();
                     std::cout << "service.run() returned\n" << std::flush;
                 });
 
@@ -230,10 +200,8 @@ namespace mongo {
         void NetworkInterfaceASIO::shutdown() {
             std::cout << "NETWORK_INTERFACE_ASIO: shutting down\n" << std::flush;
             _shutdown = true;
-
             _io_service.stop();
             _serviceRunner.join();
-            std::cout << "NETWORK_INTERFACE_ASIO: successfully shut down\n" << std::flush;
             return;
         }
 

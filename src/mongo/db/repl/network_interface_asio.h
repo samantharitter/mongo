@@ -32,7 +32,7 @@
 
 #include "asio.hpp"
 
-#include "boost/thread.hpp"
+#include <thread>
 
 #include "mongo/db/repl/replication_executor.h"
 #include "mongo/util/net/hostandport.h"
@@ -125,8 +125,9 @@ namespace mongo {
         void _networkErrorCallback(const boost::shared_ptr<AsyncOp> op, std::error_code ec);
 
         asio::io_service _io_service;
+        asio::steady_timer _timer;
 
-        boost::thread _serviceRunner;
+        std::thread _serviceRunner;
         std::set<AsyncOp> _active_ops;
 
         bool _shutdown;

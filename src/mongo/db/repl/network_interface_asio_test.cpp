@@ -30,6 +30,9 @@
 
 #include "mongo/platform/basic.h"
 
+#include <thread>
+#include <chrono>
+
 #include <boost/make_shared.hpp>
 #include <boost/thread.hpp>
 
@@ -177,7 +180,7 @@ namespace mongo {
                 do_accept();
 
                 // run io service
-                _serviceRunner = boost::thread([this]() {
+                _serviceRunner = std::thread([this]() {
                         std::cout << "TEST: run() starting\n" << std::flush;
                         _service.run();
                         std::cout << "TEST: run() has returned\n" << std::flush;
@@ -202,7 +205,7 @@ namespace mongo {
                 // there are more graceful ways to do this
                 std::cout << "TEST: waiting for messages...\n" << std::flush;
                 while (_messageCount < count) {
-                    sleep(1);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
                 std::cout << "TEST: got messages, returning\n" << std::flush;
             }
@@ -218,7 +221,7 @@ namespace mongo {
             asio::io_service _service;
             tcp::acceptor _acceptor;
             boost::shared_ptr<NetworkInterfaceASIO> _net;
-            boost::thread _serviceRunner;
+            std::thread _serviceRunner;
         };
 
         TEST_F(ReplTestASIO, DummyTest) {
