@@ -787,6 +787,7 @@ MONGO_INITIALIZER_WITH_PREREQUISITES(CreateReplicationManager, ("SetGlobalEnviro
     repl::ReplicationCoordinatorImpl* replCoord = new repl::ReplicationCoordinatorImpl(
             getGlobalReplSettings(),
             new repl::ReplicationCoordinatorExternalStateImpl,
+            // turn on the ASIO-based replication network interface!
             //            new repl::NetworkInterfaceImpl,
             new repl::NetworkInterfaceASIO,
             new repl::TopologyCoordinatorImpl(Seconds(repl::maxSyncSourceLagSecs)),
