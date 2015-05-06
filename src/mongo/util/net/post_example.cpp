@@ -30,6 +30,7 @@
 
 #include "mongo/platform/basic.h"
 
+#include <chrono>
 #include <thread>
 #include <queue>
 
@@ -60,7 +61,7 @@ namespace mongo {
             void runCommand(std::string cmd, int id) {
                 std::cout << "DB: running a command: " << cmd << "\n" << std::flush;
                 std::cout << "DB: This might take a while. Please, have a seat.\n" << std::flush;
-                sleep(5);
+                std::this_thread::sleep_for(std::chrono::milliseconds(5000));
                 std::cout << "DB: all done!\n" << std::flush;
             }
 
@@ -218,7 +219,7 @@ namespace mongo {
             doStuff();
 
             do {
-                sleep(1);
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
             } while (!_messages.empty());
 
             shutdown();

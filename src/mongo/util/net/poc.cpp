@@ -29,6 +29,9 @@
 
 #include "mongo/platform/basic.h"
 
+#include <chrono>
+#include <thread>
+
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/client.h"
@@ -159,7 +162,7 @@ namespace mongo {
         }
 
         while (!doneProcessingAll) {
-            sleep(1);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
         }
 
         auto time_end = stdx::chrono::high_resolution_clock::now();
