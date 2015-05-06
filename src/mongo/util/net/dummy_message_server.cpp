@@ -33,6 +33,9 @@
 
 #include "mongo/platform/basic.h"
 
+#include <chrono>
+#include <thread>
+
 #include <boost/scoped_ptr.hpp>
 #include <boost/thread/thread.hpp>
 #include <memory>
@@ -87,7 +90,7 @@ namespace mongo {
 
     void DummyMessageServer::run() {
         while (true) {
-            sleep(1);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
         }
     }
 
