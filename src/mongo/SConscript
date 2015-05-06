@@ -1073,11 +1073,21 @@ env.CppUnitTest('range_deleter_test',
                     'db/common',
                     'range_deleter',
                 ])
+env.Library(
+    target='asio_networking_layer',
+    source=[
+        'util/net/asio_networking_layer.cpp',
+    ],
+    LIBDEPS=[
+        "$BUILD_DIR/third_party/shim_asio",
+        "message_server_port",
+    ])
 
 env.Library("db_shared",
     [ "db/db_shared.cpp",
       "util/net/poc.cpp" ],
     LIBDEPS=[
+        'asio_networking_layer',
         "$BUILD_DIR/third_party/shim_asio",
         "message_server_port",
     ])

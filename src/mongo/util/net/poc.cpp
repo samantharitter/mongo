@@ -161,7 +161,7 @@ namespace mongo {
         }
 
         while (!doneProcessingAll) {
-            sleep(.0001);
+            sleep(1);
         }
 
         auto time_end = stdx::chrono::high_resolution_clock::now();
@@ -192,6 +192,8 @@ namespace mongo {
         std::cout << "\n\t\tRunning fake network tests...\n\n";
 
         // start up the db
+        // the "regular" network layer will listen on the first port (27017)
+        // the "ASIO" network layer will listen on the second port (27016)
         std::cout << "Calling initAndListenShared\n";
         batchSize = _n;
         boost::thread t(initAndListenShared, 27017);

@@ -105,6 +105,7 @@
 #include "mongo/util/exception_filter_win32.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/log.h"
+#include "mongo/util/net/asio_networking_layer.h"
 #include "mongo/util/net/message_server.h"
 #include "mongo/util/net/ssl_manager.h"
 #include "mongo/util/ntservice.h"
@@ -405,7 +406,7 @@ namespace mongo {
         LOG(1) << "done repairDatabases" << endl;
     }
 
-    static void _initAndListen(int listenPort ) {
+    static void _initAndListen(int listenPort) {
         Client::initThread("initandlisten");
 
         // Due to SERVER-15389, we must setupSockets first thing at startup in order to avoid
@@ -606,6 +607,13 @@ namespace mongo {
         PeriodicTask::startRunningPeriodicTasks();
 
         logStartup();
+
+        //////////////////////////////////////////////////////////////
+        // NETWORKING PROOF OF CONCEPT
+        // start up ASIO-based network layer to listen on port 27016
+
+        AsyncNetworkingLayer asioNet(27016);
+        asioNet.startup();
 
         // MessageServer::run will return when exit code closes its socket
         server->run();

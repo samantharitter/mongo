@@ -28,7 +28,7 @@ int main(int argc, char *argv[]) {
 
    mongoc_init ();
 
-   client = mongoc_client_new ("mongodb://127.0.0.1/");
+   client = mongoc_client_new ("mongodb://localhost:27017/");
    if (!client) {
       printf ("Failed to create client\n");
       return 0;
