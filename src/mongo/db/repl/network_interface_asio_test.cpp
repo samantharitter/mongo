@@ -126,8 +126,11 @@ namespace mongo {
                 int len = header->constView().getMessageLength();
 
                 // todo: server code uses crazy padding hack, investigate.
-                boost::shared_ptr<char[]> buf(new char[len]);
-                boost::shared_ptr<MsgData::View> md(boost::make_shared<MsgData::View>(buf.get()));
+                //boost::shared_ptr<char[]> buf(new char[len]);
+                int z = (len+1023)&0xfffffc00;
+                verify(z>=len);
+                // todo, need a guard?
+                boost::shared_ptr<MsgData::View> md(boost::make_shared<MsgData::View>(reinterpret_cast<char *>(mongoMalloc(z))));
 
                 // copy header data into master buffer
                 memcpy(md->view2ptr(), header.get(), headerLen);
@@ -137,7 +140,7 @@ namespace mongo {
 
                 // receive remaining data into md->data
                 asio::async_read(*sock, asio::buffer(md->data(), bodyLength),
-                                 [this, md, buf](asio::error_code ec, size_t bytes) {
+                                 [this, md](asio::error_code ec, size_t bytes) {
                                      if (ec) {
                                          std::cout << "TEST: error receiving message body\n" << std::flush;
                                      } else {
