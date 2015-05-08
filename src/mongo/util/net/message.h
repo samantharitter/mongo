@@ -157,7 +157,6 @@ namespace mongo {
             const view_type& data() const {
                 return _data;
             }
-
         private:
             view_type _data;
         };
@@ -472,7 +471,7 @@ namespace mongo {
         
         std::string toString() const;
 
-    private:
+        //    private:
         void _setData( char* d, bool freeIt ) {
             _freeIt = freeIt;
             _buf = d;

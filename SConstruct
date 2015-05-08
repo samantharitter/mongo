@@ -1958,6 +1958,14 @@ def doConfigure(myenv):
                     [boostlib + suffix for suffix in boostSuffixList],
                     language='C++')
 
+    # TODO: We need a mechanism to scope these via injection like
+    # we do for include paths
+    if not use_system_version_of_library('asio'):
+        env.Prepend(CPPDEFINES=[
+            'ASIO_SEPARATE_COMPILATION',
+            'ASIO_STANDALONE',
+        ])
+
     if posix_system:
         conf.env.SetConfigHeaderDefine("MONGO_CONFIG_HAVE_HEADER_UNISTD_H")
         conf.CheckLib('rt')

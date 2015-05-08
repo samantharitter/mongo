@@ -16,6 +16,37 @@ env.Library('rslog',
             ])
 
 env.Library(
+    target='network_interface_asio',
+    source=[
+        'network_interface_asio.cpp',
+    ],
+    LIBDEPS=[
+        '$BUILD_DIR/third_party/shim_asio',
+        '$BUILD_DIR/mongo/client/clientdriver',
+        '$BUILD_DIR/mongo/db/repl/replication_executor',
+        '$BUILD_DIR/mongo/db/serveronly',
+        # '$BUILD_DIR/mongo/base/base',
+        # '$BUILD_DIR/mongo/bson/bson',
+        # '$BUILD_DIR/mongo/client/connection_pool',
+        # '$BUILD_DIR/mongo/db/coredb',
+        # '$BUILD_DIR/mongo/db/common',
+        # '$BUILD_DIR/mongo/db/query/getmore_request',
+        # '$BUILD_DIR/mongo/db/query/lite_parsed_query',
+        ]
+)
+
+x = env.CppUnitTest(
+    target="network_interface_asio_test",
+    source=[ 'network_interface_asio_test.cpp' ],
+    LIBDEPS=[
+        'network_interface_asio',
+    ],
+    NO_CRUTCH=True
+)
+
+env.Alias("foo", x)
+
+env.Library(
     target='network_interface_impl',
     source=[
         'network_interface_impl.cpp',

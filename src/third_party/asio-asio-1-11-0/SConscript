@@ -4,5 +4,7 @@ env.Library(
     target="asio",
     source=[
         "asio/src/asio.cpp",
+        # TODO: Should be enabled under --ssl?
+#        "asio/src/asio_ssl.cpp",
     ]
 )
