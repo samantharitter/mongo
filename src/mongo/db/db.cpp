@@ -77,6 +77,7 @@
 #include "mongo/db/range_deleter_service.h"
 #include "mongo/db/repair_database.h"
 #include "mongo/db/repl/network_interface_impl.h"
+#include "mongo/db/repl/network_interface_asio.h"
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/repl/repl_settings.h"
 #include "mongo/db/repl/replication_coordinator_external_state_impl.h"
@@ -751,7 +752,8 @@ MONGO_INITIALIZER_WITH_PREREQUISITES(CreateReplicationManager, ("SetGlobalEnviro
     repl::ReplicationCoordinatorImpl* replCoord = new repl::ReplicationCoordinatorImpl(
             getGlobalReplSettings(),
             new repl::ReplicationCoordinatorExternalStateImpl,
-            new repl::NetworkInterfaceImpl,
+            new repl::NetworkInterfaceASIO,
+            //new repl::NetworkInterfaceImpl,
             new repl::TopologyCoordinatorImpl(Seconds(repl::maxSyncSourceLagSecs)),
             static_cast<int64_t>(curTimeMillis64()));
     repl::setGlobalReplicationCoordinator(replCoord);

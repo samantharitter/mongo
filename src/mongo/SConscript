@@ -190,6 +190,7 @@ mongod = env.Program(
         "db/mongodwebserver",
         "db/serveronly",
         "util/ntservice",
+        "$BUILD_DIR/mongo/db/repl/network_interface_asio",
     ],
 )
 
