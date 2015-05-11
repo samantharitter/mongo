@@ -53,7 +53,8 @@ namespace mongo {
         NetworkInterfaceASIO::NetworkInterfaceASIO() :
             _io_service(),
             _timer(_io_service),
-            _shutdown(false)
+            _shutdown(false),
+            _isExecutorRunnable(false)
         {
             std::cout << "NETWORK_INTERFACE_ASIO: NetworkInterfaceASIO constructor\n" << std::flush;
         }
@@ -75,7 +76,7 @@ namespace mongo {
             b.appendNum(0); // opts, check default
             b.appendStr(request.dbname + ".$cmd");
             b.appendNum(0); // toSkip
-            b.appendNum(0); // toReturn, don't care about responses
+            b.appendNum(-1); // toReturn, don't care about responses
             query.appendSelfToBufBuilder(b);
 
             // wrap up the message object, add headers etc.
@@ -192,7 +193,7 @@ namespace mongo {
                     std::cout << "NETWORK_INTERFACE_ASIO: running io_service\n" << std::flush;
                     asio::io_service::work work(_io_service);
                     _io_service.run();
-                    std::cout << "service.run() returned\n" << std::flush;
+                    std::cout << "NETWORK_INTERFACE_ASIO: service.run() returned\n" << std::flush;
                 });
 
             std::cout << "NETWORK_INTERFACE_ASIO: done starting up\n" << std::flush;
@@ -204,22 +205,44 @@ namespace mongo {
             _shutdown = true;
             _io_service.stop();
             _serviceRunner.join();
-            return;
-        }
-
-        void NetworkInterfaceASIO::waitForWork() {
-            std::cout << "NETWORK_INTERFACE_ASIO: waiting for work...\n" << std::flush;
-            return;
-        }
-
-        void NetworkInterfaceASIO::waitForWorkUntil(Date_t when) {
-            std::cout << "NETWORK_INTERFACE_ASIO: waiting for work until " << when << "...\n" << std::flush;
+            std::cout << "NETWORK_INTERFACE_ASIO: shut down complete.\n";
             return;
         }
 
         void NetworkInterfaceASIO::signalWorkAvailable() {
             std::cout << "NETWORK_INTERFACE_ASIO: work is available, signaling\n" << std::flush;
-            return;
+            boost::lock_guard<boost::mutex> lk(_mutex);
+            _signalWorkAvailable_inlock();
+        }
+
+        void NetworkInterfaceASIO::_signalWorkAvailable_inlock() {
+            std::cout << "NETWORK_INTERFACE_ASIO: _signalWorkAvailable_inlock()\n" << std::flush;
+            if (!_isExecutorRunnable) {
+                _isExecutorRunnable = true;
+                _isExecutorRunnableCondition.notify_one();
+            }
+        }
+
+        void NetworkInterfaceASIO::waitForWork() {
+            std::cout << "NETWORK_INTERFACE_ASIO: waiting for work in waitForWork()...\n" << std::flush;
+            boost::unique_lock<boost::mutex> lk(_mutex);
+            while (!_isExecutorRunnable) {
+                _isExecutorRunnableCondition.wait(lk);
+            }
+            _isExecutorRunnable = false;
+        }
+
+        void NetworkInterfaceASIO::waitForWorkUntil(Date_t when) {
+            std::cout << "NETWORK_INTERFACE_ASIO: waiting for work until " << when << "...\n" << std::flush;
+            boost::unique_lock<boost::mutex> lk(_mutex);
+            while (!_isExecutorRunnable) {
+                const Milliseconds waitTime(when - now());
+                if (waitTime <= Milliseconds(0)) {
+                    break;
+                }
+                _isExecutorRunnableCondition.timed_wait(lk, waitTime);
+            }
+            _isExecutorRunnable = false;
         }
 
         Date_t NetworkInterfaceASIO::now() {

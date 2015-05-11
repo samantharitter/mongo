@@ -244,7 +244,8 @@ namespace {
         catch (const DBException& ex) {
             return ex.toStatus();
         }
-
+        // this is a hack.
+        return Status::OK();
     }
 
     void ReplicationCoordinatorExternalStateImpl::setGlobalTimestamp(const Timestamp& newTime) {

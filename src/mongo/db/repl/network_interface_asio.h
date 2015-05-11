@@ -132,6 +132,16 @@ namespace mongo {
         std::set<AsyncOp> _active_ops;
 
         bool _shutdown;
+
+      private:
+
+        void _signalWorkAvailable_inlock();
+
+        bool _isExecutorRunnable;
+        boost::mutex _mutex;
+
+        // for executor.
+        boost::condition_variable _isExecutorRunnableCondition;
       };
 
    } // namespace repl
