@@ -179,7 +179,7 @@ functions:
             set -o igncr
         fi;
 
-        git checkout r3.1.3
+        git checkout r3.1.2
         . ./${set_tools_gopath|set_gopath.sh}
 
         # In RHEL 5.5, /usr/bin/ld can't handle --build-id parameters, so
@@ -633,22 +633,6 @@ tasks:
   - func: "run tests"
     vars:
       resmoke_args: -j8 --suites=core_auth --storageEngine=wiredTiger
-
-- <<: *task_template
-  name: jsCore_op_command
-  commands:
-  - func: "do setup"
-  - func: "run tests"
-    vars:
-      resmoke_args: -j8 --suites=core_op_command --storageEngine=mmapv1
-
-- <<: *task_template
-  name: jsCore_op_command_WT
-  commands:
-  - func: "do setup"
-  - func: "run tests"
-    vars:
-      resmoke_args: -j8 --suites=core_op_command --storageEngine=wiredTiger
 
 - <<: *task_template
   name: inMemoryExperiment
@@ -1582,8 +1566,6 @@ buildvariants:
   - name: jsCore
   - name: jsCore_WT
   - name: jsCore_auth
-  - name: jsCore_op_command
-  - name: jsCore_op_command_WT
   - name: jsCore_compatibility
   - name: jsCore_compatibility_WT
   - name: jsCore_small_oplog
@@ -2222,7 +2204,7 @@ buildvariants:
     push_arch: x86_64
     msi_target: msi
     content_type: application/zip
-    compile_flags: --release -j$(grep -c ^processor /proc/cpuinfo) --variant-dir=win32
+    compile_flags: --release -j$(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     ext: zip
@@ -2308,7 +2290,8 @@ buildvariants:
     push_arch: x86_64-2008plus
     msi_target: msi
     content_type: application/zip
-    compile_flags: --release --win-version-min=ws08r2 -j$(grep -c ^processor /proc/cpuinfo) --distmod=2008plus --variant-dir=win32
+    compile_flags: --release --win-version-min=ws08r2 -j$(grep -c ^processor /proc/cpuinfo) --distmod=2008plus -D__USE_W32_SOCKETS
+    #compile_flags: --release --win-version-min=ws08r2 -j$(grep -c ^processor /proc/cpuinfo) --distmod=2008plus
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     ext: zip
@@ -2491,7 +2474,7 @@ buildvariants:
     push_arch: x86_64-2008plus-ssl
     msi_target: msi
     content_type: application/zip
-    compile_flags: --release --ssl --distmod=2008plus-ssl CPPPATH="c:/openssl/include" LIBPATH="c:/openssl/lib" -j$(grep -c ^processor /proc/cpuinfo) --dynamic-windows --win-version-min=ws08r2 --variant-dir=win32
+    compile_flags: --release --ssl --distmod=2008plus-ssl CPPPATH="c:/openssl/include" LIBPATH="c:/openssl/lib" -j$(grep -c ^processor /proc/cpuinfo) --dynamic-windows --win-version-min=ws08r2
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     ext: zip
@@ -2568,7 +2551,7 @@ buildvariants:
     push_arch: i386
     msi_target: msi
     content_type: application/zip
-    compile_flags: --release -j$(grep -c ^processor /proc/cpuinfo) --wiredtiger=off TARGET_ARCH=i386 --variant-dir=win32
+    compile_flags: --release -j$(grep -c ^processor /proc/cpuinfo) --wiredtiger=off TARGET_ARCH=i386
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure -j1  # Avoid starting too many mongod's on 32-bit systems.
     ext: zip
@@ -2672,87 +2655,6 @@ buildvariants:
   - name: slow2_WT
   - name: sharding_jscore_passthrough
   - name: sharding_jscore_passthrough_WT
-  - name: tool
-  - name: tool_WT
-  - name: push
-    distros:
-    - rhel55-test
-
-- name: osx-108-ssl
-  display_name: SSL OS X 10.8
-  modules: ~
-  run_on:
-  - osx-108
-  expansions:
-    push_path: osx
-    push_bucket: downloads.mongodb.org
-    push_name: osx
-    push_arch: x86_64
-    tooltags: "-tags ssl"
-    compile_flags: --ssl --allocator=system -j$(sysctl -n hw.logicalcpu) --release --osx-version-min=10.7 --libc++
-    num_jobs_unittests: $(sysctl -n hw.logicalcpu)
-    test_flags: --continueOnFailure
-  tasks:
-  - name: compile
-  - name: aggregation
-  - name: aggregation_WT
-  - name: auth
-  - name: auth_WT
-  - name: dbtest
-  - name: dbtest_WT
-  - name: disk
-  - name: durability
-  - name: failpoints
-  - name: gle_auth
-  - name: gle_auth_WT
-  - name: gle_auth_write_cmd
-  - name: gle_auth_write_cmd_WT
-  - name: gle_auth_basics_passthrough
-  - name: gle_auth_basics_passthrough_WT
-  - name: gle_auth_basics_passthrough_write_cmd
-  - name: gle_auth_basics_passthrough_write_cmd_WT
-  - name: sharding_gle_auth_basics_passthrough
-  - name: sharding_gle_auth_basics_passthrough_WT
-  - name: sharding_gle_auth_basics_passthrough_write_cmd
-  - name: sharding_gle_auth_basics_passthrough_write_cmd_WT
-  - name: jsCore
-  - name: jsCore_WT
-  - name: jsCore_compatibility
-  - name: jsCore_compatibility_WT
-  - name: jsCore_small_oplog
-  - name: jsCore_small_oplog_WT
-  - name: jsCore_small_oplog_rs
-  - name: jsCore_small_oplog_rs_WT
-  - name: mmap
-  - name: mongosTest
-  - name: noPassthrough
-  - name: noPassthrough_WT
-  - name: noPassthroughWithMongod
-  - name: noPassthroughWithMongod_WT
-  - name: bulk_gle_passthrough
-  - name: bulk_gle_passthrough_WT
-  - name: parallel
-  - name: parallel_WT
-  - name: parallel_compatibility
-  - name: parallel_compatibility_WT
-  - name: concurrency
-  - name: concurrency_WT
-  - name: concurrency_compatibility
-  - name: concurrency_compatibility_WT
-  - name: replicasets
-  - name: replicasets_WT
-  - name: replication
-  - name: replication_WT
-  - name: sharding
-  - name: sharding_WT
-  - name: slow1
-  - name: slow1_WT
-  - name: slow2
-  - name: slow2_WT
-  - name: sharding_jscore_passthrough
-  - name: sharding_jscore_passthrough_WT
-  - name: ssl
-  - name: sslSpecial
   - name: tool
   - name: tool_WT
   - name: push
