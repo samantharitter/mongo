@@ -99,6 +99,7 @@ namespace mongo {
 
            //~AsyncOp() {}
 
+           Message m;
            const Date_t _start;
            CommandData _cmd;
            asio::io_service* _service;

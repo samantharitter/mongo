@@ -235,7 +235,7 @@ namespace {
             const ReplicationExecutor::RemoteCommandCallbackFn& cb,
             const RemoteCommandRequest& request,
             const ResponseStatus& response) {
-
+        std::cout << "REPLICATION_EXECUTOR: remoteCommandFinished()\n";
         if (cbData.status.isOK()) {
             cb(ReplicationExecutor::RemoteCommandCallbackData(
                        cbData.executor, cbData.myHandle, request, response));
@@ -268,7 +268,7 @@ namespace {
             const CallbackHandle& cbHandle,
             const uint64_t expectedHandleGeneration,
             const RemoteCommandCallbackFn& cb) {
-
+        std::cout << "REPLICATION_EXECUTOR: _finishRemoteCommand()\n";
         const WorkQueue::iterator iter = cbHandle._iter;
         boost::lock_guard<boost::mutex> lk(_mutex);
         if (_inShutdown) {

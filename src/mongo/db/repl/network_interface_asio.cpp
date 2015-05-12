@@ -76,7 +76,7 @@ namespace mongo {
             b.appendNum(0); // opts, check default
             b.appendStr(request.dbname + ".$cmd");
             b.appendNum(0); // toSkip
-            b.appendNum(-1); // toReturn, don't care about responses
+            b.appendNum(1); // toReturn, don't care about responses
             query.appendSelfToBufBuilder(b);
 
             // wrap up the message object, add headers etc.
@@ -87,19 +87,19 @@ namespace mongo {
 
         void NetworkInterfaceASIO::_asyncSendSimpleMessage(const boost::shared_ptr<AsyncOp> op,
                                                            const asio::const_buffer& buf) {
-            std::cout << "NETWORK_INTERFACE_ASIO: sending simple message\n" << std::flush;
+            std::cout << "NETWORK_INTERFACE_ASIO: sending simple message " << op.get() << "\n" << std::flush;
             asio::async_write(
-                op->_sock, asio::buffer(buf),
+                              op->_sock, asio::buffer(buf),
                 [this, op](std::error_code ec, std::size_t bytes) {
                     if (ec) {
                         // TODO handle legacy command errors and retry
-                        std::cout << "NETWORK_INTERFACE_ASIO: a network error occurred\n" << std::flush;
+                        std::cout << "NETWORK_INTERFACE_ASIO: a network error occurred " << op.get() << "\n" << std::flush;
                         _networkErrorCallback(op, ec);
                     } else {
-                        std::cout << "NETWORK_INTERFACE_ASIO: sent " << bytes << " bytes\n" << std::flush;
+                        std::cout << "NETWORK_INTERFACE_ASIO: sent " << bytes << " bytes " << op.get() << "\n" << std::flush;
                         _completedWriteCallback(op);
                     }
-                    std::cout << "NETWORK_INTERFACE_ASIO: done sending simple message\n" << std::flush;
+                    std::cout << "NETWORK_INTERFACE_ASIO: done sending simple message " << op.get() << "\n" << std::flush;
                 });
         }
 
@@ -141,6 +141,8 @@ namespace mongo {
             ResponseStatus status(Response(output, Milliseconds(end - op->_start)));
             op->_cmd.onFinish(status);
             std::cout << "NETWORK_INTERFACE_ASIO: successfully called onFinish\n" << std::flush;
+            signalWorkAvailable();
+            std::cout << "NETWORK_INTERFACE_ASIO: signaled work available\n";
         }
 
         void NetworkInterfaceASIO::_networkErrorCallback(const boost::shared_ptr<AsyncOp> op,
@@ -155,25 +157,26 @@ namespace mongo {
             boost::shared_ptr<AsyncOp> op(boost::make_shared<AsyncOp>(std::move(cmd), now(), &_io_service));
 
             // translate request into Message
-            Message m;
-            _messageFromRequest(op->_cmd.request, m);
+            //Message* leaked_message = new Message;
+            //Message& m = *leaked_message;
+            _messageFromRequest(op->_cmd.request, op->m);
 
             std::cout << "NETWORK_INTERFACE_ASIO: starting async send\n" << std::flush;
 
             // async send
-            if (m.empty()) {
+            if (op->m.empty()) {
                 // call into callback directly
                 std::cout << "NETWORK_INTERFACE_ASIO: empty message, call callback\n" << std::flush;
                 _completedWriteCallback(op);
-            } else if (m._buf!= 0) {
+            } else if (op->m._buf!= 0) {
                 // simple send
-                std::cout << "NETWORK_INTERFACE_ASIO: it's a simple message\n" << std::flush;
-                asio::const_buffer buf(m._buf, MsgData::ConstView(m._buf).getLen());
+                std::cout << "NETWORK_INTERFACE_ASIO: it's a simple message of size " << op->m.size() << "\n" << std::flush;
+                asio::const_buffer buf(op->m._buf, op->m.size());
                 _asyncSendSimpleMessage(op, buf);
             } else {
                 std::cout << "NETWORK_INTERFACE_ASIO: it's a complicated message\n" << std::flush;
                 // complex send
-                std::vector<std::pair<char *, int>> data = m._data;
+                std::vector<std::pair<char *, int>> data = op->m._data;
                 std::vector<std::pair<char *, int>>::const_iterator i = data.begin();
                 _asyncSendComplicatedMessage(op, data, i);
             }
