@@ -173,7 +173,7 @@ namespace mongo {
         shutdown();
         ports.erase(this);
     }
-    
+
     bool MessagingPort::recv(Message& m) {
         try {
 again:

@@ -123,9 +123,10 @@ namespace {
     }
 
     ConnectionPool::ConnectionList::iterator ConnectionPool::acquireConnection(
-                                                                const HostAndPort& target,
-                                                                Date_t now,
-                                                                Milliseconds timeout) {
+                                                                               const HostAndPort& target,
+                                                                               Date_t now,
+                                                                               Milliseconds timeout) {
+        std::cout << "CONNECTION_POOL: acquireConnection()\n";
         boost::unique_lock<boost::mutex> lk(_mutex);
 
         // Clean up connections on stale/unused hosts

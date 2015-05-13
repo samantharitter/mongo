@@ -34,6 +34,7 @@
 
 #include <thread>
 
+#include "mongo/client/connection_pool.h"
 #include "mongo/db/repl/replication_executor.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/net/message.h"
@@ -84,25 +85,52 @@ namespace mongo {
          */
         class AsyncOp {
         public:
-        AsyncOp(const CommandData&& cmd, Date_t now, asio::io_service* service) :
+        AsyncOp(const CommandData&& cmd, Date_t now, asio::io_service* service, ConnectionPool* pool) :
+           md(NULL),
            _start(now),
               _cmd(cmd),
               _service(service),
-              _sock(*_service)
+              //_sock(*_service),
+              _pool(pool),
+              _conn(_pool, _cmd.request.target, _start, Milliseconds(100000)),
+              _sock(*_service, asio::ip::tcp::v6(), _conn.get()->p->psock->rawFD())
               {
+                 // we need to authenticate before we begin.
+
+                 // create a DBClient and let it auth for us -- that's _conn.
+                 //DBClientConnection* client = _conn.get();
+
+                 // then, steal its socket and use it for pleasure and profit
+                 std::cout << "NETWORK_INTERFACE_ASIO: stealing authenticated socket\n";
+                 //MessagingPort* clientPort = client->p.get();
+                 //boost::shared_ptr<Socket> clientSock = clientPort->psock;
+                 //int rawSock = clientSock->rawFD();
+                 //asio::ip::tcp tcp = asio::ip::tcp::v6();
+                 //_sock(*_service, tcp, rawSock);
+                 //_sock = newSock;
+
                  // connect socket
                  // TODO use a non-blocking connect, store network state
-                 HostAndPort addr = _cmd.request.target;
-                 tcp::resolver resolver(*_service);
-                 asio::connect(_sock, resolver.resolve({addr.host(), std::to_string(addr.port())}));
+                 //HostAndPort addr = _cmd.request.target;
+                 //tcp::resolver resolver(*_service);
+                 //asio::connect(_sock, resolver.resolve({addr.host(), std::to_string(addr.port())}));
               }
 
            //~AsyncOp() {}
 
-           Message m;
+           Message toSend;
+           Message toRecv;
+           MSGHEADER::Value header; // todo clean up
+           char *md;
+
+           BSONObj output;
            const Date_t _start;
            CommandData _cmd;
            asio::io_service* _service;
+
+           // yeahhh...
+           ConnectionPool* _pool;
+           ConnectionPool::ConnectionPtr _conn;
            tcp::socket _sock;
         };
 
@@ -136,6 +164,9 @@ namespace mongo {
 
       private:
 
+        void _recvMessageHeader(const boost::shared_ptr<AsyncOp> op);
+        void _recvMessageBody(const boost::shared_ptr<AsyncOp> op);
+        void _receiveResponse(const boost::shared_ptr<AsyncOp> op);
         void _signalWorkAvailable_inlock();
 
         bool _isExecutorRunnable;
@@ -143,6 +174,9 @@ namespace mongo {
 
         // for executor.
         boost::condition_variable _isExecutorRunnableCondition;
+
+        // to steal from
+        boost::scoped_ptr<ConnectionPool> _connPool;
       };
 
    } // namespace repl

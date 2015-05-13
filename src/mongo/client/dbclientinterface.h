@@ -1106,7 +1106,7 @@ namespace mongo {
 
         uint64_t getSockCreationMicroSec() const;
 
-    protected:
+        //    protected:
         friend class SyncClusterConnection;
         virtual void _auth(const BSONObj& params);
         virtual void sayPiggyBack( Message &toSend );

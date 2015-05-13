@@ -228,7 +228,7 @@ namespace mongo {
         // recv len or throw SocketException
         void recv( char * data , int len );
         int unsafe_recv( char *buf, int max );
-        
+
         logger::LogSeverity getLogLevel() const { return _logLevel; }
         void setLogLevel( logger::LogSeverity ll ) { _logLevel = ll; }
 
