@@ -48,6 +48,7 @@ namespace mongo {
     using std::string;
     using std::vector;
 
+    // this method lives in dbclient.cpp
     void assembleRequest( const string &ns, BSONObj query, int nToReturn, int nToSkip, const BSONObj *fieldsToReturn, int queryOptions, Message &toSend );
 
     void DBClientCursor::_finishConsInit() {

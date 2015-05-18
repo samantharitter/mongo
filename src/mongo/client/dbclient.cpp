@@ -894,7 +894,6 @@ namespace {
     BSONObj DBClientInterface::findOne(const string &ns, const Query& query, const BSONObj *fieldsToReturn, int queryOptions) {
         vector<BSONObj> v;
         findN(v, ns, query, 1, 0, fieldsToReturn, queryOptions);
-        std::cout << "is v empty? " << v.empty() << "\n";
         return v.empty() ? BSONObj() : v[0];
     }
 

@@ -278,18 +278,21 @@ again:
                 mmm( log() << "recv not ok" << endl; )
                 return false;
             }
+            //std::cout << "MESSAGING_PORT: sent this message: " << toSend.toString() << "\n";
+            //std::cout << "MESSAGING_PORT: and got this response: " << response.toString() << "\n";
             //log() << "got response: " << response.data->responseTo << endl;
             if ( response.header().getResponseTo() == toSend.header().getId() )
                 break;
-            error() << "MessagingPort::call() wrong id got:"
+            error() << "MessagingPort::recv() wrong id got:"
                     << std::hex << (unsigned)response.header().getResponseTo()
                     << " expect:" << (unsigned)toSend.header().getId() << '\n'
                     << std::dec
                     << "  toSend op: " << (unsigned)toSend.operation() << '\n'
-                    << "  response msgid:" << (unsigned)response.header().getId() << '\n'
+                    << "  response msgid: " << (unsigned)response.header().getId() << '\n'
                     << "  response len:  " << (unsigned)response.header().getLen() << '\n'
                     << "  response op:  " << response.operation() << '\n'
                     << "  remote: " << psock->remoteString();
+            std::cout << "MESSAGING_PORT: about to verify false\n" << std::flush;
             verify(false);
             response.reset();
         }
@@ -298,6 +301,7 @@ again:
     }
 
     void MessagingPort::say(Message& toSend, int responseTo) {
+        //std::cout << "MESSAGE: say(), responseTo is " << responseTo << "\n";
         verify( !toSend.empty() );
         mmm( log() << "*  say()  thr:" << GetCurrentThreadId() << endl; )
         toSend.header().setId(nextMessageId());

@@ -192,6 +192,7 @@ namespace {
         }
 
         lk.lock();
+        std::cout << "CONNECTION_POOL: successfully acquired connection\n";
         return _inUseConnections.insert(_inUseConnections.begin(),
                                         ConnectionInfo(conn.release(), now));
     }

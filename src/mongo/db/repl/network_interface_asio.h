@@ -86,37 +86,19 @@ namespace mongo {
         class AsyncOp {
         public:
         AsyncOp(const CommandData&& cmd, Date_t now, asio::io_service* service, ConnectionPool* pool) :
-           md(NULL),
-           _start(now),
+           _canceled(false),
+              md(NULL),
+              _start(now),
               _cmd(cmd),
               _service(service),
-              //_sock(*_service),
               _pool(pool),
               _conn(_pool, _cmd.request.target, _start, Milliseconds(100000)),
               _sock(*_service, asio::ip::tcp::v6(), _conn.get()->p->psock->rawFD())
-              {
-                 // we need to authenticate before we begin.
+                 {
+                    // nothing
+                 }
 
-                 // create a DBClient and let it auth for us -- that's _conn.
-                 //DBClientConnection* client = _conn.get();
-
-                 // then, steal its socket and use it for pleasure and profit
-                 std::cout << "NETWORK_INTERFACE_ASIO: stealing authenticated socket\n";
-                 //MessagingPort* clientPort = client->p.get();
-                 //boost::shared_ptr<Socket> clientSock = clientPort->psock;
-                 //int rawSock = clientSock->rawFD();
-                 //asio::ip::tcp tcp = asio::ip::tcp::v6();
-                 //_sock(*_service, tcp, rawSock);
-                 //_sock = newSock;
-
-                 // connect socket
-                 // TODO use a non-blocking connect, store network state
-                 //HostAndPort addr = _cmd.request.target;
-                 //tcp::resolver resolver(*_service);
-                 //asio::connect(_sock, resolver.resolve({addr.host(), std::to_string(addr.port())}));
-              }
-
-           //~AsyncOp() {}
+           bool _canceled;
 
            Message toSend;
            Message toRecv;
@@ -133,6 +115,8 @@ namespace mongo {
            ConnectionPool::ConnectionPtr _conn;
            tcp::socket _sock;
         };
+        typedef const boost::shared_ptr<AsyncOp> sharedAsyncOp;
+        typedef stdx::list<AsyncOp*> AsyncOpList;
 
         void _killTime();
 
@@ -143,30 +127,32 @@ namespace mongo {
         void _messageFromRequest(const ReplicationExecutor::RemoteCommandRequest& request,
                                  Message& toSend);
 
-        void _asyncSendSimpleMessage(const boost::shared_ptr<AsyncOp> op,
+        void _asyncSendSimpleMessage(sharedAsyncOp op,
                                      const asio::const_buffer& buf);
 
-        void _asyncSendComplicatedMessage(const boost::shared_ptr<AsyncOp> op,
+        void _asyncSendComplicatedMessage(sharedAsyncOp op,
                                           std::vector<std::pair<char*, int>> data,
                                           std::vector<std::pair<char*, int>>::const_iterator i);
 
-        void _completedWriteCallback(const boost::shared_ptr<AsyncOp> op);
-        void _networkErrorCallback(const boost::shared_ptr<AsyncOp> op, std::error_code ec);
+        void _completedWriteCallback(sharedAsyncOp op);
+        void _networkErrorCallback(sharedAsyncOp op, std::error_code ec);
         OperationContext* createOperationContext() override;
 
         asio::io_service _io_service;
         asio::steady_timer _timer;
 
         std::thread _serviceRunner;
-        std::set<AsyncOp> _active_ops;
 
         bool _shutdown;
 
       private:
 
-        void _recvMessageHeader(const boost::shared_ptr<AsyncOp> op);
-        void _recvMessageBody(const boost::shared_ptr<AsyncOp> op);
-        void _receiveResponse(const boost::shared_ptr<AsyncOp> op);
+        void _completeOperation(sharedAsyncOp op);
+        void _validateMessageHeader(sharedAsyncOp op);
+        void _keepAlive(sharedAsyncOp op);
+        void _recvMessageHeader(sharedAsyncOp op);
+        void _recvMessageBody(sharedAsyncOp op);
+        void _receiveResponse(sharedAsyncOp op);
         void _signalWorkAvailable_inlock();
 
         bool _isExecutorRunnable;
@@ -177,6 +163,9 @@ namespace mongo {
 
         // to steal from
         boost::scoped_ptr<ConnectionPool> _connPool;
+
+        // for canceling. These ptrs are NON-owning.
+        AsyncOpList _inProgress;
       };
 
    } // namespace repl
