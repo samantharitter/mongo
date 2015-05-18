@@ -164,8 +164,8 @@ namespace mongo {
                     break;
                 }
 
-                std::cout << "DB.CPP: received message with id " << m.header().getId()
-                          << ", it is a response to " << m.header().getResponseTo() << "\n";
+                //std::cout << "DB.CPP: received message with id " << m.header().getId()
+                //          << ", it is a response to " << m.header().getResponseTo() << "\n";
 
                 DbResponse dbresponse;
                 assembleResponse(&txn, m, dbresponse, port->remote());
