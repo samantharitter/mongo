@@ -239,9 +239,9 @@ namespace mongo {
             startServer(port);
 
             boost::shared_ptr<NetworkInterfaceASIO> net = getNet();
-            const ReplicationExecutor::RemoteCommandRequest request(HostAndPort("localhost", port),
-                                                                    "somedb",
-                                                                    BSON( "a" << GTE << 0 ));
+            const RemoteCommandRequest request(HostAndPort("localhost", port),
+                                               "somedb",
+                                               BSON( "a" << GTE << 0 ));
 
             for (int i = 0; i < runs; i++) {
                 std::cout << "TEST: enqueuing work\n" << std::flush;

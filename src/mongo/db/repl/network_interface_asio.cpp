@@ -68,7 +68,7 @@ namespace mongo {
         }
 
         // TODO: need different handlers for different types of requests
-        void NetworkInterfaceASIO::_messageFromRequest(const ReplicationExecutor::RemoteCommandRequest& request,
+        void NetworkInterfaceASIO::_messageFromRequest(const RemoteCommandRequest& request,
                                                        Message& toSend) {
             BSONObj query = request.cmdObj;
             verify(query.isValid());
@@ -281,7 +281,7 @@ namespace mongo {
         }
 
         void NetworkInterfaceASIO::_asyncRunCmd(const CommandData&& cmd) {
-            ReplicationExecutor::RemoteCommandRequest request = cmd.request;
+            RemoteCommandRequest request = cmd.request;
 
             sharedAsyncOp op(boost::make_shared<AsyncOp>(std::move(cmd), now(), &_io_service, _connPool.get()));
             bool connected = op->connect(now());
@@ -367,18 +367,18 @@ namespace mongo {
                 if (waitTime <= Milliseconds(0)) {
                     break;
                 }
-                _isExecutorRunnableCondition.timed_wait(lk, waitTime);
+                _isExecutorRunnableCondition.wait_for(lk, waitTime);
             }
             _isExecutorRunnable = false;
         }
 
         Date_t NetworkInterfaceASIO::now() {
-            return curTimeMillis64();
+            return Date_t::now();
         }
 
         void NetworkInterfaceASIO::startCommand(
                 const ReplicationExecutor::CallbackHandle& cbHandle,
-                const ReplicationExecutor::RemoteCommandRequest& request,
+                const RemoteCommandRequest& request,
                 const RemoteCommandCompletionFn& onFinish) {
             LOG(2) << "Scheduling " << request.cmdObj.firstElementFieldName() << " to " <<
                 request.target;

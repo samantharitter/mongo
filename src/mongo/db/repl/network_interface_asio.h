@@ -35,6 +35,7 @@
 #include <thread>
 
 #include "mongo/client/connection_pool.h"
+#include "mongo/client/remote_command_executor.h"
 #include "mongo/db/repl/replication_executor.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/net/message.h"
@@ -62,7 +63,7 @@ namespace mongo {
         virtual Date_t now();
         virtual void startCommand(
                 const ReplicationExecutor::CallbackHandle& cbHandle,
-                const ReplicationExecutor::RemoteCommandRequest& request,
+                const RemoteCommandRequest& request,
                 const RemoteCommandCompletionFn& onFinish);
         virtual void cancelCommand(const ReplicationExecutor::CallbackHandle& cbHandle);
         virtual void runCallbackWithGlobalExclusiveLock(
@@ -75,7 +76,7 @@ namespace mongo {
          */
         struct CommandData {
            ReplicationExecutor::CallbackHandle cbHandle;
-           ReplicationExecutor::RemoteCommandRequest request;
+           RemoteCommandRequest request;
            RemoteCommandCompletionFn onFinish;
         };
         typedef stdx::list<CommandData> CommandDataList;
@@ -145,7 +146,7 @@ namespace mongo {
         void _asyncRunCmd(const CommandData&& cmd);
 
         // todo make free function
-        void _messageFromRequest(const ReplicationExecutor::RemoteCommandRequest& request,
+        void _messageFromRequest(const RemoteCommandRequest& request,
                                  Message& toSend);
 
         void _asyncSendSimpleMessage(sharedAsyncOp op,
