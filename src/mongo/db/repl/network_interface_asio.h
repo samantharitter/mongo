@@ -91,17 +91,15 @@ namespace mongo {
               _start(now),
               _cmd(cmd),
               _service(service),
-              _pool(pool),
-              _conn(NULL),
-              _sock(NULL)
-                 {
-                    // nothing
-                 }
+              _pool(pool)
+              {
+                 // nothing
+              }
 
            bool connect(Date_t now) {
               try {
-                 _conn = new ConnectionPool::ConnectionPtr(_pool, _cmd.request.target, now, Milliseconds(10000));
-                 _sock = new tcp::socket(*_service, asio::ip::tcp::v6(), _conn->get()->p->psock->rawFD());
+                 _conn.reset(new ConnectionPool::ConnectionPtr(_pool, _cmd.request.target, now, Milliseconds(10000)));
+                 _sock.reset(new tcp::socket(*_service, asio::ip::tcp::v6(), _conn->get()->p->psock->rawFD()));
                  return true;
               } catch (const std::exception& e) {
                  std::cout << "ASYNC_OP: exception occurred in connect()\n";
@@ -115,7 +113,7 @@ namespace mongo {
            }
 
            tcp::socket* sock() {
-              return _sock;
+              return _sock.get();
            }
 
            bool _canceled;
@@ -132,8 +130,8 @@ namespace mongo {
 
            // yeahhh...
            ConnectionPool* _pool;
-           ConnectionPool::ConnectionPtr* _conn;
-           tcp::socket* _sock;
+           std::unique_ptr<ConnectionPool::ConnectionPtr> _conn;
+           std::unique_ptr<tcp::socket> _sock;
         };
         typedef const boost::shared_ptr<AsyncOp> sharedAsyncOp;
         typedef stdx::list<AsyncOp*> AsyncOpList;
