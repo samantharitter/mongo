@@ -272,7 +272,7 @@ namespace {
     }
 
     Date_t NetworkInterfaceImpl::now() {
-        return curTimeMillis64();
+        return Date_t::now();
     }
 
     namespace {
