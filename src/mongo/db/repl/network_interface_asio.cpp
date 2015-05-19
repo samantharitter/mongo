@@ -57,7 +57,7 @@ namespace mongo {
             _shutdown(false),
             _isExecutorRunnable(false)
         {
-            std::cout << "NETWORK_INTERFACE_ASIO: NetworkInterfaceASIO constructor\n" << std::flush;
+            std::cout << "NETWORK_INTERFACE_ASIO: NetworkInterfaceASIO constructor\n";
             _connPool.reset(new ConnectionPool(kMessagingPortKeepOpen));
         }
 
@@ -83,10 +83,10 @@ namespace mongo {
             // wrap up the message object, add headers etc.
             toSend.setData(dbQuery, b.buf(), b.len()); // must b outlive toSend?
             toSend.header().setId(nextMessageId());
-            toSend.header().setResponseTo(0); // yeah this needs to be real :P
+            toSend.header().setResponseTo(0);
 
             std::cout << "NETWORK_INTERFACE_ASIO: sending _messageFromRequest with id: " << toSend.header().getId()
-                      << "\n" << std::flush;
+                      << "\n";
         }
 
         void NetworkInterfaceASIO::_asyncSendSimpleMessage(sharedAsyncOp op,
@@ -100,7 +100,6 @@ namespace mongo {
                         _networkErrorCallback(op, ec);
                     } else {
                         //std::cout << "NETWORK_INTERFACE_ASIO: sent " << bytes << " bytes " << op.get() << "\n";
-                        // receive a response if we need to
                         _receiveResponse(op);
                     }
                 });
@@ -110,7 +109,7 @@ namespace mongo {
                sharedAsyncOp op,
                std::vector<std::pair<char*, int>> data,
                std::vector<std::pair<char*, int>>::const_iterator i) {
-            std::cout << "NETWORK_INTERFACE_ASIO: sending complicated message\n" << std::flush;
+            std::cout << "NETWORK_INTERFACE_ASIO: sending complicated message\n";
             // if we are done, call callback from here
             if (i == data.end()) {
                 _completedWriteCallback(op);
@@ -124,10 +123,9 @@ namespace mongo {
                               [this, data, i, op]
                               (std::error_code ec, std::size_t) {
                    if (ec) {
-                       std::cout << "NETWORK_INTERFACE_ASIO: error sending complicated message\n" << std::flush;
+                       std::cout << "NETWORK_INTERFACE_ASIO: error sending complicated message\n";
                        _networkErrorCallback(op, ec);
                    } else {
-                       //std::cout << "NETWORK_INTERFACE_ASIO: calling send again\n";
                        _asyncSendComplicatedMessage(op, data, i);
                    }
                });
@@ -216,7 +214,7 @@ namespace mongo {
             asio::async_read(*(op->sock()), asio::buffer((char *)(&op->header), sizeof(MSGHEADER::Value)),
                              [this, op](asio::error_code ec, size_t bytes) {
                                  if (ec) {
-                                     std::cout << "NETWORK_INTERFACE_ASIO: error receiving header\n" << std::flush;
+                                     std::cout << "NETWORK_INTERFACE_ASIO: error receiving header\n";
                                      _networkErrorCallback(op, ec);
                                  } else {
                                      _recvMessageBody(op);
@@ -232,7 +230,7 @@ namespace mongo {
         }
 
         void NetworkInterfaceASIO::_completedWriteCallback(sharedAsyncOp op) {
-            std::cout << "NETWORK_INTERFACE_ASIO: _completedWriteCallback()\n" << std::flush;
+            std::cout << "NETWORK_INTERFACE_ASIO: _completedWriteCallback()\n";
 
             if (op->toRecv.empty()) {
                 op->output = BSONObj();
@@ -286,31 +284,30 @@ namespace mongo {
             ReplicationExecutor::RemoteCommandRequest request = cmd.request;
 
             sharedAsyncOp op(boost::make_shared<AsyncOp>(std::move(cmd), now(), &_io_service, _connPool.get()));
-            if (!op->connect(now())) {
-                // todo: this is janky
-                // couldn't connect in constructor...
+            bool connected = op->connect(now());
+            if (!connected) {
+                //op->disconnect(now());
                 std::cout << "NETWORK_INTERFACE_ASIO: connect() failed, posting mock completion\n";
-                asio::post(_io_service, [this, cmd]() {
+                asio::post(_io_service, [this, op]() {
+                        // todo: better error status
                         ResponseStatus status(Response(BSONObj(), Milliseconds(0)));
-                        cmd.onFinish(status);
+                        op->_cmd.onFinish(status);
                         // todo: check all calls to this, deadlock-prone, takes lock
                         //signalWorkAvailable();
                     });
+                return;
             }
 
             _messageFromRequest(op->_cmd.request, op->toSend);
             _inProgress.push_back(op.get());
 
             if (op->toSend.empty()) {
-                // call into callback directly
                 _completedWriteCallback(op);
             } else if (op->toSend._buf!= 0) {
                 // simple send
-                //std::cout << "NETWORK_INTERFACE_ASIO: it's a simple message of size " << op->toSend.size() << "\n";
                 asio::const_buffer buf(op->toSend._buf, op->toSend.size());
                 _asyncSendSimpleMessage(op, buf);
             } else {
-                //std::cout << "NETWORK_INTERFACE_ASIO: it's a complicated message\n";
                 // complex send
                 std::vector<std::pair<char *, int>> data = op->toSend._data;
                 std::vector<std::pair<char *, int>>::const_iterator i = data.begin();
@@ -321,16 +318,16 @@ namespace mongo {
         void NetworkInterfaceASIO::_runCommand(const CommandData&& cmd) {
             std::cout << "NETWORK_INTERFACE_ASIO: running command " << cmd.request.cmdObj
                       << " against database " << cmd.request.dbname
-                      << " across network to " << cmd.request.target.toString() << "\n" << std::flush;
+                      << " across network to " << cmd.request.target.toString() << "\n";
             _asyncRunCmd(std::move(cmd));
         }
 
         void NetworkInterfaceASIO::startup() {
             _serviceRunner = std::thread([this]() {
-                    std::cout << "NETWORK_INTERFACE_ASIO: running io_service\n" << std::flush;
+                    std::cout << "NETWORK_INTERFACE_ASIO: running io_service\n";
                     asio::io_service::work work(_io_service);
                     _io_service.run();
-                    std::cout << "NETWORK_INTERFACE_ASIO: service.run() returned\n" << std::flush;
+                    std::cout << "NETWORK_INTERFACE_ASIO: service.run() returned\n";
                 });
             return;
         }
@@ -394,7 +391,7 @@ namespace mongo {
         }
 
         void NetworkInterfaceASIO::cancelCommand(const ReplicationExecutor::CallbackHandle& cbHandle) {
-            std::cout << "NETWORK_INTERFACE_ASIO: canceling command\n" << std::flush;
+            std::cout << "NETWORK_INTERFACE_ASIO: canceling command\n";
             AsyncOpList::iterator iter;
             for (iter = _inProgress.begin(); iter != _inProgress.end(); ++iter) {
                 if (*iter != NULL) {

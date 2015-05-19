@@ -99,7 +99,8 @@ namespace mongo {
            bool connect(Date_t now) {
               try {
                  _conn.reset(new ConnectionPool::ConnectionPtr(_pool, _cmd.request.target, now, Milliseconds(10000)));
-                 _sock.reset(new tcp::socket(*_service, asio::ip::tcp::v6(), _conn->get()->p->psock->rawFD()));
+                 _sock.reset(new tcp::socket(*_service, asio::ip::tcp::v6(),
+                                             _conn->get()->p->psock->rawFD()));
                  return true;
               } catch (const std::exception& e) {
                  std::cout << "ASYNC_OP: exception occurred in connect()\n";
@@ -108,6 +109,7 @@ namespace mongo {
            }
 
            bool disconnect(Date_t now) {
+              // todo: what if _conn isn't created properly? Does this matter?
               _conn->done(now, true);
               return true;
            }
