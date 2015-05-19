@@ -241,8 +241,12 @@ namespace {
         }
     }
 
-    void ConnectionPool::ConnectionPtr::done(Date_t now) {
-        _pool->releaseConnection(_connInfo, now);
+    void ConnectionPool::ConnectionPtr::done(Date_t now, bool destroy) {
+        if (destroy) {
+            _pool->destroyConnection(_connInfo);
+        } else {
+            _pool->releaseConnection(_connInfo, now);
+        }
         _pool = NULL;
     }
 

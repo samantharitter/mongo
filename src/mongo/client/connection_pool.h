@@ -104,7 +104,7 @@ namespace mongo {
             /**
              * Releases the connection back to the pool from which it was drawn.
              */
-            void done(Date_t now);
+            void done(Date_t now, bool destroy=false);
 
         private:
             ConnectionPool* _pool;

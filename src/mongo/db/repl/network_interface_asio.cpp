@@ -92,7 +92,7 @@ namespace mongo {
         void NetworkInterfaceASIO::_asyncSendSimpleMessage(sharedAsyncOp op,
                                                            const asio::const_buffer& buf) {
             asio::async_write(
-                              op->_sock, asio::buffer(buf),
+                              *(op->sock()), asio::buffer(buf),
                 [this, op](std::error_code ec, std::size_t bytes) {
                     if (ec) {
                         // TODO handle legacy command errors and retry
@@ -120,7 +120,7 @@ namespace mongo {
             asio::const_buffer buf(i->first, i->second); // data, length
             i++;
 
-            asio::async_write(op->_sock, asio::buffer(buf),
+            asio::async_write(*(op->sock()), asio::buffer(buf),
                               [this, data, i, op]
                               (std::error_code ec, std::size_t) {
                    if (ec) {
@@ -199,7 +199,7 @@ namespace mongo {
             int bodyLength = len - headerLen;
 
             // receive remaining data into md->data
-            asio::async_read(op->_sock, asio::buffer(md_view.data(), bodyLength),
+            asio::async_read(*(op->sock()), asio::buffer(md_view.data(), bodyLength),
                              [this, op, md_view](asio::error_code ec, size_t bytes) {
                                  if (ec) {
                                      std::cout << "NETWORK_INTERFACE_ASIO: error receiving message body\n";
@@ -213,7 +213,7 @@ namespace mongo {
 
         void NetworkInterfaceASIO::_recvMessageHeader(boost::shared_ptr<AsyncOp> op) {
             std::cout << "NETWORK_INTERFACE_ASIO: receiving message header...\n";
-            asio::async_read(op->_sock, asio::buffer((char *)(&op->header), sizeof(MSGHEADER::Value)),
+            asio::async_read(*(op->sock()), asio::buffer((char *)(&op->header), sizeof(MSGHEADER::Value)),
                              [this, op](asio::error_code ec, size_t bytes) {
                                  if (ec) {
                                      std::cout << "NETWORK_INTERFACE_ASIO: error receiving header\n" << std::flush;
@@ -276,7 +276,7 @@ namespace mongo {
                 op->_cmd.onFinish(status);
             }
 
-            op->_conn.done(end);
+            op->disconnect(end);
             // TODO dequeue from _inProgress
             _inProgress.remove(op.get());
             signalWorkAvailable();
@@ -284,37 +284,37 @@ namespace mongo {
 
         void NetworkInterfaceASIO::_asyncRunCmd(const CommandData&& cmd) {
             ReplicationExecutor::RemoteCommandRequest request = cmd.request;
-            try {
-                sharedAsyncOp op(boost::make_shared<AsyncOp>(std::move(cmd), now(), &_io_service, _connPool.get()));
 
-                _messageFromRequest(op->_cmd.request, op->toSend);
-                _inProgress.push_back(op.get());
-
-                if (op->toSend.empty()) {
-                    // call into callback directly
-                    _completedWriteCallback(op);
-                } else if (op->toSend._buf!= 0) {
-                    // simple send
-                    //std::cout << "NETWORK_INTERFACE_ASIO: it's a simple message of size " << op->toSend.size() << "\n";
-                    asio::const_buffer buf(op->toSend._buf, op->toSend.size());
-                    _asyncSendSimpleMessage(op, buf);
-                } else {
-                    //std::cout << "NETWORK_INTERFACE_ASIO: it's a complicated message\n";
-                    // complex send
-                    std::vector<std::pair<char *, int>> data = op->toSend._data;
-                    std::vector<std::pair<char *, int>>::const_iterator i = data.begin();
-                    _asyncSendComplicatedMessage(op, data, i);
-                }
-            } catch (const std::exception& e) {
+            sharedAsyncOp op(boost::make_shared<AsyncOp>(std::move(cmd), now(), &_io_service, _connPool.get()));
+            if (!op->connect(now())) {
                 // todo: this is janky
                 // couldn't connect in constructor...
-                std::cout << "NETWORK_INTERFACE_ASIO: caught constructor exception!!! " << e.what() << "\n";
-                std::cout << "NETWORK_INTERFACE_ASIO: posting mock completion\n";
+                std::cout << "NETWORK_INTERFACE_ASIO: connect() failed, posting mock completion\n";
                 asio::post(_io_service, [this, cmd]() {
                         ResponseStatus status(Response(BSONObj(), Milliseconds(0)));
                         cmd.onFinish(status);
-                        signalWorkAvailable();
+                        // todo: check all calls to this, deadlock-prone, takes lock
+                        //signalWorkAvailable();
                     });
+            }
+
+            _messageFromRequest(op->_cmd.request, op->toSend);
+            _inProgress.push_back(op.get());
+
+            if (op->toSend.empty()) {
+                // call into callback directly
+                _completedWriteCallback(op);
+            } else if (op->toSend._buf!= 0) {
+                // simple send
+                //std::cout << "NETWORK_INTERFACE_ASIO: it's a simple message of size " << op->toSend.size() << "\n";
+                asio::const_buffer buf(op->toSend._buf, op->toSend.size());
+                _asyncSendSimpleMessage(op, buf);
+            } else {
+                //std::cout << "NETWORK_INTERFACE_ASIO: it's a complicated message\n";
+                // complex send
+                std::vector<std::pair<char *, int>> data = op->toSend._data;
+                std::vector<std::pair<char *, int>>::const_iterator i = data.begin();
+                _asyncSendComplicatedMessage(op, data, i);
             }
         }
 
