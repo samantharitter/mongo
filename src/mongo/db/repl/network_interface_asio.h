@@ -116,6 +116,7 @@ namespace mongo {
               return _sock.get();
            }
 
+
            bool _canceled;
 
            Message toSend;
