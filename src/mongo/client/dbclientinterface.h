@@ -1106,12 +1106,13 @@ namespace mongo {
 
         uint64_t getSockCreationMicroSec() const;
 
-        //    protected:
+        boost::scoped_ptr<MessagingPort> p;
+
+    protected:
         friend class SyncClusterConnection;
         virtual void _auth(const BSONObj& params);
         virtual void sayPiggyBack( Message &toSend );
 
-        boost::scoped_ptr<MessagingPort> p;
         boost::scoped_ptr<SockAddr> server;
         bool _failed;
         const bool autoReconnect;

@@ -91,8 +91,7 @@ namespace mongo {
 
         void NetworkInterfaceASIO::_asyncSendSimpleMessage(sharedAsyncOp op,
                                                            const asio::const_buffer& buf) {
-            asio::async_write(
-                              *(op->sock()), asio::buffer(buf),
+            asio::async_write(*(op->sock()), asio::buffer(buf),
                 [this, op](std::error_code ec, std::size_t bytes) {
                     if (ec) {
                         // TODO handle legacy command errors and retry
@@ -303,7 +302,7 @@ namespace mongo {
 
             if (op->toSend.empty()) {
                 _completedWriteCallback(op);
-            } else if (op->toSend._buf!= 0) {
+            } else if (op->toSend._buf != 0) {
                 // simple send
                 asio::const_buffer buf(op->toSend._buf, op->toSend.size());
                 _asyncSendSimpleMessage(op, buf);
