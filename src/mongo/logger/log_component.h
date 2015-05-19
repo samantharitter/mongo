@@ -50,6 +50,7 @@ namespace logger {
             kGeo,
             kIndex,
             kNetwork,
+            kNetworkInterface,
             kQuery,
             kReplication,
             kSharding,

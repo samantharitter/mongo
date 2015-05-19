@@ -98,7 +98,6 @@ namespace mongo {
                     // nothing
                  }
 
-
            bool _canceled;
 
            Message toSend;
