@@ -155,7 +155,6 @@ namespace mongo {
     }
 
     void DBClientCursor::requestMore() {
-        std::cout << "NETWORK: calling requestMore() in the cursor\n";
         verify( cursorId && batch.pos == batch.nReturned );
 
         if (haveLimit) {

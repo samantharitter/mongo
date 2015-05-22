@@ -502,7 +502,6 @@ namespace {
     }  // namespace
 
     void DBClientWithCommands::_auth(const BSONObj& params) {
-        std::cout << "DBCLIENT_WITH_COMMANDS: _auth()";
         RunCommandHookOverrideGuard hookGuard(this, RunCommandHookFunc());
         std::string mechanism;
 
@@ -854,7 +853,7 @@ namespace {
     /* --- dbclientconnection --- */
 
     void DBClientConnection::_auth(const BSONObj& params) {
-        std::cout << "DBCLIENT_CONNECTION: _auth()";
+
         if( autoReconnect ) {
             /* note we remember the auth info before we attempt to auth -- if the connection is broken, we will
                then have it for the next autoreconnect attempt.
@@ -883,10 +882,8 @@ namespace {
         }
 
         for( int i = 0; i < nToReturn; i++ ) {
-            if ( !c->more() ) {
-                std::cout << "c->more() is false, breaking\n";
+            if ( !c->more() )
                 break;
-            }
             out.push_back( c->nextSafe().copy() );
         }
     }

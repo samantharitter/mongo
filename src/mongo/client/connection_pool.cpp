@@ -126,7 +126,6 @@ namespace {
                                                                                const HostAndPort& target,
                                                                                Date_t now,
                                                                                Milliseconds timeout) {
-        std::cout << "CONNECTION_POOL: acquireConnection()\n";
         boost::unique_lock<boost::mutex> lk(_mutex);
 
         // Clean up connections on stale/unused hosts
@@ -192,7 +191,6 @@ namespace {
         }
 
         lk.lock();
-        std::cout << "CONNECTION_POOL: successfully acquired connection\n";
         return _inUseConnections.insert(_inUseConnections.begin(),
                                         ConnectionInfo(conn.release(), now));
     }

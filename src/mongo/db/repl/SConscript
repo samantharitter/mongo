@@ -25,14 +25,6 @@ env.Library(
         '$BUILD_DIR/mongo/client/clientdriver',
         '$BUILD_DIR/mongo/db/repl/replication_executor',
         '$BUILD_DIR/mongo/db/serveronly',
-        # if win32 we may need ?
-        # '$BUILD_DIR/mongo/base/base',
-        # '$BUILD_DIR/mongo/bson/bson',
-        # '$BUILD_DIR/mongo/client/connection_pool',
-        # '$BUILD_DIR/mongo/db/coredb',
-        # '$BUILD_DIR/mongo/db/common',
-        # '$BUILD_DIR/mongo/db/query/getmore_request',
-        # '$BUILD_DIR/mongo/db/query/lite_parsed_query',
         ]
 )
 

@@ -1352,7 +1352,6 @@ namespace {
             return;
         }
 #endif
-        log(LogComponent::kControl) << "calling quickExit";
         quickExit(rc);
     }
 

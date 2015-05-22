@@ -281,7 +281,7 @@ namespace mongo {
 
         void NetworkInterfaceASIO::_asyncRunCmd(const CommandData&& cmd) {
             RemoteCommandRequest request = cmd.request;
-
+            std::cout << "NETWORK_INTERFACE_ASIO: asyncRunCmd()\n";
             sharedAsyncOp op(boost::make_shared<AsyncOp>(std::move(cmd), now(), &_io_service, _connPool.get()));
             bool connected = op->connect(now());
             if (!connected) {

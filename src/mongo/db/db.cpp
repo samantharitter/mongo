@@ -76,8 +76,8 @@
 #include "mongo/db/query/internal_plans.h"
 #include "mongo/db/range_deleter_service.h"
 #include "mongo/db/repair_database.h"
-#include "mongo/db/repl/network_interface_impl.h"
 #include "mongo/db/repl/network_interface_asio.h"
+#include "mongo/db/repl/network_interface_impl.h"
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/repl/repl_settings.h"
 #include "mongo/db/repl/replication_coordinator_external_state_impl.h"
@@ -163,9 +163,6 @@ namespace mongo {
                     log() << "got request after shutdown()" << endl;
                     break;
                 }
-
-                //std::cout << "DB.CPP: received message with id " << m.header().getId()
-                //          << ", it is a response to " << m.header().getResponseTo() << "\n";
 
                 DbResponse dbresponse;
                 assembleResponse(&txn, m, dbresponse, port->remote());
@@ -756,7 +753,6 @@ MONGO_INITIALIZER_WITH_PREREQUISITES(CreateReplicationManager, ("SetGlobalEnviro
             getGlobalReplSettings(),
             new repl::ReplicationCoordinatorExternalStateImpl,
             new repl::NetworkInterfaceASIO,
-            //new repl::NetworkInterfaceImpl,
             new repl::TopologyCoordinatorImpl(Seconds(repl::maxSyncSourceLagSecs)),
             static_cast<int64_t>(curTimeMillis64()));
     repl::setGlobalReplicationCoordinator(replCoord);

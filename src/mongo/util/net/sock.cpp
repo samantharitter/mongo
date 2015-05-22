@@ -83,11 +83,9 @@ namespace mongo {
         int status =
             setsockopt( sock, SOL_SOCKET, SO_RCVTIMEO,
                     reinterpret_cast<char*>(&timeout), sizeof(DWORD) );
-        if (report && (status == SOCKET_ERROR)) {
+        if (report && (status == SOCKET_ERROR))
             log() << "unable to set SO_RCVTIMEO: "
-                  << errnoWithDescription(WSAGetLastError()) << endl;
-            printStackTrace();
-        }
+               << errnoWithDescription(WSAGetLastError()) << endl;
         status = setsockopt( sock, SOL_SOCKET, SO_SNDTIMEO,
                     reinterpret_cast<char*>(&timeout), sizeof(DWORD) );
         DEV if (report && (status == SOCKET_ERROR))
@@ -559,7 +557,6 @@ namespace mongo {
     };
 
     bool Socket::connect(SockAddr& remote) {
-        std::cout << "SOCKET: connect()\n";
         _remote = remote;
 
         _fd = socket(remote.getType(), SOCK_STREAM, 0);

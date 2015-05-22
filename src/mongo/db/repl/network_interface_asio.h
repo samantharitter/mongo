@@ -35,7 +35,7 @@
 #include <thread>
 
 #include "mongo/client/connection_pool.h"
-#include "mongo/client/remote_command_executor.h"
+#include "mongo/client/remote_command_runner.h"
 #include "mongo/db/repl/replication_executor.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/net/message.h"
