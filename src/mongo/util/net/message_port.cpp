@@ -277,7 +277,7 @@ again:
                 mmm( log() << "recv not ok" << endl; )
                 return false;
             }
-            //log() << "got response: " << response.data->responseTo << endl;
+
             if ( response.header().getResponseTo() == toSend.header().getId() )
                 break;
             error() << "MessagingPort::call() wrong id got:"
