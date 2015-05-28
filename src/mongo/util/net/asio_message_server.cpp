@@ -45,6 +45,12 @@ namespace mongo {
         // launch io service
         // implement some way of killing it
 
+        _serviceRunner = std::thread([this]() {
+            std::cout << "ASIOMessageServer: launching io service runner\n";
+            asio::io_service::work work(_io_service); // maybe remove this
+            _io_service.run();
+        });
+
         while (true) {
             sleep(100);
         }

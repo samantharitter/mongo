@@ -29,6 +29,8 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kNetwork
 
+#include <thread>
+
 #include "asio.hpp"
 
 #include "mongo/platform/basic.h"
@@ -67,6 +69,7 @@ namespace mongo {
 
    private:
       asio::io_service _io_service;
+      std::thread _serviceRunner;
    };
 
 } // namespace mongo
