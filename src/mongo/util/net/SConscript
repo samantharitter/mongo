@@ -2,6 +2,8 @@
 
 Import('env')
 
+env.InjectThirdPartyIncludePaths('asio')
+
 env.Library(
     target='hostandport',
     source=[
@@ -73,6 +75,7 @@ env.Library(
         "asio_message_server.cpp",
     ],
     LIBDEPS=[
+        '$BUILD_DIR/third_party/shim_asio',
         'network',
         'message_server_port',
     ],

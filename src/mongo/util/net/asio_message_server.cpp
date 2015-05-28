@@ -39,6 +39,12 @@ namespace mongo {
 
     void ASIOMessageServer::run() {
         std::cout << "ASIOMessageServer: run(), going into an infinite loop\n";
+
+        // todo:
+        // post listener to io service
+        // launch io service
+        // implement some way of killing it
+
         while (true) {
             sleep(100);
         }

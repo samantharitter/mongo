@@ -25,7 +25,11 @@
  *    then also delete it in the license file.
  */
 
+#pragma once
+
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kNetwork
+
+#include "asio.hpp"
 
 #include "mongo/platform/basic.h"
 
@@ -35,10 +39,11 @@
 
 namespace mongo {
 
-   class ASIOMessageServer : public MessageServer, public Listener {
+   using asio::ip::tcp;
+
+   class ASIOMessageServer : public MessageServer {
    public:
-   ASIOMessageServer(const MessageServer::Options& opts, MessageHandler* handler=nullptr) :
-      Listener( "", opts.ipList, opts.port ) {
+      ASIOMessageServer(const MessageServer::Options& opts, MessageHandler* handler=nullptr) {
          std::cout << "ASIOMessageServer: congrats you constructed an ASIOMessageServer\n";
       }
 
@@ -59,6 +64,9 @@ namespace mongo {
          std::cout << "ASIOMessageServer: unix sockets??\n";
          return true;
       }
+
+   private:
+      asio::io_service _io_service;
    };
 
 } // namespace mongo
