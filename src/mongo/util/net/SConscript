@@ -50,10 +50,10 @@ env.CppUnitTest(
     target='sock_test',
     source=[
         'sock_test.cpp',
+        'network',
     ],
     LIBDEPS=[
         '$BUILD_DIR/mongo/util/concurrency/synchronization',
-        'network',
     ],
 )
 
@@ -64,6 +64,17 @@ env.Library(
     ],
     LIBDEPS=[
         '$BUILD_DIR/mongo/db/stats/counters',
+    ],
+)
+
+env.Library(
+    target="asio_message_server",
+    source=[
+        "asio_message_server.cpp",
+    ],
+    LIBDEPS=[
+        'network',
+        'message_server_port',
     ],
 )
 

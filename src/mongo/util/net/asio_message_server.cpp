@@ -29,36 +29,19 @@
 
 #include "mongo/platform/basic.h"
 
-#include "mongo/util/net/message_port.h"
-#include "mongo/util/net/message_server.h"
-#include "mongo/util/net/listen.h"
+#include "mongo/util/net/asio_message_server.h"
 
 namespace mongo {
 
-   class ASIOMessageServer : public MessageServer, public Listener {
-   public:
-   ASIOMessageServer(const MessageServer::Options& opts, MessageHandler* handler=nullptr) :
-      Listener( "", opts.ipList, opts.port ) {
-         std::cout << "ASIOMessageServer: congrats you constructed an ASIOMessageServer\n";
-      }
+    void ASIOMessageServer::accepted(boost::shared_ptr<Socket> psocket, long long connectionId) {
+        std::cout << "ASIOMessageServer: accepted()\n";
+    }
 
-      // don't use this with ASIO noop.
-      virtual void accepted(boost::shared_ptr<Socket> psocket, long long connectionId);
-
-      virtual void setAsTimeTracker() {
-         std::cout << "ASIOMessageServer: setting as time tracker...JK TOTALLY NOT DOING THAT AHAHA\n";
-      }
-
-      virtual void setupSockets() {
-         std::cout << "ASIOMessageServer: setting up sockets, *hypothetically*\n";
-      }
-
-      void run();
-
-      virtual bool useUnixSockets() const {
-         std::cout << "ASIOMessageServer: unix sockets??\n";
-         return true;
-      }
-   };
+    void ASIOMessageServer::run() {
+        std::cout << "ASIOMessageServer: run(), going into an infinite loop\n";
+        while (true) {
+            sleep(100);
+        }
+    }
 
 } // namespace mongo

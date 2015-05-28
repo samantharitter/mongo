@@ -346,6 +346,7 @@ env.Library(
     ],
     LIBDEPS=[
         "$BUILD_DIR/mongo/util/net/message_server_port",
+        "$BUILD_DIR/mongo/util/net/asio_message_server",
         "$BUILD_DIR/mongo/util/net/miniwebserver",
         "$BUILD_DIR/mongo/util/signal_handlers",
     ],
