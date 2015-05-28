@@ -1,6 +1,4 @@
-// message_server.h
-
-/*    Copyright 2009 10gen Inc.
+/*    Copyright 2015 MongoDB Inc.
  *
  *    This program is free software: you can redistribute it and/or  modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -27,49 +25,46 @@
  *    then also delete it in the license file.
  */
 
-/*
-  abstract database server
-  async io core, worker thread system
- */
-
-#pragma once
+#define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kNetwork
 
 #include "mongo/platform/basic.h"
 
+#include "mongo/util/net/message_server.h"
+#include "mongo/util/net/listen.h"
+
 namespace mongo {
 
-    class MessageHandler {
-    public:
-        virtual ~MessageHandler() {}
+   class ASIOMessageServer : public MessageServer, public Listener {
+   public:
+   ASIOMessageServer(const MessageServer::Options& opts, MessageHandler* handler=nullptr) :
+      Listener( "", opts.ipList, opts.port ) {
+         std::cout << "ASIOMessageServer: congrats you constructed an ASIOMessageServer\n";
+      }
 
-        /**
-         * called once when a socket is connected
-         */
-        virtual void connected( AbstractMessagingPort* p ) = 0;
+      // don't use this with ASIO noop.
+      virtual void accepted(boost::shared_ptr<Socket> psocket, long long connectionId) {
+         std::cout << "ASIOMessageServer: accepted()\n";
+      }
 
-        /**
-         * called every time a message comes in
-         * handler is responsible for responding to client
-         */
-        virtual void process(Message& m, AbstractMessagingPort* p) = 0;
-    };
+      virtual void setAsTimeTracker() {
+         std::cout << "ASIOMessageServer: setting as time tracker...JK TOTALLY NOT DOING THAT AHAHA\n";
+      }
 
-    class MessageServer {
-    public:
-        struct Options {
-           bool async;             // use ASIO or not
-           int port;               // port to bind to
-           std::string ipList;     // addresses to bind to
+      virtual void setupSockets() {
+         std::cout << "ASIOMessageServer: setting up sockets, *hypothetically*\n";
+      }
 
-        Options(bool runAsync=false) : async(runAsync), port(0), ipList("") {}
-        };
+      void run() {
+         std::cout << "ASIOMessageServer: run(), going into an infinite loop\n";
+         while (true) {
+            sleep(100);
+         }
+      }
 
-        virtual ~MessageServer() {}
-        virtual void run() = 0;
-        virtual void setAsTimeTracker() = 0;
-        virtual void setupSockets() = 0;
-    };
+      virtual bool useUnixSockets() const {
+         std::cout << "ASIOMessageServer: unix sockets??\n";
+         return true;
+      }
+   };
 
-    // TODO use a factory here to decide between port and asio variations
-    MessageServer * createServer(const MessageServer::Options& opts, MessageHandler * handler);
-}
+} // namespace mongo

@@ -406,6 +406,7 @@ namespace mongo {
         MessageServer::Options options;
         options.port = listenPort;
         options.ipList = serverGlobalParams.bind_ip;
+        options.async = true;
 
         MessageServer* server = createServer(options, new MyMessageHandler());
         server->setAsTimeTracker();
@@ -599,6 +600,8 @@ namespace mongo {
         PeriodicTask::startRunningPeriodicTasks();
 
         logStartup();
+
+        // this should call ASIOListener instead
 
         // MessageServer::run will return when exit code closes its socket
         server->run();
