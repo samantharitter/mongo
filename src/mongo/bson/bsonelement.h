@@ -81,6 +81,7 @@ namespace mongo {
         }
         Date_t Date()               const { return chk(mongo::Date).date(); }
         double Number()             const { return chk(isNumber()).number(); }
+        // DECIMAL_DATA_TYPE
         double Double()             const { return chk(NumberDouble)._numberDouble(); }
         long long Long()            const { return chk(NumberLong)._numberLong(); }
         int Int()                   const { return chk(NumberInt)._numberInt(); }
@@ -103,6 +104,7 @@ namespace mongo {
         */
         void Val(Date_t& v)         const { v = Date(); }
         void Val(long long& v)      const { v = Long(); }
+        // DECIMAL_DATA_TYPE
         void Val(bool& v)           const { v = Bool(); }
         void Val(BSONObj& v)        const;
         void Val(mongo::OID& v)     const { v = OID(); }
@@ -236,6 +238,8 @@ namespace mongo {
             return ConstDataView(value()).read<LittleEndian<int>>();
         }
 
+        // DECIMAL_DATA_TYPE add _numberDecimal or something
+
         /** Return long long value for this field. MUST be NumberLong type. */
         long long _numberLong() const {
             return ConstDataView(value()).read<LittleEndian<long long>>();
@@ -254,6 +258,8 @@ namespace mongo {
          *  very large doubles -> LLONG_MAX
          *  very small doubles -> LLONG_MIN  */
         long long safeNumberLong() const;
+
+        // DECIMAL_DATA_TYPE, add numberDecimal or something
 
         /** Retrieve the numeric value of the element.  If not of a numeric type, returns 0.
             Note: casts to double, data loss may occur with large (>52 bit) NumberLong values.
@@ -590,6 +596,7 @@ namespace mongo {
         switch( type() ) {
         case NumberLong:
         case NumberDouble:
+           // DECIMAL_DATA_TYPE
         case NumberInt:
             return true;
         default:
@@ -602,6 +609,7 @@ namespace mongo {
         case NumberLong:
         case NumberDouble:
         case NumberInt:
+           // DECIMAL_DATA_TYPE
         case mongo::String:
         case mongo::Bool:
         case mongo::Date:
@@ -620,6 +628,7 @@ namespace mongo {
             return _numberInt();
         case NumberLong:
             return _numberLong();
+            // DECIMAL_DATA_TYPE
         default:
             return 0;
         }
@@ -634,6 +643,7 @@ namespace mongo {
             return _numberInt();
         case NumberLong:
             return (int) _numberLong();
+            // DECIMAL_DATA_TYPE
         default:
             return 0;
         }
@@ -648,6 +658,7 @@ namespace mongo {
             return _numberInt();
         case NumberLong:
             return _numberLong();
+            // DECIMAL_DATA_TYPE
         default:
             return 0;
         }

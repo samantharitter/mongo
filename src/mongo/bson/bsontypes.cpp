@@ -96,6 +96,7 @@ namespace mongo {
             case NumberInt: return "NumberInt32";
             case bsonTimestamp: return "Timestamp";
             case NumberLong: return "NumberLong64";
+                // DECIMAL_DATA_TYPE
             // JSTypeMax doesn't make sense to turn into a string; overlaps with highest-valued type
             case MaxKey: return "MaxKey";
             default: return "Invalid";

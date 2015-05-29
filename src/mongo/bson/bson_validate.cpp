@@ -220,6 +220,7 @@ namespace mongo {
 
             case NumberDouble:
             case NumberLong:
+                // DECIMAL_DATA_TYPE add case?
             case bsonTimestamp:
             case Date:
                 if ( !buffer->skip( sizeof(int64_t) ) )

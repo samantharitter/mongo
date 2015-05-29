@@ -58,6 +58,7 @@ namespace mongo {
         case Symbol:
             s << '"' << escape( string(valuestr(), valuestrsize()-1) ) << '"';
             break;
+            // DECIMAL_DATA_TYPE toString case
         case NumberLong:
             if (format == TenGen) {
                 s << "NumberLong(" << _numberLong() << ")";
@@ -71,6 +72,9 @@ namespace mongo {
                 s << "NumberInt(" << _numberInt() << ")";
                 break;
             }
+
+            // DECIMAL_DATA_TYPE case
+
         case NumberDouble:
             if ( number() >= -std::numeric_limits< double >::max() &&
                  number() <= std::numeric_limits< double >::max() ) {
@@ -469,6 +473,7 @@ namespace mongo {
         case mongo::Date:
         case NumberDouble:
         case NumberLong:
+            // DECIMAL_DATA_TYPE case
             x = 8;
             break;
         case jstOID:
@@ -549,6 +554,7 @@ namespace mongo {
         case mongo::Date:
         case NumberDouble:
         case NumberLong:
+            // DECIMAL_DATA_TYPE case
             x = 8;
             break;
         case jstOID:
@@ -578,7 +584,7 @@ namespace mongo {
                 size_t len2;
                 len2 = strlen( p );
                 x = (int) (len1 + 1 + len2 + 1);
-            }
+           }
             break;
         default: 
             {
@@ -637,6 +643,7 @@ namespace mongo {
         case NumberInt:
             s << _numberInt();
             break;
+            // DECIMAL_DATA_TYPE case
         case mongo::Bool:
             s << ( boolean() ? "true" : "false" );
             break;
@@ -863,6 +870,8 @@ namespace mongo {
                 return a == b ? 0 : 1;
             }
 
+            // DECIMAL_DATA_TYPE probably add a case here
+
         case NumberInt: {
             // All types can precisely represent all NumberInts, so it is safe to simply convert to
             // whatever rhs's type is.
@@ -979,6 +988,8 @@ namespace mongo {
         case mongo::NumberDouble:
         case mongo::NumberLong:
         case mongo::NumberInt: {
+            // DECIMAL_DATA_TYPE
+            //
             // This converts all numbers to doubles, which ignores the low-order bits of
             // NumberLongs > 2**53, but that is ok since the hash will still be the same for
             // equal numbers and is still likely to be different for different numbers.

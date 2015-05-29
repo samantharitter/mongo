@@ -95,6 +95,7 @@ namespace mongo {
         JSTypeMax=18,
         /** larger than all other types */
         MaxKey=127
+        // DECIMAL_DATA_TYPE
     };
 
     /**
@@ -134,6 +135,7 @@ namespace mongo {
         case NumberDouble:
         case NumberInt:
         case NumberLong:
+           // DECIMAL_DATA_TYPE
             return 10;
         case mongo::String:
         case Symbol:

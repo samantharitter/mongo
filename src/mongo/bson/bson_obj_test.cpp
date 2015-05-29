@@ -84,6 +84,8 @@ namespace {
                   BSON("" << std::numeric_limits<double>::signaling_NaN()));
     }
 
+    // DECIMAL_DATA_TYPE add tests here
+
     TEST(BSONObjCompare, NumberLong_Double) {
         ASSERT_EQ(BSON("" << 0ll), BSON("" << 0.0));
         ASSERT_EQ(BSON("" << 0ll), BSON("" << -0.0));

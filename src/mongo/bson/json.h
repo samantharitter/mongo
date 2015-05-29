@@ -115,6 +115,7 @@ namespace mongo {
              *   | NUMBER
              *   | NUMBERINT
              *   | NUMBERLONG
+             // DECIMAL_DATA_TYPE
              *   | OBJECT
              *   | ARRAY
              *

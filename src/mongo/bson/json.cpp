@@ -140,6 +140,7 @@ namespace mongo {
                 return ret;
             }
         }
+        // DECIMAL_DATA_TYPE add case
         else if (readToken("NumberLong")) {
             Status ret = numberLong(fieldName, builder);
             if (ret != Status::OK()) {

@@ -88,6 +88,7 @@ namespace mongo {
      BinData:   <int len> <byte subtype> <byte[len] data>
      Code:      a function (not a closure): same format as String.
      Symbol:    a language symbol (say a python symbol).  same format as String.
+     // DECIMAL_DATA_TYPE
      Code With Scope: <total size><String><Object>
      \endcode
      */
