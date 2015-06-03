@@ -32,9 +32,11 @@
 #include <thread>
 
 #include "asio.hpp"
+#include <boost/shared_ptr.hpp>
 
 #include "mongo/platform/basic.h"
 
+#include "mongo/db/dbmessage.h"
 #include "mongo/util/net/message_port.h"
 #include "mongo/util/net/message_server.h"
 #include "mongo/util/net/listen.h"
@@ -43,14 +45,52 @@ namespace mongo {
 
    using asio::ip::tcp;
 
+   typedef boost::shared_ptr<tcp::socket> StickySocket;
+
+
+   /*
+    * The ASIOMessageServer encodes state machines to handle connections.
+    * Each step in a state machine is represented as a task that is posted to
+    * the io service and executed asynchronously. Upon completion the current
+    * step posts the next step to the io service.
+    *
+    * Each connection runs its own state machine with the following states:
+    *
+    * 0: accept connection
+    * 1: receive message header, validate
+    * 2: receive message body
+    * 3: send to database
+    *    - if response, continue to 4
+    *    - if not, back to 1
+    * 4: send db response
+    *    - if getmore needed, continue to 5
+    *    - if not, back to 1
+    * 5: run getmore command, send db response (perform this state 0 or more times until exhausted)
+    *    - back to 4
+    * 6: close connection. If other states error we end up here.
+    *
+    * There's probably a better way to represent this as a graph:
+    *
+    *                       /<-\
+    * 0 |-> 1 -> 2 -> 3 -> 4 -> 5 |-> 6
+    *        \\<------/    /
+    *         \<----------/
+    */
    class ASIOMessageServer : public MessageServer {
    public:
-      ASIOMessageServer(const MessageServer::Options& opts, MessageHandler* handler=nullptr) {
+   ASIOMessageServer(const MessageServer::Options& opts, MessageHandler* handler=nullptr)
+      : _shutdown(false),
+         _port(opts.port),
+         _service(),
+         _acceptor(_service)
+         {
          std::cout << "ASIOMessageServer: congrats you constructed an ASIOMessageServer\n";
       }
 
       // don't use this with ASIO noop.
-      virtual void accepted(boost::shared_ptr<Socket> psocket, long long connectionId);
+      virtual void accepted(boost::shared_ptr<Socket> psocket, long long connectionId) {
+        std::cout << "ASIOMessageServer: accepted()\n";
+      }
 
       virtual void setAsTimeTracker() {
          std::cout << "ASIOMessageServer: setting as time tracker...JK TOTALLY NOT DOING THAT AHAHA\n";
@@ -67,8 +107,59 @@ namespace mongo {
          return true;
       }
 
+      class Connection {
+      public:
+      Connection(StickySocket sock)
+         : md(nullptr),
+            _sock(sock)
+            {}
+
+         tcp::socket* sock() {
+            return _sock.get();
+         }
+
+         Message toSend;
+         Message toRecv;
+         MSGHEADER::Value header; // eh
+         char *md;
+
+         StickySocket _sock;
+      };
+
+      typedef boost::shared_ptr<Connection> ClientConnection;
+
    private:
-      asio::io_service _io_service;
+
+      /* STATE 0 */
+      void _doAccept();
+
+      /* STATE 1 */
+      void _handleIncomingMessage(ClientConnection conn);
+      void _recvMessageHeader(ClientConnection conn);
+
+      /* STATE 2 */
+      void _recvMessageBody(ClientConnection conn);
+
+      /* STATE 3 */
+      void _process(ClientConnection conn);
+
+      /* STATE 4 */
+      void _sendDatabaseResponse(ClientConnection conn, DbResponse dbresponse);
+
+      /* STATE 5 */
+      void _runGetMore(ClientConnection conn, DbResponse dbresponse);
+
+      /* STATE 6 */
+      void _networkError(ClientConnection conn, std::error_code ec);
+
+      HostAndPort _getRemote(ClientConnection conn);
+
+      bool _shutdown;
+      int _port;
+
+      asio::io_service _service;
+      tcp::acceptor _acceptor;
+
       std::thread _serviceRunner;
    };
 
