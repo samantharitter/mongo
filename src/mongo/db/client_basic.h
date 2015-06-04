@@ -73,6 +73,11 @@ namespace mongo {
          */
         AbstractMessagingPort * port() const { return _messagingPort; }
 
+        /**
+         * Sets the port currently associated with this client.
+         */
+        void setPort(AbstractMessagingPort* port) { _messagingPort = port; }
+
         static ClientBasic* getCurrent();
 
     protected:
@@ -81,6 +86,6 @@ namespace mongo {
 
     private:
         ServiceContext* const _serviceContext;
-        AbstractMessagingPort* const _messagingPort;
+        AbstractMessagingPort* _messagingPort;
     };
 }

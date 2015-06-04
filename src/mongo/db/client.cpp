@@ -37,6 +37,7 @@
 #include "mongo/db/client.h"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "mongo/base/status.h"
@@ -87,6 +88,18 @@ namespace mongo {
 
         // Create the client obj, attach to thread
         *currentClient.get() = service->makeClient(fullDesc, mp);
+    }
+
+    void Client::attachToCurrentThread(UniqueClient client, AbstractMessagingPort* port) {
+        invariant(currentClient.getMake()->get() == nullptr);
+        setThreadName(client->desc());
+        client->setPort(port);
+        *currentClient.get() = std::move(client);
+    }
+
+    Client::UniqueClient Client::detachFromCurrentThread() {
+        setThreadName("");
+        return std::move(*currentClient.get());
     }
 
     Client::Client(std::string desc,

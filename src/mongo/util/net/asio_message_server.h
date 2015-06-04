@@ -71,11 +71,14 @@ namespace mongo {
     *
     * There's probably a better way to represent this as a graph:
     *
-    *                       /<-\
+    *                  /<-------\
     * 0 |-> 1 -> 2 -> 3 -> 4 -> 5 |-> 6
     *        \\<------/    /
     *         \<----------/
     */
+
+   // todo: refactor to use MessageHandler abstraction
+
    class ASIOMessageServer : public MessageServer {
    public:
    ASIOMessageServer(const MessageServer::Options& opts, MessageHandler* handler=nullptr)
@@ -107,7 +110,7 @@ namespace mongo {
          return true;
       }
 
-      class Connection {
+      class Connection : public AbstractMessagingPort {
       public:
       Connection(StickySocket sock)
          : md(nullptr),
@@ -116,6 +119,39 @@ namespace mongo {
 
          tcp::socket* sock() {
             return _sock.get();
+         }
+
+         // these are required of AbstractMessagingPorts
+         virtual void reply(Message& received, Message& response, MSGID responseTo) {
+            std::cout << "reply not implemented\n";
+         }
+         virtual void reply(Message& received, Message& response) {
+            std::cout << "reply not implemented\n";
+         }
+
+         virtual unsigned remotePort() const {
+            return _sock.get()->remote_endpoint().port();
+         }
+
+         virtual HostAndPort remote() const {
+            tcp::endpoint endpoint = _sock.get()->remote_endpoint();
+            asio::ip::address address = endpoint.address(); // IP address
+            std::ostringstream stream;
+            stream << address;
+            std::string hostname = stream.str();
+            return HostAndPort(hostname, endpoint.port());
+         }
+
+         virtual SockAddr remoteAddr() const {
+            tcp::endpoint endpoint = _sock.get()->remote_endpoint();
+            asio::ip::address address = endpoint.address(); // IP address
+            std::ostringstream stream;
+            stream << address;
+            return SockAddr(stream.str().c_str(), endpoint.port());
+         }
+
+         virtual SockAddr localAddr() const {
+            return SockAddr(_sock.get()->local_endpoint().port());
          }
 
          Message toSend;
@@ -142,6 +178,8 @@ namespace mongo {
 
       /* STATE 3 */
       void _process(ClientConnection conn);
+      void _processSync(ClientConnection conn);
+      void _processAsync(ClientConnection conn);
 
       /* STATE 4 */
       void _sendDatabaseResponse(ClientConnection conn, DbResponse dbresponse);

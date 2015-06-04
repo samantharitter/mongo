@@ -41,25 +41,43 @@ namespace mongo {
         std::cout << "ASIOMessageServer: a network error occurred: " << ec << "\n\tclosing this connection\n";
     }
 
-    HostAndPort ASIOMessageServer::_getRemote(ClientConnection conn) {
-        asio::ip::tcp::endpoint endpoint = conn->sock()->remote_endpoint();
-        asio::ip::address address = endpoint.address(); // IP address
-        std::ostringstream stream;
-        stream << address;
-        std::string hostname = stream.str();
-
-        HostAndPort hp(hostname, endpoint.port());
-        return hp;
-    }
-
     void ASIOMessageServer::_runGetMore(ClientConnection conn, DbResponse dbresponse) {
-        // todo fill in
-        asio::post([this, conn, dbresponse]() {
-                _sendDatabaseResponse(conn, dbresponse);
-            });
+        std::cout << "ASIOMessageServer: running getmore\n";
+        verify(dbresponse.exhaustNS.size() > 0);
+
+        MsgData::View header = dbresponse.response->header();
+        QueryResult::View qr = header.view2ptr();
+        long long cursorid = qr.getCursorId();
+        if( cursorid ) {
+            verify( dbresponse.exhaustNS.size() && dbresponse.exhaustNS[0] );
+            std::string ns = dbresponse.exhaustNS; // before reset() free's it...
+            BufBuilder b(512);
+            b.appendNum((int) 0 /* size set later in appendData() */);
+            b.appendNum(header.getId());
+            b.appendNum(header.getResponseTo());
+            b.appendNum((int) dbGetMore);
+            b.appendNum((int) 0);
+            b.appendStr(ns);
+            b.appendNum((int) 0); // ntoreturn
+            b.appendNum(cursorid);
+
+            // note: does this data fall off edge of world?
+            conn->toRecv.reset();
+            conn->toRecv.appendData(b.buf(), b.len());
+
+            b.decouple();
+
+            // back to STATE 3
+            _process(conn);
+        } else {
+            // done, to step 1
+            _handleIncomingMessage(conn);
+        }
     }
 
     void ASIOMessageServer::_sendDatabaseResponse(ClientConnection conn, DbResponse dbresponse) {
+        std::cout << "ASIOMessageServer: sending response to db\n";
+
         // assuming that all messages are simple...
         invariant(dbresponse.response->_buf != 0);
 
@@ -80,12 +98,19 @@ namespace mongo {
                           });
     }
 
-    void ASIOMessageServer::_process(ClientConnection conn) {
+    void ASIOMessageServer::_processAsync(ClientConnection conn) {
+        // todo
+    }
+
+    void ASIOMessageServer::_processSync(ClientConnection conn) {
+        std::cout << "ASIOMessageServer: processing message\n";
+
         // TODO: post this to db worker io service
         _service.post([this, conn]() {
+                // init client object for this thread, then remove
                 OperationContextImpl txn;
                 DbResponse dbresponse;
-                assembleResponse(&txn, conn->toRecv, dbresponse, _getRemote(conn));
+                assembleResponse(&txn, conn->toRecv, dbresponse, conn->remote());
                 if (!dbresponse.response) {
                     // to step 1
                     _handleIncomingMessage(conn);
@@ -95,6 +120,11 @@ namespace mongo {
                     _sendDatabaseResponse(conn, dbresponse);
                 }
             });
+    }
+
+    void ASIOMessageServer::_process(ClientConnection conn) {
+        // todo switch intelligently
+        _processSync(conn);
     }
 
     void ASIOMessageServer::_recvMessageBody(ClientConnection conn) {
@@ -157,6 +187,7 @@ namespace mongo {
                                    if (ec) {
                                        std::cout << "ASIOMessageServer accept error " << ec << "\n";
                                    } else {
+                                       // need to create a client object
                                        std::cout << "ASIOMessageServer: new accepted connection\n";
                                        ClientConnection conn = boost::make_shared<Connection>(sock);
                                        _handleIncomingMessage(conn);
