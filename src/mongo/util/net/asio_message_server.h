@@ -36,6 +36,7 @@
 
 #include "mongo/platform/basic.h"
 
+#include "mongo/db/client.h"
 #include "mongo/db/dbmessage.h"
 #include "mongo/util/net/message_port.h"
 #include "mongo/util/net/message_server.h"
@@ -115,7 +116,13 @@ namespace mongo {
       Connection(StickySocket sock)
          : md(nullptr),
             _sock(sock)
-            {}
+            {
+               // construct a new client object for this connection
+               std::string name;
+               name = str::stream() << "conn" << connectionId();
+               setThreadName(name); // do we want to do this?
+               _client = getGlobalServiceContext()->makeClient(name, nullptr);
+            }
 
          tcp::socket* sock() {
             return _sock.get();
@@ -154,12 +161,16 @@ namespace mongo {
             return SockAddr(_sock.get()->local_endpoint().port());
          }
 
+         DbResponse dbresponse; // meh
+
          Message toSend;
          Message toRecv;
          MSGHEADER::Value header; // eh
          char *md;
 
          StickySocket _sock;
+
+         Client::UniqueClient _client;
       };
 
       typedef boost::shared_ptr<Connection> ClientConnection;
@@ -182,7 +193,7 @@ namespace mongo {
       void _processAsync(ClientConnection conn);
 
       /* STATE 4 */
-      void _sendDatabaseResponse(ClientConnection conn, DbResponse dbresponse);
+      void _sendDatabaseResponse(ClientConnection conn, DbResponse& dbresponse);
 
       /* STATE 5 */
       void _runGetMore(ClientConnection conn, DbResponse dbresponse);
@@ -191,6 +202,8 @@ namespace mongo {
       void _networkError(ClientConnection conn, std::error_code ec);
 
       HostAndPort _getRemote(ClientConnection conn);
+      void _loadClient(ClientConnection conn);
+      void _unloadClient(ClientConnection conn);
 
       bool _shutdown;
       int _port;
@@ -199,6 +212,10 @@ namespace mongo {
       tcp::acceptor _acceptor;
 
       std::thread _serviceRunner;
+
+      // Do we really want just one of these?
+      // Maybe one per ClientConnection?
+      stdx::mutex _mutex;
    };
 
 } // namespace mongo

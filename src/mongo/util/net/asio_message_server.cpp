@@ -38,11 +38,12 @@
 namespace mongo {
 
     void ASIOMessageServer::_networkError(ClientConnection conn, std::error_code ec) {
-        std::cout << "ASIOMessageServer: a network error occurred: " << ec << "\n\tclosing this connection\n";
+        std::cout << "ASIOMessageServer: a network error occurred: " << ec
+                  << "\n\tclosing this connection\n" << std::flush;
     }
 
     void ASIOMessageServer::_runGetMore(ClientConnection conn, DbResponse dbresponse) {
-        std::cout << "ASIOMessageServer: running getmore\n";
+        std::cout << "ASIOMessageServer: running getmore\n" << std::flush;
         verify(dbresponse.exhaustNS.size() > 0);
 
         MsgData::View header = dbresponse.response->header();
@@ -70,30 +71,34 @@ namespace mongo {
             // back to STATE 3
             _process(conn);
         } else {
-            // done, to step 1
+            // done, to STATE 1
             _handleIncomingMessage(conn);
         }
     }
 
-    void ASIOMessageServer::_sendDatabaseResponse(ClientConnection conn, DbResponse dbresponse) {
-        std::cout << "ASIOMessageServer: sending response to db\n";
-
+    void ASIOMessageServer::_sendDatabaseResponse(ClientConnection conn, DbResponse& dbresponse) {
         // assuming that all messages are simple...
-        invariant(dbresponse.response->_buf != 0);
+        Message* reply = dbresponse.response;
+        invariant(reply != nullptr);
+        invariant(reply->_buf != 0);
 
-        asio::const_buffer buf(dbresponse.response->_buf, dbresponse.response->size());
+        reply->header().setId(nextMessageId());
+        reply->header().setResponseTo(conn->toRecv.header().getId());
+
+        asio::const_buffer buf(reply->_buf, reply->size());
         asio::async_write(*(conn->sock()), asio::buffer(buf),
-                          [this, conn, dbresponse](std::error_code ec, std::size_t bytes) {
+                          [this, conn, buf](std::error_code ec, std::size_t bytes) {
                               if (ec) {
+                                 std::cout << "ASIOMessageServer: error sending db response\n";
                                   _networkError(conn, ec);
                               } else {
-                                  if (dbresponse.exhaustNS.size() <= 0) {
+                                  if (conn->dbresponse.exhaustNS.size() <= 0) {
                                       // done, to step 1
                                       _handleIncomingMessage(conn);
                                       return;
                                   }
                                   // continue to getmores
-                                  _runGetMore(conn, dbresponse);
+                                  _runGetMore(conn, conn->dbresponse);
                               }
                           });
     }
@@ -102,24 +107,37 @@ namespace mongo {
         // todo
     }
 
-    void ASIOMessageServer::_processSync(ClientConnection conn) {
-        std::cout << "ASIOMessageServer: processing message\n";
+    void ASIOMessageServer::_loadClient(ClientConnection conn) {
+        stdx::lock_guard<stdx::mutex> lock(_mutex);
+        // question, why do this?
+        Client::UniqueClient& client = conn->_client;
+        Client::attachToCurrentThread(std::move(client), conn.get());
+    }
 
-        // TODO: post this to db worker io service
-        _service.post([this, conn]() {
-                // init client object for this thread, then remove
-                OperationContextImpl txn;
-                DbResponse dbresponse;
-                assembleResponse(&txn, conn->toRecv, dbresponse, conn->remote());
-                if (!dbresponse.response) {
-                    // to step 1
-                    _handleIncomingMessage(conn);
-                }
-                else {
-                    // to step 4
-                    _sendDatabaseResponse(conn, dbresponse);
-                }
-            });
+    void ASIOMessageServer::_unloadClient(ClientConnection conn) {
+        stdx::lock_guard<stdx::mutex> lock(_mutex);
+        Client::UniqueClient& client = conn->_client;
+        client = Client::detachFromCurrentThread();
+    }
+
+    void ASIOMessageServer::_processSync(ClientConnection conn) {
+        _loadClient(conn);
+
+        OperationContextImpl txn;
+        //DbResponse dbresponse;
+        assembleResponse(&txn, conn->toRecv, conn->dbresponse, conn->remote());
+
+        // todo: is it ok for us to use dbresponse with thread state unloaded?
+        _unloadClient(conn);
+
+        if (!conn->dbresponse.response) {
+            // to step 1
+            _handleIncomingMessage(conn);
+        }
+        else {
+            // to step 4
+            _sendDatabaseResponse(conn, conn->dbresponse);
+        }
     }
 
     void ASIOMessageServer::_process(ClientConnection conn) {
@@ -128,8 +146,6 @@ namespace mongo {
     }
 
     void ASIOMessageServer::_recvMessageBody(ClientConnection conn) {
-        std::cout << "ASIOMessageServer: receiving message body...\n";
-
         // len = whole message length, data + header
         int len = conn->header.constView().getMessageLength();
 
@@ -150,6 +166,7 @@ namespace mongo {
         asio::async_read(*(conn->sock()), asio::buffer(md_view.data(), bodyLength),
                          [this, conn, md_view](asio::error_code ec, size_t bytes) {
                              if (ec) {
+                                 std::cout << "ASIOMessageServer: error receiving message body\n";
                                  _networkError(conn, ec);
                              } else {
                                  conn->toRecv.setData((char *)md_view.view2ptr(), true);
@@ -172,7 +189,9 @@ namespace mongo {
     }
 
     void ASIOMessageServer::_handleIncomingMessage(ClientConnection conn) {
-        std::cout << "ASIOMessageServer: handleIncomingMessage()\n";
+        // todo, maybe move this to end of state machine instead of beginning?
+        conn->toSend.reset();
+        conn->toRecv.reset();
         _recvMessageHeader(conn);
     }
 
@@ -185,10 +204,10 @@ namespace mongo {
         _acceptor.async_accept(*sock,
                                [this, sock](std::error_code ec) {
                                    if (ec) {
-                                       std::cout << "ASIOMessageServer accept error " << ec << "\n";
+                                       std::cout << "ASIOMessageServer accept error " << ec << "\n" << std::flush;
                                    } else {
                                        // need to create a client object
-                                       std::cout << "ASIOMessageServer: new accepted connection\n";
+                                       std::cout << "ASIOMessageServer: new accepted connection\n" << std::flush;
                                        ClientConnection conn = boost::make_shared<Connection>(sock);
                                        _handleIncomingMessage(conn);
                                    }
@@ -197,7 +216,7 @@ namespace mongo {
     }
 
     void ASIOMessageServer::run() {
-        std::cout << "ASIOMessageServer: run()";
+        std::cout << "ASIOMessageServer: run()\n";
 
         // set up our listening socket
         // TODO: add support for iplists
@@ -213,10 +232,10 @@ namespace mongo {
         _doAccept();
 
         _serviceRunner = std::thread([this]() {
-            std::cout << "ASIOMessageServer: launching io service runner\n";
-            _service.run();
-            std::cout << "ASIOMessageServer: io service runner returning\n";
-        });
+                std::cout << "ASIOMessageServer: launching io service runner\n" << std::flush;
+                _service.run();
+                std::cout << "ASIOMessageServer: io service runner returning\n" << std::flush;
+            });
 
         // todo: rewrite server so we don't need to do this...
         // implement some better way of killing io service

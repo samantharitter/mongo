@@ -599,11 +599,11 @@ namespace mongo {
 
         PeriodicTask::startRunningPeriodicTasks();
 
+        std::cout << "logging startup\n";
         logStartup();
 
-        // this should call ASIOListener instead
-
         // MessageServer::run will return when exit code closes its socket
+        std::cout << "calling run()\n";
         server->run();
     }
 
