@@ -57,11 +57,11 @@ namespace mongo {
     class MessageServer {
     public:
         struct Options {
-           bool async;             // use ASIO or not
+           bool asio;              // use legacy implementation or asio
            int port;               // port to bind to
            std::string ipList;     // addresses to bind to
 
-        Options(bool runAsync=false) : async(runAsync), port(0), ipList("") {}
+        Options(bool runAsync=false) : asio(runAsync), port(0), ipList("") {}
         };
 
         virtual ~MessageServer() {}

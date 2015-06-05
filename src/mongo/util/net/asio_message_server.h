@@ -27,8 +27,6 @@
 
 #pragma once
 
-#define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kNetwork
-
 #include <thread>
 
 #include "asio.hpp"
@@ -47,7 +45,6 @@ namespace mongo {
    using asio::ip::tcp;
 
    typedef boost::shared_ptr<tcp::socket> StickySocket;
-
 
    /*
     * The ASIOMessageServer encodes state machines to handle connections.

@@ -103,6 +103,7 @@
 #include "mongo/util/exception_filter_win32.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/log.h"
+#include "mongo/util/net/asio_message_server.h"
 #include "mongo/util/net/message_server.h"
 #include "mongo/util/net/ssl_manager.h"
 #include "mongo/util/ntservice.h"
@@ -406,9 +407,16 @@ namespace mongo {
         MessageServer::Options options;
         options.port = listenPort;
         options.ipList = serverGlobalParams.bind_ip;
-        options.async = true;
+        options.asio = true;
 
-        MessageServer* server = createServer(options, new MyMessageHandler());
+        // todo: plumb through this toggle, take it off message server options
+        MessageServer* server;
+        if (options.asio) {
+            server = new ASIOMessageServer( options );
+        } else {
+            server = createServer(options, new MyMessageHandler());
+        }
+
         server->setAsTimeTracker();
 
         // This is what actually creates the sockets, but does not yet listen on them because we
@@ -599,10 +607,10 @@ namespace mongo {
 
         PeriodicTask::startRunningPeriodicTasks();
 
-        std::cout << "logging startup\n";
         logStartup();
 
-        // MessageServer::run will return when exit code closes its socket
+        // must detach any client state on this thread before running
+        Client::detachFromCurrentThread();
         std::cout << "calling run()\n";
         server->run();
     }

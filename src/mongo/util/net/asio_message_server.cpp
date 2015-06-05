@@ -121,13 +121,15 @@ namespace mongo {
     }
 
     void ASIOMessageServer::_processSync(ClientConnection conn) {
+        std::cout << "adding client to thread\n";
         _loadClient(conn);
 
         OperationContextImpl txn;
-        //DbResponse dbresponse;
+        std::cout << "calling assembleResponse()\n";
         assembleResponse(&txn, conn->toRecv, conn->dbresponse, conn->remote());
 
         // todo: is it ok for us to use dbresponse with thread state unloaded?
+        std::cout << "unloading client\n";
         _unloadClient(conn);
 
         if (!conn->dbresponse.response) {
@@ -231,17 +233,15 @@ namespace mongo {
 
         _doAccept();
 
-        _serviceRunner = std::thread([this]() {
-                std::cout << "ASIOMessageServer: launching io service runner\n" << std::flush;
-                _service.run();
-                std::cout << "ASIOMessageServer: io service runner returning\n" << std::flush;
-            });
+        // auto runner = std::thread([this]() {
+        //         _service.run();
+        //     });
+        // while(true) {
+        //     sleep(100);
+        // }
 
-        // todo: rewrite server so we don't need to do this...
-        // implement some better way of killing io service
-        while (true) {
-            sleep(100);
-        }
+        _service.run();
+        std::cout << "ASIOMessageServer: shutting down\n";
     }
 
 } // namespace mongo

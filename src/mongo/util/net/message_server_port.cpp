@@ -52,7 +52,6 @@
 #include "mongo/util/net/message.h"
 #include "mongo/util/net/message_port.h"
 #include "mongo/util/net/message_server.h"
-#include "mongo/util/net/asio_message_server.h"
 #include "mongo/util/net/ssl_manager.h"
 #include "mongo/util/scopeguard.h"
 
@@ -265,12 +264,7 @@ namespace {
 
 
     MessageServer * createServer( const MessageServer::Options& opts , MessageHandler * handler ) {
-        if (opts.async) {
-            std::cout << "Launching asynchronous listener\n";
-            return new ASIOMessageServer( opts, handler );
-        } else {
-            return new PortMessageServer( opts , handler );
-        }
+        return new PortMessageServer( opts , handler );
     }
 
 }  // namespace mongo

@@ -4,6 +4,8 @@ Import("env")
 Import("has_option")
 Import("wiredtiger")
 
+env.InjectThirdPartyIncludePaths('asio')
+
 env.SConscript(
     dirs=[
         'auth',
@@ -346,7 +348,7 @@ env.Library(
     ],
     LIBDEPS=[
         "$BUILD_DIR/mongo/util/net/message_server_port",
-        "$BUILD_DIR/mongo/util/net/asio_message_server",
+#        "$BUILD_DIR/mongo/util/net/asio_message_server",
         "$BUILD_DIR/mongo/util/net/miniwebserver",
         "$BUILD_DIR/mongo/util/signal_handlers",
     ],
@@ -608,6 +610,7 @@ serverOnlyFiles = [
     "storage/storage_init.cpp",
     "storage_options.cpp",
     "ttl.cpp",
+    "$BUILD_DIR/mongo/util/net/asio_message_server.cpp",
     "write_concern.cpp",
 ]
 
@@ -625,6 +628,7 @@ if has_option('use-cpu-profiler'):
 serveronlyEnv = env.Clone()
 serveronlyEnv.InjectThirdPartyIncludePaths(libraries=['snappy'])
 serveronlyLibdeps = [
+    '$BUILD_DIR/third_party/shim_asio',
     "$BUILD_DIR/mongo/client/parallel",
     "$BUILD_DIR/mongo/s/batch_write_types",
     "$BUILD_DIR/mongo/s/catalog/legacy/catalog_manager_legacy",
