@@ -30,7 +30,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <asio/basic_deadline_timer.hpp>
 #include <chrono>
 
 #include "mongo/bson/bsonobj.h"
@@ -41,106 +40,100 @@
 #include "mongo/stdx/memory.h"
 #include "mongo/util/log.h"
 #include "mongo/util/net/hostandport.h"
+#include "mongo/util/net/sock.h"
 
 namespace mongo {
 namespace executor {
 
+    using ResponseStatus = TaskExecutor::ResponseStatus;
     using asio::ip::tcp;
     using RemoteCommandCompletionFn =
-        stdx::function<void (const TaskExecutor::ResponseStatus&)>;
+        stdx::function<void (const ResponseStatus&)>;
 
-    /**
-     * Information describing an in-flight command.
-     */
-    struct NetworkInterfaceASIO::CommandData {
-        TaskExecutor::CallbackHandle cbHandle;
-        RemoteCommandRequest request;
-        RemoteCommandCompletionFn onFinish;
-    };
+    // throws if any connection issues occur
+    void NetworkInterfaceASIO::AsyncOp::connect(Date_t now) {
+        _conn = stdx::make_unique<ConnectionPool::ConnectionPtr>(_pool,
+                                                                 cmd.request.target,
+                                                                 now,
+                                                                 Milliseconds(10000));
+        _state.store(OpState::CONNECTED);
 
-    /**
-     * A helper type for async networking operations
-     */
-    struct NetworkInterfaceASIO::AsyncOp {
-        AsyncOp(CommandData&& cmdObj,
-                Date_t now,
-                asio::io_service* service,
-                ConnectionPool* pool) :
-            canceled(false),
-            start(now),
-            cmd(std::move(cmdObj)),
-            _service(service),
-            _pool(pool)
-        {}
-
-        // throws if any issues with connection occur
-        void connect(Date_t now) {
-            _conn = stdx::make_unique<ConnectionPool::ConnectionPtr>(_pool,
-                                                                     cmd.request.target,
-                                                                     now,
-                                                                     Milliseconds(10000));
-            _sock = stdx::make_unique<tcp::socket>(*_service,
-                                                   asio::ip::tcp::v6(),
-                                                   _conn->get()->port().psock->rawFD());
+        // Detect protocol used in underlying socket
+        int protocol = _conn->get()->port().localAddr().getType();
+        if (protocol != AF_INET &&
+            protocol != AF_INET6) {
+            throw SocketException(SocketException::CONNECT_ERROR, "Unsupported family");
         }
 
-        bool disconnect(Date_t now) {
-            _conn->done(now, true);
-            toSend.reset();
-            toRecv.reset();
-            return true;
+        // TODO: should there be some intermediate state, CONNECTION_ACQUIRED,
+        // that we go to before making the ASIO socket? In case this is where we fail?
+        _sock = stdx::make_unique<tcp::socket>(*_service,
+                                               protocol == AF_INET ? tcp::v4() : tcp::v6(),
+                                               _conn->get()->port().psock->rawFD());
+    }
+
+    void NetworkInterfaceASIO::AsyncOp::cancel() {
+        // An operation may be in mid-flight when it is canceled, so we
+        // do not disconnect upon cancellation.
+        _state.store(OpState::CANCELED);
+    }
+
+    // todo: check for cancellation
+    bool NetworkInterfaceASIO::AsyncOp::canceled() {
+        return (_state.load() == OpState::CANCELED);
+    }
+
+    bool NetworkInterfaceASIO::AsyncOp::connected() {
+        OpState state = _state.load();
+        return (state == OpState::CONNECTED ||
+                state == OpState::CANCELED);
+    }
+
+    // Performs an atomic exchange on AsyncOp's state,
+    // returns 'true' if we are the first thread to complete op
+    bool NetworkInterfaceASIO::AsyncOp::complete() {
+        return (_state.exchange(OpState::COMPLETED) == OpState::COMPLETED);
+    }
+
+    void NetworkInterfaceASIO::AsyncOp::disconnect(Date_t now) {
+        if (!connected()) {
+            return;
         }
 
-        tcp::socket* sock() {
-            return _sock.get();
-        }
+        _state.store(OpState::DISCONNECTED);
+        _conn->done(now, true);
+        toSend.reset();
+        toRecv.reset();
+    }
 
-        std::atomic_bool canceled;
-
-        Message toSend;
-        Message toRecv;
-        MSGHEADER::Value header;
-
-        // this is owned by toRecv, freed by toRecv.reset()
-        char* toRecvBuf;
-
-        BSONObj output;
-        const Date_t start;
-        CommandData cmd;
-
-    private:
-        asio::io_service* const _service;
-        ConnectionPool* const _pool;
-
-        std::unique_ptr<ConnectionPool::ConnectionPtr> _conn;
-        std::unique_ptr<tcp::socket> _sock;
-    };
+    tcp::socket* NetworkInterfaceASIO::AsyncOp::sock() {
+        return _sock.get();
+    }
 
     NetworkInterfaceASIO::NetworkInterfaceASIO() :
         _io_service(),
-        _timer(_io_service),
-        _shutdown(false),
-        _isExecutorRunnable(false)
-    {
+        _state(State::READY),
+        _isExecutorRunnable(false) {
         _connPool = stdx::make_unique<ConnectionPool>(kMessagingPortKeepOpen);
     }
 
     std::string NetworkInterfaceASIO::getDiagnosticString() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
         str::stream output;
         output << "NetworkInterfaceASIO";
-        output << " inShutdown: " << _shutdown.load();
-        output << " inProgress ops: " << _inProgress.size();
-        output << " execRunnable: " << _isExecutorRunnable;
+        output << " inShutdown: " << inShutdown();
         return output;
     }
 
-    // TODO: we'll need different handlers for different types of requests,
-    // currently this only handles queries, sync up with Adam.
     void NetworkInterfaceASIO::_messageFromRequest(const RemoteCommandRequest& request,
-                                                       Message* toSend) {
+                                                   Message* toSend,
+                                                   bool useOpCommand) {
         BSONObj query = request.cmdObj;
         invariant(query.isValid());
+
+        // TODO: once OP_COMMAND work is complete,
+        // look at client to see if it supports OP_COMMAND.
+
+        // TODO: investigate whether we can use CommandRequestBuilder here.
 
         BufBuilder b;
         b.appendNum(0); // opts
@@ -149,51 +142,31 @@ namespace executor {
         b.appendNum(1); // toReturn, don't care about responses
         query.appendSelfToBufBuilder(b);
 
-        // wrap up the message object, add headers etc.
-        toSend->setData(dbQuery, b.buf(), b.len()); // must b outlive toSend?
+        // TODO: if AsyncOp can own this buffer, we can avoid copying it in setData().
+        toSend->setData(dbQuery, b.buf(), b.len());
         toSend->header().setId(nextMessageId());
         toSend->header().setResponseTo(0);
     }
 
-    void NetworkInterfaceASIO::_asyncSendSimpleMessage(const SharedAsyncOp& op,
+    void NetworkInterfaceASIO::_asyncSendSimpleMessage(AsyncOp* op,
                                                        const asio::const_buffer& buf) {
         asio::async_write(*(op->sock()), asio::buffer(buf),
             [this, op](std::error_code ec, std::size_t bytes) {
-                 if (ec)
+                 if (ec) {
                      return _networkErrorCallback(op, ec);
-                 _receiveResponse(op);
+                 } else if (op->canceled()) {
+                     return _completeOperation(op);
+                 } else {
+                     _receiveResponse(op);
+                 }
             });
     }
 
-    void NetworkInterfaceASIO::_asyncSendVectorMessage(
-        const SharedAsyncOp& op,
-        const std::vector<std::pair<char*, int>>& data,
-        std::vector<std::pair<char*, int>>::const_iterator i) {
-        // if we are done, call callback from here
-        if (i == data.end()) {
-            return _completedWriteCallback(op);
-        }
-
-        // otherwise, send another buffer
-        asio::const_buffer buf(i->first, i->second); // data, length
-        i++;
-
-        asio::async_write(*(op->sock()), asio::buffer(buf),
-            [this, &data, i, op](std::error_code ec, std::size_t) {
-                if (ec) {
-                    LOG(3) << "error sending vector message\n";
-                    _networkErrorCallback(op, ec);
-                } else {
-                    _asyncSendVectorMessage(op, data, i);
-                }
-            });
-        }
-
-    void NetworkInterfaceASIO::_receiveResponse(const SharedAsyncOp& op) {
+    void NetworkInterfaceASIO::_receiveResponse(AsyncOp* op) {
         _recvMessageHeader(op);
     }
 
-    void NetworkInterfaceASIO::_validateMessageHeader(const SharedAsyncOp& op) {
+    void NetworkInterfaceASIO::_validateMessageHeader(AsyncOp* op) {
         // TODO: this error code should be more meaningful.
         std::error_code ec;
 
@@ -201,16 +174,17 @@ namespace executor {
         int len = op->header.constView().getMessageLength();
         if (len == 542393671) {
             LOG(3) << "attempt to access MongoDB over HTTP on the native driver port.\n";
-            _networkErrorCallback(op, ec);
+            return _networkErrorCallback(op, ec);
         } else if (len == -1) {
             // TODO: an endian check is run after the client connects, we should
             // set that we've received the client's handshake
             LOG(3) << "Endian check received from client\n";
+            return _networkErrorCallback(op, ec);
         } else if (static_cast<size_t>(len) < sizeof(MSGHEADER::Value) ||
                    static_cast<size_t>(len) > MaxMessageSizeBytes) {
             LOG(0) << "recv(): message len " << len << " is invalid. "
                    << "Min " << sizeof(MSGHEADER::Value) << " Max: " << MaxMessageSizeBytes;
-            _networkErrorCallback(op, ec);
+            return _networkErrorCallback(op, ec);
         }
 
         // validate response id
@@ -220,12 +194,12 @@ namespace executor {
             LOG(3) << "got wrong response:"
                    << "\n   expected response id: " << expectedId
                    << "\n   instead got response id: " << actualId << "\n";
-            _networkErrorCallback(op, ec);
+            return _networkErrorCallback(op, ec);
         }
         _recvMessageBody(op);
     }
 
-    void NetworkInterfaceASIO::_recvMessageBody(const SharedAsyncOp& op) {
+    void NetworkInterfaceASIO::_recvMessageBody(AsyncOp* op) {
         // len = whole message length, data + header
         int len = op->header.constView().getMessageLength();
 
@@ -244,29 +218,33 @@ namespace executor {
             [this, op, md_view](asio::error_code ec, size_t bytes) {
                 if (ec) {
                     LOG(3) << "error receiving message body\n";
-                    _networkErrorCallback(op, ec);
+                    return _networkErrorCallback(op, ec);
+                } else if (op->canceled()) {
+                    return _completeOperation(op);
                 } else {
                     op->toRecv.setData((char *)md_view.view2ptr(), true);
-                    _completedWriteCallback(op);
+                    return _completedWriteCallback(op);
                 }
         });
     }
 
-    void NetworkInterfaceASIO::_recvMessageHeader(const SharedAsyncOp& op) {
+    void NetworkInterfaceASIO::_recvMessageHeader(AsyncOp* op) {
         asio::async_read(*(op->sock()),
                          asio::buffer(reinterpret_cast<char *>(&op->header),
                                       sizeof(MSGHEADER::Value)),
                          [this, op](asio::error_code ec, size_t bytes) {
                              if (ec) {
                                  LOG(3) << "error receiving header\n";
-                                 _networkErrorCallback(op, ec);
+                                 return _networkErrorCallback(op, ec);
+                             } else if (op->canceled()) {
+                                 return _completeOperation(op);
                              } else {
-                                 _validateMessageHeader(op);
+                                 return _validateMessageHeader(op);
                              }
                          });
         }
 
-    void NetworkInterfaceASIO::_completedWriteCallback(const SharedAsyncOp& op) {
+    void NetworkInterfaceASIO::_completedWriteCallback(AsyncOp* op) {
         if (op->toRecv.empty()) {
             op->output = BSONObj();
             LOG(3) << "received an empty message\n";
@@ -278,7 +256,7 @@ namespace executor {
         _completeOperation(op);
     }
 
-    void NetworkInterfaceASIO::_networkErrorCallback(const SharedAsyncOp& op,
+    void NetworkInterfaceASIO::_networkErrorCallback(AsyncOp* op,
                                                      const std::error_code& ec) {
         if (op->toRecv._buf) {
             QueryResult::View qr = op->toRecv.singleData().view2ptr();
@@ -286,26 +264,35 @@ namespace executor {
                    << op->toRecv.header().getId() << "\n";
             op->output = BSONObj(qr.data());
         } else if (op->toRecv.empty()) {
+            // TODO: we may need to handle vector messages separately.
             LOG(3) << "networking error occurred, toRecv is empty\n";
-            op->output = BSONObj();
-        } else {
-            LOG(3) << "toRecv is a non-empty complicated message\n";
-            // TODO: handle this better.
             op->output = BSONObj();
         }
 
         _completeOperation(op);
     }
 
-    void NetworkInterfaceASIO::_completeOperation(const SharedAsyncOp& op) {
+    // NOTE: this method may only be called by ASIO threads
+    // (do not call from methods entered by ReplicationExecutor threads)
+    void NetworkInterfaceASIO::_completeOperation(AsyncOp* op) {
         const Date_t end = now();
-        TaskExecutor::ResponseStatus status(Response(op->output, Milliseconds(end - op->start)));
-        if (!op->canceled.load()) {
-            op->cmd.onFinish(status);
+        bool canceled = op->canceled();
+        op->disconnect(end);
+        if (op->complete()) {
+            return;
         }
 
-        op->disconnect(end);
-        _inProgress.remove(op.get());
+        if (canceled) {
+            op->cmd.onFinish(ResponseStatus(ErrorCodes::CallbackCanceled, "Callback canceled"));
+        } else {
+            op->cmd.onFinish(ResponseStatus(Response(op->output, Milliseconds(end - op->start))));
+        }
+
+        {
+            stdx::lock_guard<stdx::mutex> lk(_inProgressMutex);
+            _inProgress.erase(op);
+        }
+
         signalWorkAvailable();
     }
 
@@ -314,35 +301,36 @@ namespace executor {
                << " against database " << cmd.request.dbname
                << " across network to " << cmd.request.target.toString() << "\n";
 
+        if (inShutdown()) {
+            return;
+        }
+
+        auto ownedOp = stdx::make_unique<AsyncOp>(std::move(cmd),
+                                                  now(),
+                                                  &_io_service,
+                                                  _connPool.get());
+
+        AsyncOp* op = ownedOp.get();
+
+        {
+            stdx::lock_guard<stdx::mutex> lk(_inProgressMutex);
+            _inProgress.emplace(op, std::move(ownedOp));
+        }
+
         // auth in a separate thread to avoid blocking the rest of the system
-        std::thread t([this, &cmd]() {
-
-                if (_shutdown.load()) {
-                    return;
-                }
-
-                RemoteCommandRequest request = cmd.request;
-                SharedAsyncOp op(std::make_shared<AsyncOp>(std::move(cmd),
-                                                           now(),
-                                                           &_io_service,
-                                                           _connPool.get()));
-
+        std::thread t([this, op]() {
                 try {
                     op->connect(now());
                 } catch (...) {
                     LOG(3) << "connect() failed, posting mock completion\n";
-                    if (_shutdown.load()) {
+
+                    if (inShutdown()) {
                         return;
                     }
 
-                    TaskExecutor::ResponseStatus status(exceptionToStatus());
+                    ResponseStatus status(exceptionToStatus());
                     asio::post(_io_service, [this, op, status]() {
-                            if (!op->canceled.load()) {
-                                op->cmd.onFinish(status);
-                                _inProgress.remove(op.get());
-                            }
-                            // TODO: check all calls to this, deadlock-prone, takes lock
-                            signalWorkAvailable();
+                            return _completeOperation(op);
                         });
                     return;
                 }
@@ -350,15 +338,15 @@ namespace executor {
                 // send control back to main thread(pool)
                 asio::post(_io_service, [this, op]() {
                         _messageFromRequest(op->cmd.request, &op->toSend);
-                        _inProgress.push_back(op.get());
                         if (op->toSend.empty()) {
                             _completedWriteCallback(op);
-                        } else if (op->toSend._buf != 0) {
-                            asio::const_buffer buf(op->toSend._buf, op->toSend.size());
-                            _asyncSendSimpleMessage(op, buf);
+                        } else if (op->canceled()) {
+                            return _completeOperation(op);
                         } else {
-                            auto iter = op->toSend._data.begin();
-                            _asyncSendVectorMessage(op, op->toSend._data, iter);
+                            // TODO: some day we may need to support vector messages.
+                            fassert(28693, op->toSend._buf != 0);
+                            asio::const_buffer buf(op->toSend._buf, op->toSend.size());
+                            return _asyncSendSimpleMessage(op, buf);
                         }
                     });
             });
@@ -370,18 +358,21 @@ namespace executor {
                 asio::io_service::work work(_io_service);
                 _io_service.run();
             });
-        return;
+        _state.store(State::RUNNING);
+    }
+
+    bool NetworkInterfaceASIO::inShutdown() {
+        return (_state.load() == State::SHUTDOWN);
     }
 
     void NetworkInterfaceASIO::shutdown() {
-        _shutdown.store(true);
+        _state.store(State::SHUTDOWN);
         _io_service.stop();
         _serviceRunner.join();
-        return;
     }
 
     void NetworkInterfaceASIO::signalWorkAvailable() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_executorMutex);
         _signalWorkAvailable_inlock();
     }
 
@@ -393,7 +384,7 @@ namespace executor {
     }
 
     void NetworkInterfaceASIO::waitForWork() {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_executorMutex);
         while (!_isExecutorRunnable) {
             _isExecutorRunnableCondition.wait(lk);
         }
@@ -401,7 +392,7 @@ namespace executor {
     }
 
     void NetworkInterfaceASIO::waitForWorkUntil(Date_t when) {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_executorMutex);
         while (!_isExecutorRunnable) {
             const Milliseconds waitTime(when - now());
             if (waitTime <= Milliseconds(0)) {
@@ -419,7 +410,7 @@ namespace executor {
     void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHandle,
                                             const RemoteCommandRequest& request,
                                             const RemoteCommandCompletionFn& onFinish) {
-        CommandData cd = CommandData();
+        CommandData cd;
         cd.cbHandle = cbHandle;
         cd.request = request;
         cd.onFinish = onFinish;
@@ -427,24 +418,13 @@ namespace executor {
     }
 
     void NetworkInterfaceASIO::cancelCommand(const TaskExecutor::CallbackHandle& cbHandle) {
-        AsyncOpList::iterator iter;
-        for (iter = _inProgress.begin(); iter != _inProgress.end(); ++iter) {
-            if (*iter != nullptr) {
-                if ((*iter)->cmd.cbHandle == cbHandle) {
-                    break;
-                }
+        stdx::lock_guard<stdx::mutex> lk(_inProgressMutex);
+        for (auto iter = _inProgress.begin(); iter != _inProgress.end(); ++iter) {
+            if ((*iter).first->cmd.cbHandle == cbHandle) {
+                (*iter).first->cancel();
+                return;
             }
         }
-
-        if (iter == _inProgress.end() || *iter == nullptr) {
-            return;
-        }
-
-        (*iter)->canceled.store(true);
-
-        // do we still want to do this?
-        signalWorkAvailable();
-        return;
     }
 
 } // namespace executor

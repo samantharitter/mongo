@@ -29,8 +29,10 @@
 #pragma once
 
 #include <asio.hpp>
+#include <atomic>
 #include <system_error>
 #include <thread>
+#include <unordered_map>
 
 #include "mongo/client/connection_pool.h"
 #include "mongo/client/remote_command_runner.h"
@@ -48,6 +50,13 @@ namespace executor {
      */
     class NetworkInterfaceASIO final : public NetworkInterface {
     public:
+
+       enum class State {
+          READY,
+          RUNNING,
+          SHUTDOWN
+       };
+
         NetworkInterfaceASIO();
         std::string getDiagnosticString() override;
         void startup() override;
@@ -61,54 +70,108 @@ namespace executor {
                                   const RemoteCommandCompletionFn& onFinish) override;
         void cancelCommand(const TaskExecutor::CallbackHandle& cbHandle) override;
 
-        class AsyncOp;
-        using SharedAsyncOp = const std::shared_ptr<AsyncOp>;
-        using AsyncOpList = stdx::list<AsyncOp*>;
-
-        struct CommandData;
+        bool inShutdown();
 
     private:
+
+        /**
+         * Information describing an in-flight command.
+         */
+        struct CommandData {
+           TaskExecutor::CallbackHandle cbHandle;
+           RemoteCommandRequest request;
+           RemoteCommandCompletionFn onFinish;
+        };
+
+        /**
+         * Helper object to manage individual network operations.
+         */
+        class AsyncOp {
+        public:
+
+            AsyncOp(CommandData&& cmdObj, Date_t now, asio::io_service* service,
+                    ConnectionPool* pool) :
+                start(now),
+                cmd(std::move(cmdObj)),
+                _state(OpState::READY),
+                _service(service),
+                _pool(pool)
+                {}
+
+           enum class OpState {
+              READY,
+              CONNECTED,
+              DISCONNECTED,
+              CANCELED,
+              COMPLETED
+           };
+
+           void connect(Date_t now);
+           bool connected();
+           bool complete();
+           void disconnect(Date_t now);
+           void cancel();
+           bool canceled();
+           asio::ip::tcp::socket* sock();
+
+           Message toSend;
+           Message toRecv;
+           MSGHEADER::Value header;
+
+           // this is owned by toRecv, freed by toRecv.reset()
+           char* toRecvBuf;
+
+           BSONObj output;
+           const Date_t start;
+           CommandData cmd;
+
+        private:
+           std::atomic<OpState> _state;
+
+           asio::io_service* const _service;
+           ConnectionPool* const _pool;
+
+           std::unique_ptr<ConnectionPool::ConnectionPtr> _conn;
+           std::unique_ptr<asio::ip::tcp::socket> _sock;
+        };
+
 
         void _asyncRunCommand(CommandData&& cmd);
 
         void _messageFromRequest(const RemoteCommandRequest& request,
-                                 Message* toSend);
+                                 Message* toSend,
+                                 bool useOpCommand = false);
 
-        void _asyncSendSimpleMessage(const SharedAsyncOp& op,
+        void _asyncSendSimpleMessage(AsyncOp* op,
                                      const asio::const_buffer& buf);
 
-        void _asyncSendVectorMessage(const SharedAsyncOp& op,
-                                     const std::vector<std::pair<char*, int>>& data,
-                                     std::vector<std::pair<char*, int>>::const_iterator i);
-
-        void _completedWriteCallback(const SharedAsyncOp& op);
-        void _networkErrorCallback(const SharedAsyncOp& op, const std::error_code& ec);
+        void _completedWriteCallback(AsyncOp* op);
+        void _networkErrorCallback(AsyncOp* op, const std::error_code& ec);
 
         asio::io_service _io_service;
-        asio::steady_timer _timer;
 
         std::thread _serviceRunner;
 
-        std::atomic_bool _shutdown;
+        std::atomic<State> _state;
 
       private:
 
-        void _completeOperation(const SharedAsyncOp& op);
-        void _validateMessageHeader(const SharedAsyncOp& op);
-        void _keepAlive(const SharedAsyncOp& op);
-        void _recvMessageHeader(const SharedAsyncOp& op);
-        void _recvMessageBody(const SharedAsyncOp& op);
-        void _receiveResponse(const SharedAsyncOp& op);
+        void _completeOperation(AsyncOp* op);
+        void _validateMessageHeader(AsyncOp* op);
+        void _keepAlive(AsyncOp* op);
+        void _recvMessageHeader(AsyncOp* op);
+        void _recvMessageBody(AsyncOp* op);
+        void _receiveResponse(AsyncOp* op);
         void _signalWorkAvailable_inlock();
 
+        stdx::mutex _inProgressMutex;
+        stdx::mutex _executorMutex;
         bool _isExecutorRunnable;
-        stdx::mutex _mutex;
         stdx::condition_variable _isExecutorRunnableCondition;
 
         std::unique_ptr<ConnectionPool> _connPool;
 
-        // for canceling. These ptrs are NON-owning.
-        AsyncOpList _inProgress;
+        std::unordered_map<AsyncOp*, std::unique_ptr<AsyncOp>> _inProgress;
       };
 
 } // namespace executor

@@ -30,15 +30,14 @@
 
 #include "mongo/platform/basic.h"
 
-#include <thread>
 #include <chrono>
-
-#include <boost/make_shared.hpp>
-#include <boost/thread.hpp>
+#include <memory>
+#include <thread>
 
 #include "mongo/db/dbmessage.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/executor/network_interface_asio.h"
+#include "mongo/stdx/memory.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/log.h"
 #include "mongo/util/net/message.h"
@@ -57,7 +56,7 @@ namespace executor {
                          _shutdown(false),
                          _service(),
                          _acceptor(_service),
-                         _net(boost::make_shared<NetworkInterfaceASIO>())
+                         _net(stdx::make_unique<NetworkInterfaceASIO>())
         {}
 
         void init() {
@@ -70,11 +69,11 @@ namespace executor {
                 return;
             }
 
-            boost::shared_ptr<tcp::socket> sock(boost::make_shared<tcp::socket>(_service));
+            std::shared_ptr<tcp::socket> sock(std::make_shared<tcp::socket>(_service));
             _acceptor.async_accept(*sock,
                                    [this, sock](std::error_code ec) {
                                        if (ec) {
-                                           std::cout << "TEST: accept error\n" << std::flush;
+                                           LOG(3) << "TEST: accept error\n" << std::flush;
                                        } else {
                                            handleIncomingMsg(sock);
                                        }
@@ -94,20 +93,20 @@ namespace executor {
                 // if is command:
                 const NamespaceString nsString(d.getns());
                 if (nsString.isCommand()) {
-                    std::cout << "command " << q.query << " on " << q.ns << "\n";
+                    LOG(3) << "Received command " << q.query << " on " << q.ns << "\n";
                 } else {
-                    std::cout << "query " << q.query << " on " << q.ns << "\n";
+                    LOG(3) << "Received query " << q.query << " on " << q.ns << "\n";
                 }
             } else if (op == dbGetMore) {
                 DbMessage d(m);
-                std::cout << "getmore on " << d.getns() << " for cursorid " << d.pullInt64() << "\n";
+                LOG(3) << "Received getmore on " << d.getns() << ", cursorid " << d.pullInt64() << "\n";
             } else {
-                std::cout << "something else\n";
+                LOG(3) << "Received an unknown type of message\n";
             }
         }
 
-        void recvMsgBody(boost::shared_ptr<tcp::socket> sock,
-                         boost::shared_ptr<MSGHEADER::Value> header,
+        void recvMsgBody(std::shared_ptr<tcp::socket> sock,
+                         std::shared_ptr<MSGHEADER::Value> header,
                          int headerLen) {
             // todo: error checking on len
             // len = whole message length, data + header
@@ -116,7 +115,7 @@ namespace executor {
             int z = (len+1023)&0xfffffc00;
             verify(z>=len);
             // todo, need a guard?
-            boost::shared_ptr<MsgData::View> md(boost::make_shared<MsgData::View>(reinterpret_cast<char *>(mongoMalloc(z))));
+            std::shared_ptr<MsgData::View> md(std::make_shared<MsgData::View>(reinterpret_cast<char *>(mongoMalloc(z))));
 
             // copy header data into master buffer
             memcpy(md->view2ptr(), header.get(), headerLen);
@@ -126,7 +125,7 @@ namespace executor {
             asio::async_read(*sock, asio::buffer(md->data(), bodyLength),
                              [this, md](asio::error_code ec, size_t bytes) {
                                  if (ec) {
-                                     std::cout << "TEST: error receiving message body\n" << std::flush;
+                                     LOG(3) << "TEST: error receiving message body\n" << std::flush;
                                  } else {
                                      Message m;
                                      m.setData(md->view2ptr(), true);
@@ -135,14 +134,14 @@ namespace executor {
                              });
         }
 
-        void handleIncomingMsg(boost::shared_ptr<tcp::socket> sock) {
-            boost::shared_ptr<MSGHEADER::Value> header(boost::make_shared<MSGHEADER::Value>());
+        void handleIncomingMsg(std::shared_ptr<tcp::socket> sock) {
+            std::shared_ptr<MSGHEADER::Value> header(std::make_shared<MSGHEADER::Value>());
             int headerLen = sizeof(MSGHEADER::Value);
 
             asio::async_read(*sock, asio::buffer((char *)(header.get()), headerLen),
                              [this, sock, header, headerLen](asio::error_code ec, size_t bytes) {
                                  if (ec) {
-                                     std::cout << "TEST: error receiving header\n" << std::flush;
+                                     LOG(3) << "TEST: error receiving header\n" << std::flush;
                                  } else {
                                      recvMsgBody(sock, header, headerLen);
                                  }
@@ -150,7 +149,7 @@ namespace executor {
         }
 
         void startServer(int port) {
-            std::cout << "TEST: launching thread to listen on port " << port << "\n" << std::flush;
+            LOG(3) << "TEST: launching thread to listen on port " << port << "\n" << std::flush;
             tcp::resolver resolver(_service);
             tcp::endpoint endpoint = *resolver.resolve({"localhost", std::to_string(port)});
 
@@ -175,8 +174,8 @@ namespace executor {
             _serviceRunner.join();
         }
 
-        boost::shared_ptr<NetworkInterfaceASIO> getNet() {
-            return _net;
+        NetworkInterfaceASIO* getNet() {
+            return _net.get();
         }
 
         void waitForMessageCount(int count) {
@@ -194,7 +193,7 @@ namespace executor {
         bool _shutdown;
         asio::io_service _service;
         tcp::acceptor _acceptor;
-        boost::shared_ptr<NetworkInterfaceASIO> _net;
+        std::unique_ptr<NetworkInterfaceASIO> _net;
         std::thread _serviceRunner;
     };
 
@@ -205,7 +204,7 @@ namespace executor {
 
         startServer(port);
 
-        boost::shared_ptr<NetworkInterfaceASIO> net = getNet();
+        NetworkInterfaceASIO* net = getNet();
         const RemoteCommandRequest request(HostAndPort("localhost", port),
                                            "somedb",
                                            BSON( "a" << GTE << 0 ));

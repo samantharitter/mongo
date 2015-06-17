@@ -107,7 +107,7 @@ namespace mongo {
              * If 'destroy' is set to true, this connection will be destroyed upon
              * release and will not rejoin the pool.
              */
-            void done(Date_t now, bool destroy=false);
+            void done(Date_t now, bool destroy = false);
 
         private:
             ConnectionPool* _pool;
