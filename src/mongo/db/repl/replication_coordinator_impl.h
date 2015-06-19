@@ -28,27 +28,27 @@
 
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread.hpp>
-#include <boost/thread/mutex.hpp>
-#include <boost/thread/condition_variable.hpp>
 #include <vector>
 #include <memory>
 
 #include "mongo/base/status.h"
 #include "mongo/bson/timestamp.h"
-#include "mongo/db/service_context.h"
-#include "mongo/db/repl/member_state.h"
 #include "mongo/db/repl/data_replicator.h"
+#include "mongo/db/repl/member_state.h"
 #include "mongo/db/repl/optime.h"
 #include "mongo/db/repl/replica_set_config.h"
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/repl/replication_coordinator_external_state.h"
 #include "mongo/db/repl/replication_executor.h"
+#include "mongo/db/repl/storage_interface.h"
 #include "mongo/db/repl/update_position_args.h"
+#include "mongo/db/service_context.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/platform/unordered_map.h"
 #include "mongo/platform/unordered_set.h"
+#include "mongo/stdx/condition_variable.h"
+#include "mongo/stdx/mutex.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/net/hostandport.h"
 
 namespace mongo {
@@ -81,7 +81,8 @@ namespace repl {
         // Takes ownership of the "externalState", "topCoord" and "network" objects.
         ReplicationCoordinatorImpl(const ReplSettings& settings,
                                    ReplicationCoordinatorExternalState* externalState,
-                                   ReplicationExecutor::NetworkInterface* network,
+                                   executor::NetworkInterface* network,
+                                   StorageInterface* storage,
                                    TopologyCoordinator* topoCoord,
                                    int64_t prngSeed);
         // Takes ownership of the "externalState" and "topCoord" objects.
@@ -123,12 +124,12 @@ namespace repl {
         virtual void interruptAll();
 
         virtual ReplicationCoordinator::StatusAndDuration awaitReplication(
-                const OperationContext* txn,
+                OperationContext* txn,
                 const OpTime& opTime,
                 const WriteConcernOptions& writeConcern);
 
         virtual ReplicationCoordinator::StatusAndDuration awaitReplicationOfLastOpForClient(
-                const OperationContext* txn,
+                OperationContext* txn,
                 const WriteConcernOptions& writeConcern);
 
         virtual Status stepDown(OperationContext* txn,
@@ -139,6 +140,8 @@ namespace repl {
         virtual bool isMasterForReportingPurposes();
 
         virtual bool canAcceptWritesForDatabase(StringData dbName);
+
+        bool canAcceptWritesFor(const NamespaceString& ns) override;
 
         virtual Status checkIfWriteConcernCanBeSatisfied(
                 const WriteConcernOptions& writeConcern) const;
@@ -160,7 +163,7 @@ namespace repl {
         virtual OpTime getMyLastOptime() const override;
 
         virtual ReadAfterOpTimeResponse waitUntilOpTime(
-                const OperationContext* txn,
+                OperationContext* txn,
                 const ReadAfterOpTimeArgs& settings) override;
 
         virtual OID getElectionId() override;
@@ -267,7 +270,9 @@ namespace repl {
         /**
          * Get current term from topology coordinator
          */
-        long long getTerm() override;
+        virtual long long getTerm() override;
+
+        virtual bool updateTerm(long long term) override;
 
         // ================== Test support API ===================
 
@@ -287,12 +292,15 @@ namespace repl {
          */
         Status setLastOptime_forTest(long long cfgVer, long long memberId, const OpTime& opTime);
 
+        bool updateTerm_forTest(long long term);
+
     private:
         ReplicationCoordinatorImpl(const ReplSettings& settings,
                                    ReplicationCoordinatorExternalState* externalState,
                                    TopologyCoordinator* topCoord,
                                    int64_t prngSeed,
-                                   ReplicationExecutor::NetworkInterface* network,
+                                   executor::NetworkInterface* network,
+                                   StorageInterface* storage,
                                    ReplicationExecutor* replExec);
         /**
          * Configuration states for a replica set node.
@@ -414,7 +422,7 @@ namespace repl {
          * Helper method for setting/unsetting maintenance mode.  Scheduled by setMaintenanceMode()
          * to run in a global write lock in the replication executor thread.
          */
-        void _setMaintenanceMode_helper(const ReplicationExecutor::CallbackData& cbData,
+        void _setMaintenanceMode_helper(const ReplicationExecutor::CallbackArgs& cbData,
                                         bool activate,
                                         Status* result);
 
@@ -422,19 +430,19 @@ namespace repl {
          * Helper method for retrieving maintenance mode.  Scheduled by getMaintenanceMode() to run
          * in the replication executor thread.
          */
-        void _getMaintenanceMode_helper(const ReplicationExecutor::CallbackData& cbData,
+        void _getMaintenanceMode_helper(const ReplicationExecutor::CallbackArgs& cbData,
                                         bool* maintenanceMode);
 
         /**
          * Bottom half of fillIsMasterForReplSet.
          */
-        void _fillIsMasterForReplSet_finish(const ReplicationExecutor::CallbackData& cbData,
+        void _fillIsMasterForReplSet_finish(const ReplicationExecutor::CallbackArgs& cbData,
                                             IsMasterResponse* result);
 
         /**
          * Bottom half of processReplSetFresh.
          */
-        void _processReplSetFresh_finish(const ReplicationExecutor::CallbackData& cbData,
+        void _processReplSetFresh_finish(const ReplicationExecutor::CallbackArgs& cbData,
                                          const ReplSetFreshArgs& args,
                                          BSONObjBuilder* response,
                                          Status* result);
@@ -442,7 +450,7 @@ namespace repl {
         /**
          * Bottom half of processReplSetElect.
          */
-        void _processReplSetElect_finish(const ReplicationExecutor::CallbackData& cbData,
+        void _processReplSetElect_finish(const ReplicationExecutor::CallbackArgs& cbData,
                                          const ReplSetElectArgs& args,
                                          BSONObjBuilder* response,
                                          Status* result);
@@ -450,20 +458,20 @@ namespace repl {
         /**
          * Bottom half of processReplSetFreeze.
          */
-        void _processReplSetFreeze_finish(const ReplicationExecutor::CallbackData& cbData,
+        void _processReplSetFreeze_finish(const ReplicationExecutor::CallbackArgs& cbData,
                                           int secs,
                                           BSONObjBuilder* response,
                                           Status* result);
         /*
          * Bottom half of clearSyncSourceBlacklist
          */
-        void _clearSyncSourceBlacklist_finish(const ReplicationExecutor::CallbackData& cbData);
+        void _clearSyncSourceBlacklist_finish(const ReplicationExecutor::CallbackArgs& cbData);
 
         /**
          * Bottom half of processReplSetDeclareElectionWinner.
          */
         void _processReplSetDeclareElectionWinner_finish(
-                const ReplicationExecutor::CallbackData& cbData,
+                const ReplicationExecutor::CallbackArgs& cbData,
                 const ReplSetDeclareElectionWinnerArgs& args,
                 long long* responseTerm,
                 Status* result);
@@ -472,7 +480,7 @@ namespace repl {
          * Bottom half of processReplSetRequestVotes.
          */
         void _processReplSetRequestVotes_finish(
-                const ReplicationExecutor::CallbackData& cbData,
+                const ReplicationExecutor::CallbackArgs& cbData,
                 const ReplSetRequestVotesArgs& args,
                 ReplSetRequestVotesResponse* response,
                 Status* result);
@@ -482,7 +490,7 @@ namespace repl {
          * need to change as a result of time passing - for instance becoming PRIMARY when a single
          * node replica set member's stepDown period ends.
          */
-        void _handleTimePassing(const ReplicationExecutor::CallbackData& cbData);
+        void _handleTimePassing(const ReplicationExecutor::CallbackArgs& cbData);
 
         /**
          * Helper method for _awaitReplication that takes an already locked unique_lock and a
@@ -491,8 +499,8 @@ namespace repl {
          */
         ReplicationCoordinator::StatusAndDuration _awaitReplication_inlock(
                 const Timer* timer,
-                boost::unique_lock<boost::mutex>* lock,
-                const OperationContext* txn,
+                stdx::unique_lock<stdx::mutex>* lock,
+                OperationContext* txn,
                 const OpTime& opTime,
                 const WriteConcernOptions& writeConcern);
 
@@ -522,7 +530,7 @@ namespace repl {
          * to decide whether or not to finish a step down.
          * Should only be called from executor callbacks.
          */
-        void _signalStepDownWaitersFromCallback(const ReplicationExecutor::CallbackData& cbData);
+        void _signalStepDownWaitersFromCallback(const ReplicationExecutor::CallbackArgs& cbData);
         void _signalStepDownWaiters();
 
         /**
@@ -530,7 +538,7 @@ namespace repl {
          * it is running within a global shared lock, and thus that no writes are going on at the
          * same time.
          */
-        void _stepDownContinue(const ReplicationExecutor::CallbackData& cbData,
+        void _stepDownContinue(const ReplicationExecutor::CallbackArgs& cbData,
                                const ReplicationExecutor::EventHandle finishedEvent,
                                OperationContext* txn,
                                Date_t waitUntil,
@@ -553,7 +561,7 @@ namespace repl {
          * be signaled.  Do not observe "*success" until after the event is signaled.
          */
         void _setFollowerModeFinish(
-                const ReplicationExecutor::CallbackData& cbData,
+                const ReplicationExecutor::CallbackArgs& cbData,
                 const MemberState& newState,
                 const ReplicationExecutor::EventHandle& finishedSettingFollowerMode,
                 bool* success);
@@ -575,7 +583,7 @@ namespace repl {
          * This function has the same rules for "opTime" as setMyLastOptime(), unless
          * "isRollbackAllowed" is true.
          */
-        void _setMyLastOptime_inlock(boost::unique_lock<boost::mutex>* lock,
+        void _setMyLastOptime_inlock(stdx::unique_lock<stdx::mutex>* lock,
                                      const OpTime& opTime,
                                      bool isRollbackAllowed);
 
@@ -591,11 +599,11 @@ namespace repl {
          *
          * Schedules additional heartbeats, triggers elections and step downs, etc.
          */
-        void _handleHeartbeatResponse(const ReplicationExecutor::RemoteCommandCallbackData& cbData,
+        void _handleHeartbeatResponse(const ReplicationExecutor::RemoteCommandCallbackArgs& cbData,
                                       int targetIndex);
 
         void _handleHeartbeatResponseV1(
-                const ReplicationExecutor::RemoteCommandCallbackData& cbData,
+                const ReplicationExecutor::RemoteCommandCallbackArgs& cbData,
                 int targetIndex);
 
         void _trackHeartbeatHandle(const StatusWith<ReplicationExecutor::CallbackHandle>& handle);
@@ -627,7 +635,7 @@ namespace repl {
          *
          * Scheduled by _scheduleHeartbeatToTarget.
          */
-        void _doMemberHeartbeat(ReplicationExecutor::CallbackData cbData,
+        void _doMemberHeartbeat(ReplicationExecutor::CallbackArgs cbData,
                                 const HostAndPort& target,
                                 int targetIndex);
 
@@ -658,7 +666,7 @@ namespace repl {
          * Callback that finishes the work started in _startLoadLocalConfig and sets _rsConfigState
          * to kConfigSteady, so that we can begin processing heartbeats and reconfigs.
          */
-        void _finishLoadLocalConfig(const ReplicationExecutor::CallbackData& cbData,
+        void _finishLoadLocalConfig(const ReplicationExecutor::CallbackArgs& cbData,
                                     const ReplicaSetConfig& localConfig,
                                     const StatusWith<OpTime>& lastOpTimeStatus);
 
@@ -667,7 +675,7 @@ namespace repl {
          * executor context, in the event of a successful quorum check.
          */
         void _finishReplSetInitiate(
-                const ReplicationExecutor::CallbackData& cbData,
+                const ReplicationExecutor::CallbackArgs& cbData,
                 const ReplicaSetConfig& newConfig,
                 int myIndex);
 
@@ -676,7 +684,7 @@ namespace repl {
          * executor context, in the event of a successful quorum check.
          */
         void _finishReplSetReconfig(
-                const ReplicationExecutor::CallbackData& cbData,
+                const ReplicationExecutor::CallbackArgs& cbData,
                 const ReplicaSetConfig& newConfig,
                 int myIndex);
 
@@ -712,6 +720,7 @@ namespace repl {
          *      _onElectCmdRunnerComplete()
          * For V1 (raft) style elections the election path is:
          *      _startElectSelfV1()
+         *      _onDryRunComplete()
          *      _onVoteRequestComplete()
          *      _onElectionWinnerDeclarerComplete()
          */
@@ -731,10 +740,20 @@ namespace repl {
         void _onElectCmdRunnerComplete();
 
         /**
+         * Callback called when the dryRun VoteRequester has completed; checks the results and
+         * decides whether to conduct a proper election.
+         * "originalTerm" was the term during which the dry run began, if the term has since
+         * changed, do not run for election.
+         */
+        void _onDryRunComplete(long long originalTerm);
+
+        /**
          * Callback called when the VoteRequester has completed; checks the results and
          * decides whether to change state to primary and alert other nodes of our primary-ness.
+         * "originalTerm" was the term during which the election began, if the term has since
+         * changed, do not step up as primary.
          */
-        void _onVoteRequestComplete();
+        void _onVoteRequestComplete(long long originalTerm);
 
         /**
          * Callback called when the ElectWinnerDeclarer has completed; checks the results and
@@ -745,7 +764,7 @@ namespace repl {
         /**
          * Callback called after a random delay, to prevent repeated election ties.
          */
-        void _recoverFromElectionTie(const ReplicationExecutor::CallbackData& cbData);
+        void _recoverFromElectionTie(const ReplicationExecutor::CallbackArgs& cbData);
 
         /**
          * Chooses a new sync source.  Must be scheduled as a callback.
@@ -753,7 +772,7 @@ namespace repl {
          * Calls into the Topology Coordinator, which uses its current view of the set to choose
          * the most appropriate sync source.
          */
-        void _chooseNewSyncSource(const ReplicationExecutor::CallbackData& cbData,
+        void _chooseNewSyncSource(const ReplicationExecutor::CallbackArgs& cbData,
                                   HostAndPort* newSyncSource);
 
         /**
@@ -763,7 +782,7 @@ namespace repl {
          *
          * Must be scheduled as a callback.
          */
-        void _blacklistSyncSource(const ReplicationExecutor::CallbackData& cbData,
+        void _blacklistSyncSource(const ReplicationExecutor::CallbackArgs& cbData,
                                   const HostAndPort& host,
                                   Date_t until);
 
@@ -773,7 +792,7 @@ namespace repl {
          *
          * Must be scheduled as a callback.
          */
-        void _unblacklistSyncSource(const ReplicationExecutor::CallbackData& cbData,
+        void _unblacklistSyncSource(const ReplicationExecutor::CallbackArgs& cbData,
                                     const HostAndPort& host);
 
         /**
@@ -781,7 +800,7 @@ namespace repl {
          *
          * Must be scheduled as a callback.
          */
-        void _shouldChangeSyncSource(const ReplicationExecutor::CallbackData& cbData,
+        void _shouldChangeSyncSource(const ReplicationExecutor::CallbackArgs& cbData,
                                      const HostAndPort& currentSource,
                                      bool* shouldChange);
 
@@ -796,7 +815,7 @@ namespace repl {
          * Completes a step-down of the current node.  Must be run with a global
          * shared or global exclusive lock.
          */
-        void _stepDownFinish(const ReplicationExecutor::CallbackData& cbData);
+        void _stepDownFinish(const ReplicationExecutor::CallbackArgs& cbData);
 
         /**
          * Schedules a replica set config change.
@@ -808,19 +827,19 @@ namespace repl {
          * completes.
          */
         void _heartbeatReconfigAfterElectionCanceled(
-                const ReplicationExecutor::CallbackData& cbData,
+                const ReplicationExecutor::CallbackArgs& cbData,
                 const ReplicaSetConfig& newConfig);
 
         /**
          * Method to write a configuration transmitted via heartbeat message to stable storage.
          */
-        void _heartbeatReconfigStore(const ReplicationExecutor::CallbackData& cbd,
+        void _heartbeatReconfigStore(const ReplicationExecutor::CallbackArgs& cbd,
                                      const ReplicaSetConfig& newConfig);
 
         /**
          * Conclusion actions of a heartbeat-triggered reconfiguration.
          */
-        void _heartbeatReconfigFinish(const ReplicationExecutor::CallbackData& cbData,
+        void _heartbeatReconfigFinish(const ReplicationExecutor::CallbackArgs& cbData,
                                       const ReplicaSetConfig& newConfig,
                                       StatusWith<int> myIndex);
 
@@ -836,7 +855,7 @@ namespace repl {
         /**
          * Bottom half of processHeartbeat(), which runs in the replication executor.
          */
-        void _processHeartbeatFinish(const ReplicationExecutor::CallbackData& cbData,
+        void _processHeartbeatFinish(const ReplicationExecutor::CallbackArgs& cbData,
                                      const ReplSetHeartbeatArgs& args,
                                      ReplSetHeartbeatResponse* response,
                                      Status* outStatus);
@@ -844,7 +863,7 @@ namespace repl {
         /**
          * Bottom half of processHeartbeatV1(), which runs in the replication executor.
          */
-        void _processHeartbeatFinishV1(const ReplicationExecutor::CallbackData& cbData,
+        void _processHeartbeatFinishV1(const ReplicationExecutor::CallbackArgs& cbData,
                                        const ReplSetHeartbeatArgsV1& args,
                                        ReplSetHeartbeatResponse* response,
                                        Status* outStatus);
@@ -854,14 +873,24 @@ namespace repl {
          */
         void _updateLastCommittedOpTime_inlock();
 
-        void _summarizeAsHtml_finish(const ReplicationExecutor::CallbackData& cbData,
+        void _summarizeAsHtml_finish(const ReplicationExecutor::CallbackArgs& cbData,
                                      ReplSetHtmlSummary* output);
 
         /**
          * Callback that gets the current term from topology coordinator.
          */
-        void _getTerm_helper(const ReplicationExecutor::CallbackData& cbData, long long* term);
+        void _getTerm_helper(const ReplicationExecutor::CallbackArgs& cbData, long long* term);
 
+
+        /**
+         * Callback that attempts to set the current term in topology coordinator and
+         * relinquishes primary if the term actually changes and we are primary.
+         */
+        void _updateTerm_helper(const ReplicationExecutor::CallbackArgs& cbData,
+                                long long term,
+                                bool* updated,
+                                Handle* cbHandle);
+        bool _updateTerm_incallback(long long term, Handle* cbHandle);
 
         //
         // All member variables are labeled with one of the following codes indicating the
@@ -881,7 +910,7 @@ namespace repl {
         // (I)  Independently synchronized, see member variable comment.
 
         // Protects member data of this ReplicationCoordinator.
-        mutable boost::mutex _mutex;                                                      // (S)
+        mutable stdx::mutex _mutex;                                                      // (S)
 
         // Handles to actively queued heartbeats.
         HeartbeatHandles _heartbeatHandles;                                               // (X)
@@ -899,7 +928,7 @@ namespace repl {
         const Mode _replMode;                                                             // (R)
 
         // Pointer to the TopologyCoordinator owned by this ReplicationCoordinator.
-        boost::scoped_ptr<TopologyCoordinator> _topCoord;                                 // (X)
+        std::unique_ptr<TopologyCoordinator> _topCoord;                                 // (X)
 
         // If the executer is owned then this will be set, but should not be used.
         // This is only used to clean up and destroy the replExec if owned
@@ -908,11 +937,11 @@ namespace repl {
         ReplicationExecutor& _replExecutor;                                               // (S)
 
         // Pointer to the ReplicationCoordinatorExternalState owned by this ReplicationCoordinator.
-        boost::scoped_ptr<ReplicationCoordinatorExternalState> _externalState;            // (PS)
+        std::unique_ptr<ReplicationCoordinatorExternalState> _externalState;            // (PS)
 
         // Thread that drives actions in the topology coordinator
         // Set in startReplication() and thereafter accessed in shutdown.
-        boost::scoped_ptr<boost::thread> _topCoordDriverThread;                           // (I)
+        std::unique_ptr<stdx::thread> _topCoordDriverThread;                           // (I)
 
         // Our RID, used to identify us to our sync source when sending replication progress
         // updates upstream.  Set once in startReplication() and then never modified again.
@@ -953,7 +982,7 @@ namespace repl {
         bool _isWaitingForDrainToComplete;                                                // (M)
 
         // Used to signal threads waiting for changes to _rsConfigState.
-        boost::condition_variable _rsConfigStateChange;                                   // (M)
+        stdx::condition_variable _rsConfigStateChange;                                   // (M)
 
         // Represents the configuration state of the coordinator, which controls how and when
         // _rsConfig may change.  See the state transition diagram in the type definition of
@@ -975,9 +1004,9 @@ namespace repl {
         // currently in progress. When using the V1 protocol, a non-null _voteRequester pointer
         // indicates this instead.
         // Only one election is allowed at a time.
-        boost::scoped_ptr<FreshnessChecker> _freshnessChecker;                            // (X)
+        std::unique_ptr<FreshnessChecker> _freshnessChecker;                            // (X)
 
-        boost::scoped_ptr<ElectCmdRunner> _electCmdRunner;                                // (X)
+        std::unique_ptr<ElectCmdRunner> _electCmdRunner;                                // (X)
 
         std::unique_ptr<VoteRequester> _voteRequester;                                    // (X)
 
@@ -991,8 +1020,8 @@ namespace repl {
         bool _sleptLastElection;                                                          // (X)
 
         // Flag that indicates whether writes to databases other than "local" are allowed.  Used to
-        // answer the canAcceptWritesForDatabase() question.  Always true for standalone nodes and
-        // masters in master-slave relationships.
+        // answer canAcceptWritesForDatabase() and canAcceptWritesFor() questions.
+        // Always true for standalone nodes and masters in master-slave relationships.
         bool _canAcceptNonLocalWrites;                                                    // (GX)
 
         // Flag that indicates whether reads from databases other than "local" are allowed.  Unlike

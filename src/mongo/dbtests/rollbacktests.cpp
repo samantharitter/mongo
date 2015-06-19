@@ -28,7 +28,6 @@
  *    then also delete it in the license file.
  */
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/catalog/collection.h"
@@ -42,7 +41,7 @@
 #include "mongo/dbtests/dbtests.h"
 #include "mongo/unittest/unittest.h"
 
-using boost::scoped_ptr;
+using std::unique_ptr;
 using std::list;
 using std::string;
 
@@ -99,16 +98,17 @@ namespace {
                            const NamespaceString& nss,
                            const BSONObj& data ) {
         Collection* coll = dbHolder().get( txn, nss.db() )->getCollection(nss.ns() );
-        scoped_ptr<RecordIterator> iter( coll->getIterator( txn ) );
-        ASSERT( !iter->isEOF() );
-        RecordId loc = iter->getNext();
-        ASSERT( iter->isEOF() );
-        ASSERT_EQ( data, coll->docFor( txn, loc ).value() );
+        auto cursor = coll->getCursor(txn);
+
+        auto record = cursor->next();
+        ASSERT(record);
+        ASSERT_EQ(data, record->data.releaseToBson());
+
+        ASSERT(!cursor->next());
     }
     void assertEmpty( OperationContext* txn, const NamespaceString& nss ) {
         Collection* coll = dbHolder().get( txn, nss.db() )->getCollection(nss.ns() );
-        scoped_ptr<RecordIterator> iter( coll->getIterator( txn ) );
-        ASSERT( iter->isEOF() );
+        ASSERT(!coll->getCursor(txn)->next());
     }
     bool indexExists( OperationContext* txn, const NamespaceString& nss, const string& idxName ) {
         Collection* coll = dbHolder().get( txn, nss.db() )->getCollection(nss.ns() );

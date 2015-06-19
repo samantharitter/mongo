@@ -28,7 +28,6 @@
 
 #pragma once
 
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/db/pipeline/value_internal.h"
 #include "mongo/platform/unordered_set.h"
@@ -124,6 +123,12 @@ namespace mongo {
                 || _storage.type == NumberLong
                 || _storage.type == NumberInt;
         }
+
+        /**
+         * Returns true if this value is a numeric type that can be represented as a 32-bit integer,
+         * and false otherwise.
+         */
+        bool integral() const;
 
         /// Get the BSON type of the field.
         BSONType getType() const { return _storage.bsonType(); }

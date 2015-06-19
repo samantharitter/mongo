@@ -81,8 +81,7 @@ namespace mongo {
                 Lock::DBLock lk(txn->lockState(), nsString.db(), MODE_X);
 
                 const bool userInitiatedWritesAndNotPrimary = txn->writesAreReplicated() &&
-                        !repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(
-                                                                                    nsString.db());
+                        !repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nsString);
 
                 if (userInitiatedWritesAndNotPrimary) {
                     uassertStatusOK(Status(ErrorCodes::NotMaster, str::stream()
@@ -102,7 +101,7 @@ namespace mongo {
 
         PlanExecutor* rawExec;
         uassertStatusOK(getExecutorUpdate(txn, collection, &parsedUpdate, opDebug, &rawExec));
-        boost::scoped_ptr<PlanExecutor> exec(rawExec);
+        std::unique_ptr<PlanExecutor> exec(rawExec);
 
         uassertStatusOK(exec->executePlan());
         return UpdateStage::makeUpdateResult(exec.get(), opDebug);

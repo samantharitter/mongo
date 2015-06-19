@@ -26,7 +26,6 @@
  *    then also delete it in the license file.
  */
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/database.h"
@@ -57,15 +56,15 @@ namespace mongo {
 
 namespace QueryMultiPlanRunner {
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::unique_ptr;
     using std::vector;
 
     /**
      * Create query solution.
      */
     QuerySolution* createQuerySolution() {
-        std::auto_ptr<QuerySolution> soln(new QuerySolution());
+        std::unique_ptr<QuerySolution> soln(new QuerySolution());
         soln->cacheData.reset(new SolutionCacheData());
         soln->cacheData->solnType = SolutionCacheData::COLLSCAN_SOLN;
         soln->cacheData->tree.reset(new PlanCacheIndexTree());
@@ -132,9 +131,9 @@ namespace QueryMultiPlanRunner {
             ixparams.bounds.endKeyInclusive = true;
             ixparams.direction = 1;
 
-            auto_ptr<WorkingSet> sharedWs(new WorkingSet());
+            unique_ptr<WorkingSet> sharedWs(new WorkingSet());
             IndexScan* ix = new IndexScan(&_txn, ixparams, sharedWs.get(), NULL);
-            auto_ptr<PlanStage> firstRoot(new FetchStage(&_txn, sharedWs.get(), ix, NULL, coll));
+            unique_ptr<PlanStage> firstRoot(new FetchStage(&_txn, sharedWs.get(), ix, NULL, coll));
 
             // Plan 1: CollScan with matcher.
             CollectionScanParams csparams;
@@ -145,9 +144,9 @@ namespace QueryMultiPlanRunner {
             BSONObj filterObj = BSON("foo" << 7);
             StatusWithMatchExpression swme = MatchExpressionParser::parse(filterObj);
             verify(swme.isOK());
-            auto_ptr<MatchExpression> filter(swme.getValue());
+            unique_ptr<MatchExpression> filter(swme.getValue());
             // Make the stage.
-            auto_ptr<PlanStage> secondRoot(new CollectionScan(&_txn, csparams, sharedWs.get(),
+            unique_ptr<PlanStage> secondRoot(new CollectionScan(&_txn, csparams, sharedWs.get(),
                                                               filter.get()));
 
             // Hand the plans off to the runner.
@@ -170,7 +169,7 @@ namespace QueryMultiPlanRunner {
             Status status = PlanExecutor::make(&_txn, sharedWs.release(), mps, cq, coll,
                                                PlanExecutor::YIELD_MANUAL, &rawExec);
             ASSERT_OK(status);
-            boost::scoped_ptr<PlanExecutor> exec(rawExec);
+            std::unique_ptr<PlanExecutor> exec(rawExec);
 
             // Get all our results out.
             int results = 0;
@@ -207,7 +206,7 @@ namespace QueryMultiPlanRunner {
                                                 BSONObj(), // proj
                                                 &cq).isOK());
             ASSERT(NULL != cq);
-            boost::scoped_ptr<CanonicalQuery> killCq(cq);
+            std::unique_ptr<CanonicalQuery> killCq(cq);
 
             // Force index intersection.
             bool forceIxisectOldValue = internalQueryForceIntersectionPlans;
@@ -229,8 +228,8 @@ namespace QueryMultiPlanRunner {
             ASSERT_EQUALS(solutions.size(), 3U);
 
             // Fill out the MultiPlanStage.
-            scoped_ptr<MultiPlanStage> mps(new MultiPlanStage(&_txn, collection, cq));
-            scoped_ptr<WorkingSet> ws(new WorkingSet());
+            unique_ptr<MultiPlanStage> mps(new MultiPlanStage(&_txn, collection, cq));
+            unique_ptr<WorkingSet> ws(new WorkingSet());
             // Put each solution from the planner into the MPR.
             for (size_t i = 0; i < solutions.size(); ++i) {
                 PlanStage* root;

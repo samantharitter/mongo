@@ -86,7 +86,7 @@ namespace mongo {
                     << "' has to be an embedded document.");
             }
 
-            boost::scoped_ptr<StorageFactoriesIterator> sfi(getGlobalServiceContext()->
+            std::unique_ptr<StorageFactoriesIterator> sfi(getGlobalServiceContext()->
                                                             makeStorageFactoriesIterator());
             invariant(sfi);
             bool found = false;
@@ -110,7 +110,7 @@ namespace mongo {
     }
 
     ServiceContext::~ServiceContext() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         invariant(_clients.empty());
     }
 
@@ -120,14 +120,14 @@ namespace mongo {
         auto observer = _clientObservers.cbegin();
         try {
             for (; observer != _clientObservers.cend(); ++observer) {
-                observer->get()->onCreateClient(this, client.get());
+                observer->get()->onCreateClient(client.get());
             }
         }
         catch (...) {
             try {
                 while (observer != _clientObservers.cbegin()) {
                     --observer;
-                    observer->get()->onDestroyClient(this, client.get());
+                    observer->get()->onDestroyClient(client.get());
                 }
             }
             catch (...) {
@@ -136,27 +136,86 @@ namespace mongo {
             throw;
         }
         {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
             invariant(_clients.insert(client.get()).second);
         }
         return UniqueClient(client.release());
     }
 
+    TickSource* ServiceContext::getTickSource() const {
+        return _tickSource.get();
+    }
+
+    void ServiceContext::setTickSource(std::unique_ptr<TickSource> newSource) {
+        _tickSource = std::move(newSource);
+    }
+
     void ServiceContext::ClientDeleter::operator()(Client* client) const {
         ServiceContext* const service = client->getServiceContext();
         {
-            boost::lock_guard<boost::mutex> lk(service->_mutex);
+            stdx::lock_guard<stdx::mutex> lk(service->_mutex);
             invariant(service->_clients.erase(client));
         }
         try {
             for (const auto& observer : service->_clientObservers) {
-                observer->onDestroyClient(service, client);
+                observer->onDestroyClient(client);
             }
         }
         catch (...) {
             std::terminate();
         }
         delete client;
+    }
+
+    ServiceContext::UniqueOperationContext ServiceContext::makeOperationContext(Client* client) {
+        auto opCtx = _newOpCtx(client);
+        auto observer = _clientObservers.begin();
+        try {
+            for (; observer != _clientObservers.cend(); ++observer) {
+                observer->get()->onCreateOperationContext(opCtx.get());
+            }
+        }
+        catch (...) {
+            try {
+                while (observer != _clientObservers.cbegin()) {
+                    --observer;
+                    observer->get()->onDestroyOperationContext(opCtx.get());
+                }
+            }
+            catch (...) {
+                std::terminate();
+            }
+            throw;
+        }
+        // // TODO(schwerin): When callers no longer construct their own OperationContexts directly,
+        // // but only through the ServiceContext, uncomment the following.  Until then, it must
+        // // be done in the operation context destructors, which introduces a potential race.
+        // {
+        //     stdx::lock_guard<Client> lk(*client);
+        //     client->setOperationContext(opCtx.get());
+        // }
+        return UniqueOperationContext(opCtx.release());
+    };
+
+    void ServiceContext::OperationContextDeleter::operator()(OperationContext* opCtx) const {
+        auto client = opCtx->getClient();
+        auto service = client->getServiceContext();
+        // // TODO(schwerin): When callers no longer construct their own OperationContexts directly,
+        // // but only through the ServiceContext, uncomment the following.  Until then, it must
+        // // be done in the operation context destructors, which introduces a potential race.
+        // {
+        //     stdx::lock_guard<Client> lk(*client);
+        //     client->resetOperationContext();
+        // }
+        try {
+            for (const auto& observer : service->_clientObservers) {
+                observer->onDestroyOperationContext(opCtx);
+            }
+        }
+        catch (...) {
+            std::terminate();
+        }
+        delete opCtx;
     }
 
     void ServiceContext::registerClientObserver(std::unique_ptr<ClientObserver> observer) {
@@ -180,7 +239,7 @@ namespace mongo {
         if (!hasGlobalServiceContext())
             return BSONArray();
 
-        boost::scoped_ptr<StorageFactoriesIterator> sfi(
+        std::unique_ptr<StorageFactoriesIterator> sfi(
             getGlobalServiceContext()->makeStorageFactoriesIterator());
 
         if (!sfi)

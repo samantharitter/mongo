@@ -29,10 +29,11 @@
 
 #include <string>
 
-#include "mongo/base/status.h"
 #include "mongo/db/jsobj.h"
 
 namespace mongo {
+
+    class Status;
 
     struct WriteConcernOptions {
     public:
@@ -45,6 +46,7 @@ namespace mongo {
         static const BSONObj Default;
         static const BSONObj Acknowledged;
         static const BSONObj Unacknowledged;
+        static const BSONObj Majority;
 
         static const char kMajority[]; // = "majority"
 

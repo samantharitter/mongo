@@ -49,10 +49,6 @@ namespace mongo {
     using std::endl;
     using std::string;
 
-    void RangeDeleterDBEnv::initThread() {
-        Client::initThreadIfNotAlready("RangeDeleter");
-    }
-
     /**
      * Outline of the delete process:
      * 1. Initialize the client for this thread if there is no client. This is for the worker
@@ -78,7 +74,7 @@ namespace mongo {
         Client::initThreadIfNotAlready("RangeDeleter");
 
         *deletedDocs = 0;
-        ShardForceVersionOkModeBlock forceVersion;
+        ShardForceVersionOkModeBlock forceVersion(txn->getClient());
         {
             Helpers::RemoveSaver removeSaver("moveChunk",
                                              ns,
@@ -90,7 +86,7 @@ namespace mongo {
             }
 
             // log the opId so the user can use it to cancel the delete using killOp.
-            unsigned int opId = CurOp::get(txn)->opNum();
+            unsigned int opId = txn->getOpID();
             log() << "Deleter starting delete for: " << ns
                   << " from " << inclusiveLower
                   << " -> " << exclusiveUpper

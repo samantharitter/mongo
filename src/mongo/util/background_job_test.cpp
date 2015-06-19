@@ -27,9 +27,8 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/thread/thread.hpp>
-
 #include "mongo/db/server_options.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/background.h"
 #include "mongo/util/concurrency/mutex.h"
@@ -42,6 +41,8 @@ namespace {
     using mongo::MsgAssertionException;
     using mongo::mutex;
     using mongo::Notification;
+
+    namespace stdx = mongo::stdx;
 
     // a global variable that can be accessed independent of the IncTester object below
     // IncTester keeps it up-to-date
@@ -112,7 +113,7 @@ namespace {
 
             virtual void run() {
                 {
-                    boost::lock_guard<boost::mutex> lock( _mutex );
+                    stdx::lock_guard<stdx::mutex> lock( _mutex );
                     ASSERT_FALSE( _hasRun );
                     _hasRun = true;
                 }

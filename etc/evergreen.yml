@@ -34,6 +34,7 @@ variables:
   - func: "run tests"
     vars:
       resmoke_args: --help
+      run_multiple_jobs: false
 
 #######################################
 #            Functions                #
@@ -179,7 +180,7 @@ functions:
             set -o igncr
         fi;
 
-        git checkout r3.1.3
+        git checkout r3.1.4
         . ./${set_tools_gopath|set_gopath.sh}
 
         # In RHEL 5.5, /usr/bin/ld can't handle --build-id parameters, so
@@ -230,9 +231,14 @@ functions:
         set -o verbose
 
         cp mongodb*/bin/* .
-        ${asan_symbolizer} ${enable_lsan} ${python|python} buildscripts/resmoke.py ${resmoke_args} ${test_flags} --log=buildlogger --reportFile=report.json
+        if [ ${run_multiple_jobs|false} = true ]; then
+          ${asan_symbolizer} ${enable_lsan} ${python|python} buildscripts/resmoke.py ${resmoke_args} --jobs=${num_cores|1} ${test_flags} --log=buildlogger --reportFile=report.json
+        else
+          ${asan_symbolizer} ${enable_lsan} ${python|python} buildscripts/resmoke.py ${resmoke_args} --jobs=1 ${test_flags} --log=buildlogger --reportFile=report.json
+        fi
 
 pre:
+  - command: shell.track
   - command: shell.exec
     params:
       silent: true
@@ -251,6 +257,7 @@ post:
       script: |
         ${killall_mci|pkill -9 mongod; pkill -9 mongos; pkill -9 mongo; pkill -9 bsondump; pkill -9 mongoimport; pkill -9 mongoexport; pkill -9 mongodump; pkill -9 mongorestore; pkill -9 mongostat; pkill -9 mongofiles; pkill -9 mongooplog; pkill -9 mongotop; pkill -9 mongobridge; pkill -9 mongod-2.6; pkill -9 mongos-2.6; pkill -9 mongo-2.6; pkill -9 bsondump-2.6; pkill -9 mongoimport-2.6; pkill -9 mongoexport-2.6; pkill -9 mongodump-2.6; pkill -9 mongorestore-2.6; pkill -9 mongostat-2.6; pkill -9 mongofiles-2.6; pkill -9 mongooplog-2.6; pkill -9 mongotop-2.6; pkill -9 mongobridge-2.6; pkill -9 mongod-2.4; pkill -9 mongos-2.4; pkill -9 mongo-2.4; pkill -9 bsondump-2.4; pkill -9 mongoimport-2.4; pkill -9 mongoexport-2.4; pkill -9 mongodump-2.4; pkill -9 mongorestore-2.4; pkill -9 mongostat-2.4; pkill -9 mongofiles-2.4; pkill -9 mongooplog-2.4; pkill -9 mongotop-2.4; pkill -9 resmoke.py; pkill -9 python; pkill -9 cl; pkill -9 lock_mgr_test; pkill -9 background_job_test; pkill -9 repl_coordinator_impl_heartbeat_test} >/dev/null 2>&1
         exit 0
+  - command: shell.cleanup
 
 timeout:
   - command: shell.exec
@@ -289,7 +296,7 @@ tasks:
           set -o verbose
 
           rm -rf ${install_directory|/data/mongo-install-directory}
-          ${scons|scons} ${compile_flags|} --distname=binaries --use-new-tools all dist distsrc-${ext|tgz} ${msi_target|}
+          ${scons|scons} ${compile_flags|} --use-new-tools all dist distsrc-${ext|tgz} ${msi_target|}
 
           ${python|python} buildscripts/generate_compile_expansions.py version.json | \
             tee compile_expansions.yml
@@ -592,7 +599,8 @@ tasks:
   - func: "do setup"
   - func: "run tests"
     vars:
-      resmoke_args: -j8 --suites=core --storageEngine=mmapv1
+      resmoke_args: --suites=core --storageEngine=mmapv1
+      run_multiple_jobs: true
 
 - <<: *task_template
   name: jsCore_WT
@@ -600,7 +608,8 @@ tasks:
   - func: "do setup"
   - func: "run tests"
     vars:
-      resmoke_args: -j8 --suites=core --storageEngine=wiredTiger
+      resmoke_args: --suites=core --storageEngine=wiredTiger
+      run_multiple_jobs: true
 
 - <<: *task_template
   name: jsCore_compatibility
@@ -608,7 +617,8 @@ tasks:
   - func: "do setup"
   - func: "run tests"
     vars:
-      resmoke_args: -j8 --suites=core --shellWriteMode=compatibility --storageEngine=mmapv1
+      resmoke_args: --suites=core --shellWriteMode=compatibility --storageEngine=mmapv1
+      run_multiple_jobs: true
 
 - <<: *task_template
   name: jsCore_compatibility_WT
@@ -616,7 +626,8 @@ tasks:
   - func: "do setup"
   - func: "run tests"
     vars:
-      resmoke_args: -j8 --suites=core --shellWriteMode=compatibility --storageEngine=wiredTiger
+      resmoke_args: --suites=core --shellWriteMode=compatibility --storageEngine=wiredTiger
+      run_multiple_jobs: true
 
 - <<: *task_template
   name: jsCore_auth
@@ -624,15 +635,8 @@ tasks:
   - func: "do setup"
   - func: "run tests"
     vars:
-      resmoke_args: -j8 --suites=core_auth --storageEngine=mmapv1
-
-- <<: *task_template
-  name: jsCore_auth_WT
-  commands:
-  - func: "do setup"
-  - func: "run tests"
-    vars:
-      resmoke_args: -j8 --suites=core_auth --storageEngine=wiredTiger
+      resmoke_args: --suites=core_auth
+      run_multiple_jobs: true
 
 - <<: *task_template
   name: jsCore_op_command
@@ -640,7 +644,8 @@ tasks:
   - func: "do setup"
   - func: "run tests"
     vars:
-      resmoke_args: -j8 --suites=core_op_command --storageEngine=mmapv1
+      resmoke_args: --suites=core_op_command --storageEngine=mmapv1
+      run_multiple_jobs: true
 
 - <<: *task_template
   name: jsCore_op_command_WT
@@ -648,7 +653,8 @@ tasks:
   - func: "do setup"
   - func: "run tests"
     vars:
-      resmoke_args: -j8 --suites=core_op_command --storageEngine=wiredTiger
+      resmoke_args: --suites=core_op_command --storageEngine=wiredTiger
+      run_multiple_jobs: true
 
 - <<: *task_template
   name: inMemoryExperiment
@@ -656,7 +662,8 @@ tasks:
   - func: "do setup"
   - func: "run tests"
     vars:
-      resmoke_args: -j8 --suites=core --storageEngine=inMemoryExperiment
+      resmoke_args: --suites=core --storageEngine=inMemoryExperiment
+      run_multiple_jobs: true
 
 - <<: *task_template
   name: jsCore_small_oplog
@@ -1062,10 +1069,10 @@ tasks:
           mv mongo-debugsymbols.tgz debugsymbols-*.${ext|tgz} || true
           cp mongodb-*.${ext|tgz} mongodb-${push_name}-${push_arch}-${suffix}.${ext|tgz}
           cp debugsymbols-*.${ext|tgz} mongodb-${push_name}-${push_arch}-debugsymbols-${suffix}.${ext|tgz} || true
-          mv distsrc.${ext|tgz} mongodb-src-${src_suffix}.${ext|tgz} || true
+          mv distsrc.${ext|tgz} mongodb-src-${src_suffix}.${ext|tar.gz} || true
           /usr/bin/find build/ -type f | grep msi$ | xargs -I original_filename cp original_filename mongodb-win32-${push_arch}-${suffix}.msi || true
 
-          notary-client.py --key-name "server-2.8" --auth-token-file ./signing_auth_token --comment "MCI Automatic Signing ${revision} - ${build_variant} - ${branch_name}" --notary-url http://notary-service.build.10gen.cc:5000 --skip-missing mongodb-${push_name}-${push_arch}-${suffix}.${ext|tgz} mongodb-${push_name}-${push_arch}-debugsymbols-${suffix}.${ext|tgz} mongodb-win32-${push_arch}-${suffix}.msi mongodb-src-${src_suffix}.${ext|tgz}
+          notary-client.py --key-name "server-2.8" --auth-token-file ./signing_auth_token --comment "MCI Automatic Signing ${revision} - ${build_variant} - ${branch_name}" --notary-url http://notary-service.build.10gen.cc:5000 --skip-missing mongodb-${push_name}-${push_arch}-${suffix}.${ext|tgz} mongodb-${push_name}-${push_arch}-debugsymbols-${suffix}.${ext|tgz} mongodb-win32-${push_arch}-${suffix}.msi mongodb-src-${src_suffix}.${ext|tar.gz}
           rm signing_auth_token
 
     # Put the binaries tarball/zipfile
@@ -1082,12 +1089,12 @@ tasks:
     - command: s3.put
       params:
         aws_secret: ${aws_secret}
-        local_file: src/mongodb-src-${src_suffix}.${ext|tgz}
+        local_file: src/mongodb-src-${src_suffix}.${ext|tar.gz}
         aws_key: ${aws_key}
         bucket: build-push-testing
         permissions: public-read
         content_type: ${content_type|application/x-gzip}
-        remote_file: ${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tgz}
+        remote_file: ${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tar.gz}
         build_variants: [ linux-64, windows-64-2k8 ]
 
     # Put the debug symbols
@@ -1117,12 +1124,12 @@ tasks:
     - command: s3.put
       params:
         aws_secret: ${aws_secret}
-        local_file: src/mongodb-src-${src_suffix}.${ext|tgz}.sig
+        local_file: src/mongodb-src-${src_suffix}.${ext|tar.gz}.sig
         aws_key: ${aws_key}
         bucket: build-push-testing
         permissions: public-read
         content_type: ${content_type|application/x-gzip}
-        remote_file: ${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tgz}.sig
+        remote_file: ${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tar.gz}.sig
         build_variants: [ linux-64, windows-64-2k8 ]
 
     # Put the debug symbols signature
@@ -1164,12 +1171,12 @@ tasks:
     - command: s3.put
       params:
         aws_secret: ${aws_secret}
-        local_file: src/mongodb-src-${src_suffix}.${ext|tgz}.sha1
+        local_file: src/mongodb-src-${src_suffix}.${ext|tar.gz}.sha1
         aws_key: ${aws_key}
         permissions: public-read
         bucket: build-push-testing
         content_type: text/plain
-        remote_file: ${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tgz}.sha1
+        remote_file: ${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tar.gz}.sha1
         build_variants: [ linux-64, windows-64-2k8 ]
 
     # Put the debug symbols sha1
@@ -1211,12 +1218,12 @@ tasks:
     - command: s3.put
       params:
         aws_secret: ${aws_secret}
-        local_file: src/mongodb-src-${src_suffix}.${ext|tgz}.sha256
+        local_file: src/mongodb-src-${src_suffix}.${ext|tar.gz}.sha256
         permissions: public-read
         aws_key: ${aws_key}
         bucket: build-push-testing
         content_type: text/plain
-        remote_file: ${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tgz}.sha256
+        remote_file: ${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tar.gz}.sha256
         build_variants: [ linux-64, windows-64-2k8 ]
 
     # Put the debug symbols sha256
@@ -1258,12 +1265,12 @@ tasks:
     - command: s3.put
       params:
         aws_secret: ${aws_secret}
-        local_file: src/mongodb-src-${src_suffix}.${ext|tgz}.md5
+        local_file: src/mongodb-src-${src_suffix}.${ext|tar.gz}.md5
         aws_key: ${aws_key}
         bucket: build-push-testing
         permissions: public-read
         content_type: text/plain
-        remote_file: ${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tgz}.md5
+        remote_file: ${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tar.gz}.md5
         build_variants: [ linux-64, windows-64-2k8 ]
 
     # Put the debug symbols md5
@@ -1300,8 +1307,8 @@ tasks:
                'destination': {'path': '${push_path}/mongodb-${push_name}-${push_arch}-${suffix}.${ext|tgz}', 'bucket': '${push_bucket}'}}
 
             #Source tarball
-            - {'source': {'path': '${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tgz}', 'bucket': 'build-push-testing'},
-               'destination': {'path': 'src/mongodb-src-${src_suffix}.${ext|tgz}', 'bucket': '${push_bucket}'},
+            - {'source': {'path': '${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tar.gz}', 'bucket': 'build-push-testing'},
+               'destination': {'path': 'src/mongodb-src-${src_suffix}.${ext|tar.gz}', 'bucket': '${push_bucket}'},
                'build_variants': [ 'linux-64', 'windows-64-2k8' ]
             }
 
@@ -1363,8 +1370,8 @@ tasks:
               }
 
             #Source tarball signature
-            - {'source': {'path': '${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tgz}.sig', 'bucket': 'build-push-testing'},
-               'destination': {'path': 'src/mongodb-src-${src_suffix}.${ext|tgz}.sig', 'bucket': '${push_bucket}'},
+            - {'source': {'path': '${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tar.gz}.sig', 'bucket': 'build-push-testing'},
+               'destination': {'path': 'src/mongodb-src-${src_suffix}.${ext|tar.gz}.sig', 'bucket': '${push_bucket}'},
                'build_variants': [ 'linux-64', 'windows-64-2k8' ]
             }
 
@@ -1373,8 +1380,8 @@ tasks:
                'destination': {'path': '${push_path}/mongodb-${push_name}-${push_arch}-${suffix}.${ext|tgz}.sha1', 'bucket': '${push_bucket}'}}
 
             #SHA1 for source tarball
-            - {'source': {'path': '${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tgz}.sha1', 'bucket': 'build-push-testing'},
-               'destination': {'path': 'src/mongodb-src-${src_suffix}.${ext|tgz}.sha1', 'bucket': '${push_bucket}'},
+            - {'source': {'path': '${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tar.gz}.sha1', 'bucket': 'build-push-testing'},
+               'destination': {'path': 'src/mongodb-src-${src_suffix}.${ext|tar.gz}.sha1', 'bucket': '${push_bucket}'},
                'build_variants': [ 'linux-64', 'windows-64-2k8' ]
             }
 
@@ -1413,8 +1420,8 @@ tasks:
                'destination': {'path': '${push_path}/mongodb-${push_name}-${push_arch}-${suffix}.${ext|tgz}.sha256', 'bucket': '${push_bucket}'}}
 
             #SHA256 for source tarball
-            - {'source': {'path': '${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tgz}.sha256', 'bucket': 'build-push-testing'},
-               'destination': {'path': 'src/mongodb-src-${src_suffix}.${ext|tgz}.sha256', 'bucket': '${push_bucket}'},
+            - {'source': {'path': '${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tar.gz}.sha256', 'bucket': 'build-push-testing'},
+               'destination': {'path': 'src/mongodb-src-${src_suffix}.${ext|tar.gz}.sha256', 'bucket': '${push_bucket}'},
                'build_variants': [ 'linux-64', 'windows-64-2k8' ]
             }
 
@@ -1453,8 +1460,8 @@ tasks:
                'destination': {'path': '${push_path}/mongodb-${push_name}-${push_arch}-${suffix}.${ext|tgz}.md5', 'bucket': '${push_bucket}'}}
 
             #MD5 for source tarball
-            - {'source': {'path': '${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tgz}.md5', 'bucket': 'build-push-testing'},
-               'destination': {'path': 'src/mongodb-src-${src_suffix}.${ext|tgz}.md5', 'bucket': '${push_bucket}'},
+            - {'source': {'path': '${push_path}-STAGE/${push_name}/mongodb-src-${src_suffix}-${task_id}.${ext|tar.gz}.md5', 'bucket': 'build-push-testing'},
+               'destination': {'path': 'src/mongodb-src-${src_suffix}.${ext|tar.gz}.md5', 'bucket': '${push_bucket}'},
                'build_variants': [ 'linux-64', 'windows-64-2k8' ]
             }
 
@@ -1529,7 +1536,8 @@ buildvariants:
     push_bucket: downloads.mongodb.org
     push_name: linux
     push_arch: x86_64
-    compile_flags: -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --release --variant-dir="linux2/release"
+    compile_flags: -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --release
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     has_debugsymbols: true
@@ -1623,9 +1631,10 @@ buildvariants:
     push_bucket: downloads.mongodb.org
     push_name: linux-debug
     push_arch: x86_64
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
-    compile_flags: --dbg=on --opt=on -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/dbg_on/opt_on"
+    compile_flags: --dbg=on --opt=on -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++
     has_debugsymbols: true
   tasks:
   - name: compile
@@ -1696,8 +1705,9 @@ buildvariants:
     push_bucket: downloads.mongodb.org
     push_name: linux-duroff
     push_arch: x86_64
-    compile_flags: -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/durableDefaultOff"
+    compile_flags: -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++
     has_debugsymbols: true
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure --nojournal
   tasks:
@@ -1746,7 +1756,8 @@ buildvariants:
   expansions:
     gitvars: LD_LIBRARY_PATH=/opt/openssl/lib64 #needed to workaround the old openSSL on rhel55 builders.
     gorootvars: GOROOT=/opt/go PATH="/opt/go/bin:$PATH"
-    compile_flags: -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --release --variant-dir="linux2/release"
+    compile_flags: -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --release
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure --wiredTigerCollectionConfig=type=lsm --wiredTigerIndexConfig=type=lsm
   tasks:
@@ -1791,7 +1802,8 @@ buildvariants:
     push_bucket: downloads.mongodb.org
     push_name: linux
     push_arch: x86_64-ubuntu1204
-    compile_flags: --ssl --distmod=ubuntu1204 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/release"
+    compile_flags: --ssl --distmod=ubuntu1204 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     has_debugsymbols: true
@@ -1881,7 +1893,8 @@ buildvariants:
     push_bucket: downloads.mongodb.org
     push_name: linux
     push_arch: x86_64-ubuntu1404
-    compile_flags: --ssl --distmod=ubuntu1404 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/release"
+    compile_flags: --ssl --distmod=ubuntu1404 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     has_debugsymbols: true
@@ -1972,7 +1985,8 @@ buildvariants:
     push_bucket: downloads.10gen.com
     push_name: linux
     push_arch: x86_64-enterprise-amzn64
-    compile_flags: --ssl --ssl-fips-capability --distmod=amzn64 --release -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/release"
+    compile_flags: --ssl --distmod=amzn64 --release -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     has_debugsymbols: true
@@ -2025,7 +2039,8 @@ buildvariants:
     push_bucket: downloads.mongodb.org
     push_name: linux
     push_arch: x86_64-amazon
-    compile_flags: --ssl --distmod=amazon -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/release"
+    compile_flags: --ssl --distmod=amazon -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     has_debugsymbols: true
@@ -2116,9 +2131,10 @@ buildvariants:
     push_bucket: downloads.mongodb.org
     push_name: linux
     push_arch: i686
-    compile_flags: --release --distarch=i686 -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/release" --wiredtiger=off CCFLAGS="-m32" LINKFLAGS="-m32"
+    compile_flags: --release --distarch=i686 -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --wiredtiger=off CCFLAGS="-m32" LINKFLAGS="-m32"
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
-    test_flags: --continueOnFailure -j1  # Avoid starting too many mongod's on 32-bit systems.
+    test_flags: --continueOnFailure --storageEngine=mmapv1 -j1  # Avoid starting too many mongod's on 32-bit systems.
     has_debugsymbols: true
   tasks:
   - name: compile
@@ -2154,10 +2170,11 @@ buildvariants:
     push_bucket: downloads.mongodb.org
     push_name: linux-debug
     push_arch: i686
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
-    test_flags: --continueOnFailure -j1  # Avoid starting too many mongod's on 32-bit systems.
+    test_flags: --continueOnFailure --storageEngine=mmapv1 -j1  # Avoid starting too many mongod's on 32-bit systems.
     has_debugsymbols: true
-    compile_flags: --dbg=on --distarch=i686 --opt=on -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/debug" --wiredtiger=off CCFLAGS="-m32" LINKFLAGS="-m32"
+    compile_flags: --dbg=on --distarch=i686 --opt=on -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --wiredtiger=off CCFLAGS="-m32" LINKFLAGS="-m32"
   tasks:
   - name: compile
     distros:
@@ -2194,7 +2211,8 @@ buildvariants:
     push_arch: x86_64
     msi_target: msi
     content_type: application/zip
-    compile_flags: --release -j$(grep -c ^processor /proc/cpuinfo) --variant-dir=win32
+    compile_flags: --release -j$(grep -c ^processor /proc/cpuinfo) VARIANT_DIR=win32
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     ext: zip
@@ -2278,7 +2296,8 @@ buildvariants:
     push_arch: x86_64-2008plus
     msi_target: msi
     content_type: application/zip
-    compile_flags: --release --win-version-min=ws08r2 -j$(grep -c ^processor /proc/cpuinfo) --distmod=2008plus --variant-dir=win32
+    compile_flags: --release --win-version-min=ws08r2 -j$(grep -c ^processor /proc/cpuinfo) --distmod=2008plus VARIANT_DIR=win32
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     ext: zip
@@ -2349,6 +2368,7 @@ buildvariants:
     push_name: win32-debug
     push_arch: x86_64-2008plus
     content_type: application/zip
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     compile_flags: --dbg=on --opt=on --win-version-min=ws08r2 -j$(grep -c ^processor /proc/cpuinfo) --distmod=2008plus
@@ -2415,7 +2435,8 @@ buildvariants:
     push_arch: x86_64-enterprise-windows-64
     msi_target: msi
     content_type: application/zip
-    compile_flags: --release --ssl --ssl-fips-capability --distmod=windows-64 CPPPATH="c:/openssl/include c:/sasl/include c:/snmp/include" LIBPATH="c:/openssl/lib c:/sasl/lib c:/snmp/lib" -j$(grep -c ^processor /proc/cpuinfo) --dynamic-windows --win-version-min=ws08r2 --variant-dir=win32
+    compile_flags: --release --ssl --distmod=windows-64 CPPPATH="c:/openssl/include c:/sasl/include c:/snmp/include" LIBPATH="c:/openssl/lib c:/sasl/lib c:/snmp/lib" -j$(grep -c ^processor /proc/cpuinfo) --dynamic-windows --win-version-min=ws08r2 VARIANT_DIR=win32
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     ext: zip
@@ -2457,7 +2478,8 @@ buildvariants:
     push_arch: x86_64-2008plus-ssl
     msi_target: msi
     content_type: application/zip
-    compile_flags: --release --ssl --distmod=2008plus-ssl CPPPATH="c:/openssl/include" LIBPATH="c:/openssl/lib" -j$(grep -c ^processor /proc/cpuinfo) --dynamic-windows --win-version-min=ws08r2 --variant-dir=win32
+    compile_flags: --release --ssl --distmod=2008plus-ssl CPPPATH="c:/openssl/include" LIBPATH="c:/openssl/lib" -j$(grep -c ^processor /proc/cpuinfo) --dynamic-windows --win-version-min=ws08r2 VARIANT_DIR=win32
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     ext: zip
@@ -2532,9 +2554,10 @@ buildvariants:
     push_arch: i386
     msi_target: msi
     content_type: application/zip
-    compile_flags: --release -j$(grep -c ^processor /proc/cpuinfo) --wiredtiger=off TARGET_ARCH=i386 --variant-dir=win32
+    compile_flags: --release -j$(grep -c ^processor /proc/cpuinfo) --wiredtiger=off TARGET_ARCH=i386 VARIANT_DIR=win32
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
-    test_flags: --continueOnFailure -j1  # Avoid starting too many mongod's on 32-bit systems.
+    test_flags: --continueOnFailure --storageEngine=mmapv1 -j1  # Avoid starting too many mongod's on 32-bit systems.
     ext: zip
     # TODO: Remove the "is_windows" expansion after PyYAML is installed on all build variants.
     is_windows: true
@@ -2575,6 +2598,7 @@ buildvariants:
     push_name: osx
     push_arch: x86_64
     compile_flags: --allocator=system -j$(sysctl -n hw.logicalcpu) --release --osx-version-min=10.7 --libc++
+    num_cores: $(sysctl -n hw.logicalcpu)
     num_jobs_unittests: $(sysctl -n hw.logicalcpu)
     test_flags: --continueOnFailure
   tasks:
@@ -2648,10 +2672,11 @@ buildvariants:
   expansions:
     push_path: osx
     push_bucket: downloads.mongodb.org
-    push_name: osx
+    push_name: osx-ssl
     push_arch: x86_64
     tooltags: "-tags ssl"
     compile_flags: --ssl --allocator=system -j$(sysctl -n hw.logicalcpu) --release --osx-version-min=10.7 --libc++
+    num_cores: $(sysctl -n hw.logicalcpu)
     num_jobs_unittests: $(sysctl -n hw.logicalcpu)
     test_flags: --continueOnFailure
   tasks:
@@ -2729,6 +2754,7 @@ buildvariants:
     push_bucket: downloads.mongodb.org
     push_name: osx-debug
     push_arch: x86_64
+    num_cores: $(sysctl -n hw.logicalcpu)
     num_jobs_unittests: $(sysctl -n hw.logicalcpu)
     test_flags: --continueOnFailure
     compile_flags: --dbg=on --opt=on --allocator=system -j$(sysctl -n hw.logicalcpu) --osx-version-min=10.7 --libc++
@@ -2767,7 +2793,7 @@ buildvariants:
   modules:
   - enterprise
   run_on:
-  - rhel57-test
+  - rhel55-test
   expansions:
     gitvars: LD_LIBRARY_PATH=/opt/openssl/lib64 #needed to workaround the old openSSL on rhel55 builders.
     gorootvars: GOROOT=/opt/go PATH="/opt/go/bin:$PATH"
@@ -2776,7 +2802,8 @@ buildvariants:
     push_bucket: downloads.10gen.com
     push_name: linux
     push_arch: x86_64-enterprise-rhel57
-    compile_flags: --ssl --ssl-fips-capability --distmod=rhel57 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/release"
+    compile_flags: --ssl --distmod=rhel57 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     has_debugsymbols: true
@@ -2815,7 +2842,8 @@ buildvariants:
     push_name: linux
     push_arch: x86_64-enterprise-rhel62
     rlp_environment: MONGOD_UNITTEST_RLP_LANGUAGE_TEST_BTROOT=/opt/basis
-    compile_flags: --ssl --ssl-fips-capability --distmod=rhel62 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/release" CPPPATH="/opt/basis/rlp/rlp/include /opt/basis/rlp/utilities/include" --use-basis-tech-rosette-linguistics-platform=on
+    compile_flags: --ssl --distmod=rhel62 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ CPPPATH="/opt/basis/rlp/rlp/include /opt/basis/rlp/utilities/include" --use-basis-tech-rosette-linguistics-platform=on
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     has_debugsymbols: true
@@ -2831,6 +2859,7 @@ buildvariants:
   - name: jsCore_auth
   - name: replicasets_auth
   - name: rlp
+  - name: rlp_WT
   - name: sasl
   - name: sharding_auth
   - name: snmp
@@ -2854,7 +2883,8 @@ buildvariants:
     push_bucket: downloads.10gen.com
     push_name: linux
     push_arch: x86_64-enterprise-rhel70
-    compile_flags: --ssl --ssl-fips-capability --distmod=rhel70 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/release"
+    compile_flags: --ssl --distmod=rhel70 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     has_debugsymbols: true
@@ -2891,7 +2921,8 @@ buildvariants:
     push_bucket: downloads.mongodb.org
     push_name: linux
     push_arch: x86_64-rhel55
-    compile_flags: --ssl --distmod=rhel55 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/release"
+    compile_flags: --ssl --distmod=rhel55 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     has_debugsymbols: true
@@ -2982,7 +3013,8 @@ buildvariants:
     push_bucket: downloads.mongodb.org
     push_name: linux
     push_arch: x86_64-rhel62
-    compile_flags: --ssl --distmod=rhel62 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/release"
+    compile_flags: --ssl --distmod=rhel62 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     has_debugsymbols: true
@@ -3073,7 +3105,8 @@ buildvariants:
     push_bucket: downloads.mongodb.org
     push_name: linux
     push_arch: x86_64-rhel70
-    compile_flags: --ssl --distmod=rhel70 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/release"
+    compile_flags: --ssl --distmod=rhel70 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     has_debugsymbols: true
@@ -3169,7 +3202,8 @@ buildvariants:
     push_bucket: downloads.10gen.com
     push_name: linux
     push_arch: x86_64-enterprise-ubuntu1204
-    compile_flags: --ssl --ssl-fips-capability --distmod=ubuntu1204 --release -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/release"
+    compile_flags: --ssl --distmod=ubuntu1204 --release -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     has_debugsymbols: true
@@ -3207,7 +3241,8 @@ buildvariants:
     push_bucket: downloads.10gen.com
     push_name: linux
     push_arch: x86_64-enterprise-ubuntu1404
-    compile_flags: --ssl --ssl-fips-capability --distmod=ubuntu1404 --release -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/release"
+    compile_flags: --ssl --distmod=ubuntu1404 --release -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     has_debugsymbols: true
@@ -3249,7 +3284,8 @@ buildvariants:
     push_bucket: downloads.10gen.com
     push_name: linux
     push_arch: x86_64-enterprise-suse11
-    compile_flags: --ssl --ssl-fips-capability --distmod=suse11 --release -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/release"
+    compile_flags: --ssl --distmod=suse11 --release -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     has_debugsymbols: true
@@ -3288,7 +3324,8 @@ buildvariants:
     push_bucket: downloads.mongodb.org
     push_name: linux
     push_arch: x86_64-suse11
-    compile_flags: --ssl --distmod=suse11 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/release"
+    compile_flags: --ssl --distmod=suse11 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     has_debugsymbols: true
@@ -3384,6 +3421,7 @@ buildvariants:
     push_name: sunos5
     push_arch: x86_64
     compile_flags: CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ -j$(kstat cpu | sort -u | grep -c "^module") --release CCFLAGS="-m64" LINKFLAGS="-m64 -static-libstdc++ -static-libgcc"
+    num_cores: $(kstat cpu | sort -u | grep -c "^module")
     num_jobs_unittests: $(kstat cpu | sort -u | grep -c "^module")
     test_flags: --continueOnFailure
     has_debugsymbols: true
@@ -3435,7 +3473,8 @@ buildvariants:
     push_bucket: downloads.10gen.com
     push_name: linux
     push_arch: x86_64-enterprise-debian71
-    compile_flags: --ssl --ssl-fips-capability --distmod=debian71 --release -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/release"
+    compile_flags: --ssl --distmod=debian71 --release -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     has_debugsymbols: true
@@ -3472,7 +3511,8 @@ buildvariants:
     push_bucket: downloads.mongodb.org
     push_name: linux
     push_arch: x86_64-debian71
-    compile_flags: --ssl --distmod=debian71 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir="linux2/release"
+    compile_flags: --ssl --distmod=debian71 -j$(grep -c ^processor /proc/cpuinfo) --release CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     has_debugsymbols: true
@@ -3563,7 +3603,8 @@ buildvariants:
   - ubuntu1404-test
   expansions:
     build_rocksdb: true
-    compile_flags: -j$(grep -c ^processor /proc/cpuinfo) --dbg=off --opt=on CPPPATH=$(readlink -f ../rocksdb/include/) LIBPATH=$(readlink -f ../rocksdb/) LIBS=rocksdb CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --variant-dir=release
+    compile_flags: -j$(grep -c ^processor /proc/cpuinfo) --dbg=off --opt=on CPPPATH=$(readlink -f ../rocksdb/include/) LIBPATH=$(readlink -f ../rocksdb/) LIBS=rocksdb CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ VARIANT_DIR=release
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure --storageEngine=rocksdb
   tasks:
@@ -3611,17 +3652,18 @@ buildvariants:
 #     Experimental buildvariants          #
 ###########################################
 
-- name: ubuntu1404-debug-asan
-  display_name: z ASAN SSL Ubuntu 1404 64-bit DEBUG
+- name: ubuntu1410-debug-asan
+  display_name: z ASAN SSL Ubuntu 1410 64-bit DEBUG
   run_on:
-  - ubuntu1404-build
+  - ubuntu1410-build
   stepback: false
   batchtime: 1440 # 3.5 days
   expansions:
     tooltags: "-tags 'ssl'"
-    asan_symbolizer: ASAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer-3.4
+    asan_symbolizer: ASAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer-3.5
     enable_lsan: LSAN_OPTIONS="suppressions=etc/lsan.suppressions" ASAN_OPTIONS=detect_leaks=1
-    compile_flags: CC=/usr/bin/clang CXX=/usr/bin/clang++ --dbg=on --opt=on --allocator=system --sanitize=address --ssl -j$(grep -c ^processor /proc/cpuinfo) --nostrip --variant-dir=build
+    compile_flags: CC=/usr/bin/clang CXX=/usr/bin/clang++ --dbg=on --opt=on --allocator=system --sanitize=address --ssl -j$(grep -c ^processor /proc/cpuinfo) --nostrip VARIANT_DIR=build
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: -j1 --continueOnFailure  # Avoid starting too many mongod's under ASAN build.
   tasks:
@@ -3700,7 +3742,8 @@ buildvariants:
   stepback: false
   expansions:
     tooltags: "-tags 'ssl'"
-    compile_flags: CC=/usr/bin/clang CXX=/usr/bin/clang++ --libc++ --ssl -j$(grep -c ^processor /proc/cpuinfo) --variant-dir=build --distmod=ubuntu1410-clang
+    compile_flags: CC=/usr/bin/clang CXX=/usr/bin/clang++ --libc++ --ssl -j$(grep -c ^processor /proc/cpuinfo) VARIANT_DIR=build --distmod=ubuntu1410-clang
+    num_cores: $(grep -c ^processor /proc/cpuinfo)
     num_jobs_unittests: $(grep -c ^processor /proc/cpuinfo)
     test_flags: --continueOnFailure
     push_path: linux

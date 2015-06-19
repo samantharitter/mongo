@@ -44,7 +44,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::string;
 
 namespace {
@@ -78,12 +78,12 @@ namespace {
                                   const BSONObj& doc,
                                   BatchedCommandResponse* response) {
 
-        auto_ptr<BatchedInsertRequest> insert(new BatchedInsertRequest());
+        unique_ptr<BatchedInsertRequest> insert(new BatchedInsertRequest());
         insert->addToDocuments(doc);
 
         BatchedCommandRequest request(insert.release());
         request.setNS(ns);
-        request.setWriteConcern(WriteConcernOptions::Acknowledged);
+        request.setWriteConcern(WriteConcernOptions::Majority);
 
         BatchedCommandResponse dummyResponse;
         if (response == NULL) {
@@ -91,7 +91,7 @@ namespace {
         }
 
         // Make sure to add ids to the request, since this is an insert operation
-        auto_ptr<BatchedCommandRequest> requestWithIds(
+        unique_ptr<BatchedCommandRequest> requestWithIds(
                                             BatchedCommandRequest::cloneWithIds(request));
         const BatchedCommandRequest& requestToSend =
                                             requestWithIds.get() ? *requestWithIds : request;
@@ -107,15 +107,15 @@ namespace {
                                   bool multi,
                                   BatchedCommandResponse* response) {
 
-        auto_ptr<BatchedUpdateDocument> updateDoc(new BatchedUpdateDocument());
+        unique_ptr<BatchedUpdateDocument> updateDoc(new BatchedUpdateDocument());
         updateDoc->setQuery(query);
         updateDoc->setUpdateExpr(update);
         updateDoc->setUpsert(upsert);
         updateDoc->setMulti(multi);
 
-        auto_ptr<BatchedUpdateRequest> updateRequest(new BatchedUpdateRequest());
+        unique_ptr<BatchedUpdateRequest> updateRequest(new BatchedUpdateRequest());
         updateRequest->addToUpdates(updateDoc.release());
-        updateRequest->setWriteConcern(WriteConcernOptions::Acknowledged);
+        updateRequest->setWriteConcern(WriteConcernOptions::Majority);
 
         BatchedCommandRequest request(updateRequest.release());
         request.setNS(ns);
@@ -134,13 +134,13 @@ namespace {
                                   int limit,
                                   BatchedCommandResponse* response) {
 
-        auto_ptr<BatchedDeleteDocument> deleteDoc(new BatchedDeleteDocument);
+        unique_ptr<BatchedDeleteDocument> deleteDoc(new BatchedDeleteDocument);
         deleteDoc->setQuery(query);
         deleteDoc->setLimit(limit);
 
-        auto_ptr<BatchedDeleteRequest> deleteRequest(new BatchedDeleteRequest());
+        unique_ptr<BatchedDeleteRequest> deleteRequest(new BatchedDeleteRequest());
         deleteRequest->addToDeletes(deleteDoc.release());
-        deleteRequest->setWriteConcern(WriteConcernOptions::Acknowledged);
+        deleteRequest->setWriteConcern(WriteConcernOptions::Majority);
 
         BatchedCommandRequest request(deleteRequest.release());
         request.setNS(ns);

@@ -36,7 +36,10 @@
 #include "mongo/base/data_range_cursor.h"
 #include "mongo/base/data_type_string_data.h"
 #include "mongo/base/data_type_terminated.h"
+#include "mongo/base/data_type_validated.h"
 #include "mongo/db/jsobj.h"
+#include "mongo/db/namespace_string.h"
+#include "mongo/rpc/object_check.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/mongoutils/str.h"
 #include "mongo/util/net/message.h"
@@ -74,6 +77,10 @@ namespace rpc {
                 (_database.size() >= kMinDatabaseLength) &&
                 (_database.size() <= kMaxDatabaseLength));
 
+        uassert(ErrorCodes::InvalidNamespace,
+                str::stream() << "Invalid database name: '" << _database << "'",
+                NamespaceString::validDBName(_database));
+
         _commandName = uassertStatusOK(cur.readAndAdvance<Terminated<'\0', StringData>>());
 
         uassert(28637, str::stream() << "Command name parsed in OP_COMMAND message must be between"
@@ -82,8 +89,8 @@ namespace rpc {
                 (_commandName.size() >= kMinCommandNameLength) &&
                 (_commandName.size() <= kMaxCommandNameLength));
 
-        uassertStatusOK(cur.readAndAdvance<BSONObj>(&_metadata));
-        uassertStatusOK(cur.readAndAdvance<BSONObj>(&_commandArgs));
+        _metadata = std::move(uassertStatusOK(cur.readAndAdvance<Validated<BSONObj>>()).val);
+        _commandArgs = std::move(uassertStatusOK(cur.readAndAdvance<Validated<BSONObj>>()).val);
         _inputDocs = DocumentRange{cur.data(), messageEnd};
     }
 
@@ -122,6 +129,10 @@ namespace rpc {
 
     bool operator!=(const CommandRequest& lhs, const CommandRequest& rhs) {
         return !(lhs == rhs);
+    }
+
+    Protocol CommandRequest::getProtocol() const {
+        return rpc::Protocol::kOpCommandV1;
     }
 
 }  // namespace rpc

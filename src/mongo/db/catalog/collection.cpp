@@ -34,7 +34,6 @@
 
 #include "mongo/db/catalog/collection.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/base/counter.h"
 #include "mongo/base/owned_pointer_map.h"
@@ -46,6 +45,7 @@
 #include "mongo/db/commands/server_status_metric.h"
 #include "mongo/db/curop.h"
 #include "mongo/db/index/index_access_method.h"
+#include "mongo/db/keypattern.h"
 #include "mongo/db/matcher/expression_parser.h"
 #include "mongo/db/op_observer.h"
 #include "mongo/db/operation_context.h"
@@ -88,7 +88,7 @@ namespace {
     }
 }
 
-    using boost::scoped_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::string;
     using std::vector;
@@ -202,19 +202,17 @@ namespace {
         return true;
     }
 
-    RecordIterator* Collection::getIterator( OperationContext* txn,
-                                             const RecordId& start,
-                                             const CollectionScanParams::Direction& dir) const {
+    std::unique_ptr<RecordCursor> Collection::getCursor(OperationContext* txn, bool forward) const {
         dassert(txn->lockState()->isCollectionLockedForMode(ns().toString(), MODE_IS));
         invariant( ok() );
 
-        return _recordStore->getIterator( txn, start, dir );
+        return _recordStore->getCursor(txn, forward);
     }
 
-    vector<RecordIterator*> Collection::getManyIterators( OperationContext* txn ) const {
+    vector<std::unique_ptr<RecordCursor>> Collection::getManyCursors(OperationContext* txn) const {
         dassert(txn->lockState()->isCollectionLockedForMode(ns().toString(), MODE_IS));
 
-        return _recordStore->getManyIterators(txn);
+        return _recordStore->getManyCursors(txn);
     }
 
     Snapshotted<BSONObj> Collection::docFor(OperationContext* txn, const RecordId& loc) const {
@@ -369,12 +367,6 @@ namespace {
 
         return loc;
     }
-
-    RecordFetcher* Collection::documentNeedsFetch( OperationContext* txn,
-                                                   const RecordId& loc ) const {
-        return _recordStore->recordNeedsFetch( txn, loc );
-    }
-
 
     StatusWith<RecordId> Collection::_insertDocument( OperationContext* txn,
                                                      const BSONObj& docToInsert,
@@ -785,7 +777,7 @@ namespace {
             int idxn = 0;
             try  {
                 // Only applicable when 'full' validation is requested.
-                boost::scoped_ptr<BSONObjBuilder> indexDetails(full ? new BSONObjBuilder() : NULL);
+                std::unique_ptr<BSONObjBuilder> indexDetails(full ? new BSONObjBuilder() : NULL);
                 BSONObjBuilder indexes; // not using subObjStart to be exception safe
 
                 IndexCatalog::IndexIterator i = _indexCatalog.getIndexIterator(txn, false);
@@ -795,7 +787,7 @@ namespace {
                     IndexAccessMethod* iam = _indexCatalog.getIndex( descriptor );
                     invariant( iam );
 
-                    boost::scoped_ptr<BSONObjBuilder> bob(
+                    std::unique_ptr<BSONObjBuilder> bob(
                         indexDetails.get() ? new BSONObjBuilder(
                             indexDetails->subobjStart(descriptor->indexNamespace())) :
                         NULL);

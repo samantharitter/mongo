@@ -34,13 +34,11 @@
 #include <set>
 #include <string>
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread/mutex.hpp>
-
 #include "mongo/db/catalog/collection_options.h"
-#include "mongo/db/storage/record_store.h"
 #include "mongo/db/storage/capped_callback.h"
+#include "mongo/db/storage/record_store.h"
 #include "mongo/platform/atomic_word.h"
+#include "mongo/stdx/mutex.h"
 #include "mongo/util/fail_point_service.h"
 
 /**
@@ -146,12 +144,9 @@ namespace mongo {
                                           const char* damageSource,
                                           const mutablebson::DamageVector& damages );
 
-        virtual RecordIterator* getIterator( OperationContext* txn,
-                                             const RecordId& start = RecordId(),
-                                             const CollectionScanParams::Direction& dir =
-                                             CollectionScanParams::FORWARD ) const;
-
-        virtual std::vector<RecordIterator*> getManyIterators( OperationContext* txn ) const;
+        std::unique_ptr<RecordCursor> getCursor(OperationContext* txn, bool forward) const final;
+        std::vector<std::unique_ptr<RecordCursor>> getManyCursors(
+            OperationContext* txn) const final;
 
         virtual Status truncate( OperationContext* txn );
 
@@ -212,44 +207,10 @@ namespace mongo {
         int64_t cappedDeleteAsNeeded_inlock(OperationContext* txn,
                                             const RecordId& justInserted);
 
-        boost::timed_mutex& cappedDeleterMutex() { return _cappedDeleterMutex; }
+        stdx::timed_mutex& cappedDeleterMutex() { return _cappedDeleterMutex; }
+
     private:
-
-        class Iterator : public RecordIterator {
-        public:
-            Iterator( const WiredTigerRecordStore& rs,
-                      OperationContext* txn,
-                      const RecordId& start,
-                      const CollectionScanParams::Direction& dir,
-                      bool forParallelCollectionScan );
-
-            virtual ~Iterator();
-
-            virtual bool isEOF();
-            virtual RecordId curr();
-            virtual RecordId getNext();
-            virtual void invalidate(const RecordId& dl);
-            virtual void saveState();
-            virtual bool restoreState(OperationContext *txn);
-            virtual RecordData dataFor( const RecordId& loc ) const;
-
-        private:
-            void _getNext();
-            void _locate( const RecordId &loc, bool exact );
-            RecordId _curr() const; // const version of public curr method
-
-            const WiredTigerRecordStore& _rs;
-            OperationContext* _txn;
-            RecoveryUnit* _savedRecoveryUnit; // only used to sanity check between save/restore
-            const bool _forward;
-            bool _forParallelCollectionScan;
-            boost::scoped_ptr<WiredTigerCursor> _cursor;
-            bool _eof;
-            const RecordId _readUntilForOplog;
-
-            RecordId _loc; // Cached key of _cursor. Update any time _cursor is moved.
-            RecordId _lastLoc; // the last thing returned from getNext()
-        };
+        class Cursor;
 
         class CappedInsertChange;
         class NumRecordsChange;
@@ -280,9 +241,11 @@ namespace mongo {
         const int64_t _cappedMaxSize;
         const int64_t _cappedMaxSizeSlack; // when to start applying backpressure
         const int64_t _cappedMaxDocs;
+        AtomicInt64 _cappedSleep;
+        AtomicInt64 _cappedSleepMS;
         CappedDocumentDeleteCallback* _cappedDeleteCallback;
         int _cappedDeleteCheckCount; // see comment in ::cappedDeleteAsNeeded
-        mutable boost::timed_mutex _cappedDeleterMutex; // see comment in ::cappedDeleteAsNeeded
+        mutable stdx::timed_mutex _cappedDeleterMutex; // see comment in ::cappedDeleteAsNeeded
 
         const bool _useOplogHack;
 
@@ -290,7 +253,7 @@ namespace mongo {
         SortedDiskLocs _uncommittedDiskLocs;
         RecordId _oplog_visibleTo;
         RecordId _oplog_highestSeen;
-        mutable boost::mutex _uncommittedDiskLocsMutex;
+        mutable stdx::mutex _uncommittedDiskLocsMutex;
 
         AtomicInt64 _nextIdNum;
         AtomicInt64 _dataSize;

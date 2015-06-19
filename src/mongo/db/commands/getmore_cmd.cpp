@@ -37,16 +37,20 @@
 #include "mongo/db/auth/authorization_session.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/cursor_manager.h"
+#include "mongo/db/client.h"
 #include "mongo/db/clientcursor.h"
 #include "mongo/db/commands.h"
-#include "mongo/db/commands/cursor_responses.h"
+#include "mongo/db/curop.h"
 #include "mongo/db/db_raii.h"
 #include "mongo/db/exec/working_set_common.h"
 #include "mongo/db/global_timestamp.h"
+#include "mongo/db/query/cursor_responses.h"
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/query/find.h"
 #include "mongo/db/query/getmore_request.h"
+#include "mongo/db/repl/oplog.h"
+#include "mongo/db/service_context.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/util/log.h"
 #include "mongo/util/scopeguard.h"
@@ -54,8 +58,8 @@
 namespace mongo {
 
     /**
-     * A command for running getMore() against an existing cursor registered with a
-     * CursorManager.
+     * A command for running getMore() against an existing cursor registered with a CursorManager.
+     * Used to generate the next batch of results for a ClientCursor.
      *
      * Can be used in combination with any cursor-generating command (e.g. find, aggregate,
      * listIndexes).
@@ -101,11 +105,6 @@ namespace mongo {
                                                                           request.cursorid);
         }
 
-        /**
-         * Generates the next batch of results for a ClientCursor.
-         *
-         * TODO: Do we need to support some equivalent of OP_REPLY responseFlags?
-         */
         bool run(OperationContext* txn,
                  const std::string& dbname,
                  BSONObj& cmdObj,
@@ -339,11 +338,16 @@ namespace mongo {
             // If an awaitData getMore is killed during this process due to our max time expiring at
             // an interrupt point, we just continue as normal and return rather than reporting a
             // timeout to the user.
-            //
-            // TODO: Handle result sets larger than 16MB.
             BSONObj obj;
             try {
                 while (PlanExecutor::ADVANCED == (*state = exec->getNext(&obj, NULL))) {
+                    // If adding this object will cause us to exceed the BSON size limit, then we
+                    // stash it for later.
+                    if (nextBatch->len() + obj.objsize() > BSONObjMaxUserSize && *numResults > 0) {
+                        exec->enqueue(obj);
+                        break;
+                    }
+
                     // Add result to output buffer.
                     nextBatch->append(obj);
                     (*numResults)++;
@@ -364,17 +368,14 @@ namespace mongo {
                 }
             }
 
-            if (PlanExecutor::FAILURE == *state) {
+            if (PlanExecutor::FAILURE == *state || PlanExecutor::DEAD == *state) {
                 const std::unique_ptr<PlanStageStats> stats(exec->getStats());
-                error() << "GetMore executor error, stats: " << Explain::statsToBSON(*stats);
+                error() << "GetMore command executor error: " << PlanExecutor::statestr(*state)
+                        << ", stats: " << Explain::statsToBSON(*stats);
+
                 return Status(ErrorCodes::OperationFailed,
-                              str::stream() << "GetMore executor error: "
+                              str::stream() << "GetMore command executor error: "
                                             << WorkingSetCommon::toStatusString(obj));
-            }
-            else if (PlanExecutor::DEAD == *state) {
-                return Status(ErrorCodes::OperationFailed,
-                              str::stream() << "Plan executor killed during getMore command, "
-                                            << "ns: " << request.nss.ns());
             }
 
             return Status::OK();

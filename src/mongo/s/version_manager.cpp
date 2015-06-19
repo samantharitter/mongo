@@ -34,14 +34,15 @@
 
 #include "mongo/s/version_manager.h"
 
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/client/dbclient_rs.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/s/catalog/catalog_cache.h"
+#include "mongo/s/catalog/catalog_manager.h"
 #include "mongo/s/chunk_manager.h"
 #include "mongo/s/chunk_version.h"
 #include "mongo/s/client/shard_connection.h"
+#include "mongo/s/client/shard_registry.h"
 #include "mongo/s/config.h"
 #include "mongo/s/grid.h"
 #include "mongo/s/mongos_options.h"
@@ -50,7 +51,7 @@
 
 namespace mongo {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::endl;
     using std::map;
     using std::string;
@@ -67,7 +68,7 @@ namespace mongo {
     struct ConnectionShardStatus {
 
         bool hasAnySequenceSet(DBClientBase* conn) {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
 
             SequenceMap::const_iterator seenConnIt = _map.find(conn->getConnectionId());
             return seenConnIt != _map.end() && seenConnIt->second.size() > 0;
@@ -77,7 +78,7 @@ namespace mongo {
                          const string& ns,
                          unsigned long long* sequence) {
 
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
 
             SequenceMap::const_iterator seenConnIt = _map.find(conn->getConnectionId());
             if (seenConnIt == _map.end())
@@ -92,12 +93,12 @@ namespace mongo {
         }
 
         void setSequence( DBClientBase * conn , const string& ns , const unsigned long long& s ) {
-            boost::lock_guard<boost::mutex> lk( _mutex );
+            stdx::lock_guard<stdx::mutex> lk( _mutex );
             _map[conn->getConnectionId()][ns] = s;
         }
 
         void reset( DBClientBase * conn ) {
-            boost::lock_guard<boost::mutex> lk( _mutex );
+            stdx::lock_guard<stdx::mutex> lk( _mutex );
             _map.erase( conn->getConnectionId() );
         }
 
@@ -198,15 +199,16 @@ namespace mongo {
             // Check to see if this is actually a shard and not a single config server
             // NOTE: Config servers are registered only by the name "config" in the shard cache, not
             // by host, so lookup by host will fail unless the host is also a shard.
-            Shard shard = Shard::findIfExists(conn->getServerAddress());
-            if (!shard.ok())
+            const auto shard = grid.shardRegistry()->getShard(conn->getServerAddress());
+            if (!shard) {
                 return false;
+            }
 
-            LOG(1) << "initializing shard connection to " << shard.toString() << endl;
+            LOG(1) << "initializing shard connection to " << shard->toString() << endl;
 
             ok = setShardVersion(*conn,
                                  "",
-                                 configServer.modelServer(),
+                                 grid.catalogManager()->connectionString().toString(),
                                  ChunkVersion(),
                                  NULL,
                                  true,
@@ -281,8 +283,7 @@ namespace mongo {
             return initShardVersionEmptyNS(conn_in);
         }
 
-        const NamespaceString nss(ns);
-        auto status = grid.catalogCache()->getDatabase(nss.db().toString());
+        auto status = grid.catalogCache()->getDatabase(nsToDatabase(ns));
         if (!status.isOK()) {
             return false;
         }
@@ -305,13 +306,17 @@ namespace mongo {
             officialSequenceNumber = manager->getSequenceNumber();
         }
 
+        const auto shard = grid.shardRegistry()->getShard(conn->getServerAddress());
+        uassert(ErrorCodes::ShardNotFound,
+                str::stream() << conn->getServerAddress() << " is not recognized as a shard",
+                shard);
+
         // Check this manager against the reference manager
         if (manager) {
-            const Shard shard = Shard::make(conn->getServerAddress());
 
-            if (refManager && !refManager->compatibleWith(*manager, shard.getName())) {
-                const ChunkVersion refVersion(refManager->getVersion(shard.getName()));
-                const ChunkVersion currentVersion(manager->getVersion(shard.getName()));
+            if (refManager && !refManager->compatibleWith(*manager, shard->getId())) {
+                const ChunkVersion refVersion(refManager->getVersion(shard->getId()));
+                const ChunkVersion currentVersion(manager->getVersion(shard->getId()));
 
                 string msg(str::stream() << "manager ("
                                          << currentVersion.toString()
@@ -319,8 +324,8 @@ namespace mongo {
                                          << "not compatible with reference manager ("
                                          << refVersion.toString()
                                          << " : " << refManager->getSequenceNumber() << ") "
-                                         << "on shard " << shard.getName()
-                                         << " (" << shard.getConnString().toString() << ")");
+                                         << "on shard " << shard->getId()
+                                         << " (" << shard->getConnString().toString() << ")");
 
                 throw SendStaleConfigException(ns,
                                                msg,
@@ -329,7 +334,6 @@ namespace mongo {
             }
         }
         else if (refManager) {
-            const Shard shard = Shard::make(conn->getServerAddress());
 
             string msg( str::stream() << "not sharded ("
                         << ( (manager.get() == 0) ? string( "<none>" ) :
@@ -341,14 +345,14 @@ namespace mongo {
 
             throw SendStaleConfigException(ns,
                                            msg,
-                                           refManager->getVersion(shard.getName()),
+                                           refManager->getVersion(shard->getId()),
                                            ChunkVersion::UNSHARDED());
         }
 
         // Do not send setShardVersion to collections on the config servers - this causes problems
         // when config servers are also shards and get SSV with conflicting names.
         // TODO: Make config servers regular shards
-        if (primary && primary->getName() == "config") {
+        if (primary && primary->getId() == "config") {
             return false;
         }
 
@@ -361,15 +365,13 @@ namespace mongo {
             }
         }
 
-        const Shard shard = Shard::make(conn->getServerAddress());
-
         ChunkVersion version = ChunkVersion(0, 0, OID());
         if (manager) {
-            version = manager->getVersion(shard.getName());
+            version = manager->getVersion(shard->getId());
         }
 
         LOG(1) << "setting shard version of " << version << " for " << ns << " on shard "
-               << shard.toString();
+               << shard->toString();
 
         LOG(3) << "last version sent with chunk manager iteration " << sequenceNumber
                << ", current chunk manager iteration is " << officialSequenceNumber;
@@ -377,7 +379,7 @@ namespace mongo {
         BSONObj result;
         if (setShardVersion(*conn,
                             ns,
-                            configServer.modelServer(),
+                            grid.catalogManager()->connectionString().toString(),
                             version,
                             manager.get(),
                             authoritative,
@@ -418,7 +420,7 @@ namespace mongo {
         const int maxNumTries = 7;
         if ( tryNumber < maxNumTries ) {
             LOG( tryNumber < ( maxNumTries / 2 ) ? 1 : 0 ) 
-                << "going to retry checkShardVersion shard: " << shard.toString() << " " << result;
+                << "going to retry checkShardVersion shard: " << shard->toString() << " " << result;
             sleepmillis( 10 * tryNumber );
             // use the original connection and get a fresh versionable connection
             // since conn can be invalidated (or worse, freed) after the failure
@@ -426,7 +428,7 @@ namespace mongo {
             return true;
         }
         
-        string errmsg = str::stream() << "setShardVersion failed shard: " << shard.toString()
+        string errmsg = str::stream() << "setShardVersion failed shard: " << shard->toString()
                                           << " " << result;
         log() << "     " << errmsg << endl;
         massert( 10429 , errmsg , 0 );

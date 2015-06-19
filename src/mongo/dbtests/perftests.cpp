@@ -39,9 +39,9 @@
 #include "mongo/platform/basic.h"
 
 #include <boost/filesystem/operations.hpp>
-#include <boost/shared_ptr.hpp>
-#include <boost/thread/thread.hpp>
 #include <boost/thread/condition.hpp>
+#include <boost/thread/mutex.hpp>
+#include <boost/thread/thread.hpp>
 #include <boost/version.hpp>
 #include <iomanip>
 #include <iostream>
@@ -50,6 +50,7 @@
 
 #include "mongo/config.h"
 #include "mongo/db/client.h"
+#include "mongo/db/concurrency/lock_state.h"
 #include "mongo/db/db.h"
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/json.h"
@@ -57,23 +58,24 @@
 #include "mongo/db/operation_context_impl.h"
 #include "mongo/db/storage/mmap_v1/btree/key.h"
 #include "mongo/db/storage/mmap_v1/compress.h"
-#include "mongo/db/storage/mmap_v1/durable_mapped_file.h"
 #include "mongo/db/storage/mmap_v1/dur_stats.h"
+#include "mongo/db/storage/mmap_v1/durable_mapped_file.h"
 #include "mongo/db/storage/mmap_v1/mmap.h"
 #include "mongo/db/storage_options.h"
 #include "mongo/dbtests/dbtests.h"
 #include "mongo/dbtests/framework_options.h"
+#include "mongo/stdx/condition_variable.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/allocator.h"
 #include "mongo/util/checksum.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/log.h"
 #include "mongo/util/timer.h"
 #include "mongo/util/version.h"
-#include "mongo/db/concurrency/lock_state.h"
 
 namespace PerfTests {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::cout;
     using std::endl;
     using std::fixed;
@@ -120,7 +122,7 @@ namespace PerfTests {
         in ./../settings.py:
             pstatspassword="<pwd>"
     */
-    static boost::shared_ptr<DBClientConnection> conn;
+    static std::shared_ptr<DBClientConnection> conn;
     static string _perfhostname;
     void pstatsConnect() {
         // no writing to perf db if this is a debug build
@@ -154,7 +156,7 @@ namespace PerfTests {
                     }
                 }
 
-                boost::shared_ptr<DBClientConnection> c(new DBClientConnection(false, 60));
+                std::shared_ptr<DBClientConnection> c(new DBClientConnection(false, 60));
                 string err;
                 if( c->connect(HostAndPort("perfdb.10gen.cc"), err) ) {
                     if( !c->auth("perf", "perf", pwd, err) ) {
@@ -407,7 +409,7 @@ namespace PerfTests {
                 return 0;
             }
             unsigned long long counter = 0;
-            boost::thread athread(stdx::bind(&B::thread, this, &counter));
+            stdx::thread athread(stdx::bind(&B::thread, this, &counter));
             unsigned long long child = launchThreads(remaining - 1);
             athread.join();
             unsigned long long accum = child + counter;
@@ -540,7 +542,7 @@ namespace PerfTests {
     std::mutex mstd;
     std::timed_mutex mstd_timed;
     SpinLock s;
-    boost::condition c;
+    stdx::condition_variable c;
 
     class NotifyOne : public B {
     public:
@@ -646,7 +648,7 @@ namespace PerfTests {
         boost::thread_specific_ptr<ResourceId> resId;
         boost::thread_specific_ptr<MMAPV1LockerImpl> locker;
         boost::thread_specific_ptr<int> id;
-        boost::mutex lock;
+        stdx::mutex lock;
 
         // The following members are intitialized in the constructor
         LockMode lockMode;
@@ -1404,7 +1406,7 @@ namespace PerfTests {
         All() : Suite( "perf" ) { }
 
         Result * run( const string& filter, int runsPerTest ) {
-            boost::thread a(t);
+            stdx::thread a(t);
             Result * res = Suite::run(filter, runsPerTest);
             a.join();
             return res;

@@ -30,7 +30,6 @@
 
 #include <string>
 
-#include "mongo/base/disallow_copying.h"
 #include "mongo/base/string_data.h"
 #include "mongo/db/jsobj.h"
 
@@ -58,7 +57,6 @@ namespace mongo {
      *
      */
     class LocksType {
-        MONGO_DISALLOW_COPYING(LocksType);
     public:
 
         enum State {
@@ -81,6 +79,7 @@ namespace mongo {
         static const BSONField<OID> lockID;
         static const BSONField<std::string> who;
         static const BSONField<std::string> why;
+        static const BSONField<Date_t> when;
 
         //
         // locks type methods
@@ -157,7 +156,7 @@ namespace mongo {
         }
 
         // Optional Fields
-        void setProcess(StringData& process) {
+        void setProcess(StringData process) {
             _process = process.toString();
             _isProcessSet = true;
         }
@@ -199,7 +198,7 @@ namespace mongo {
                 return lockID.getDefault();
             }
         }
-        void setWho(StringData& who) {
+        void setWho(StringData who) {
             _who = who.toString();
             _isWhoSet = true;
         }
@@ -220,7 +219,7 @@ namespace mongo {
                 return who.getDefault();
             }
         }
-        void setWhy(StringData& why) {
+        void setWhy(StringData why) {
             _why = why.toString();
             _isWhySet = true;
         }

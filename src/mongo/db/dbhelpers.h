@@ -30,10 +30,8 @@
 
 #include <boost/filesystem/path.hpp>
 
-#include "mongo/db/client.h"
 #include "mongo/db/db.h"
 #include "mongo/db/record_id.h"
-#include "mongo/db/keypattern.h"
 
 namespace mongo {
 
@@ -211,7 +209,8 @@ namespace mongo {
         /**
          * for saving deleted bson objects to a flat file
          */
-        class RemoveSaver : public boost::noncopyable {
+        class RemoveSaver {
+            MONGO_DISALLOW_COPYING(RemoveSaver);
         public:
             RemoveSaver(const std::string& type, const std::string& ns, const std::string& why);
             ~RemoveSaver();

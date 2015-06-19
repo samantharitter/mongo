@@ -30,7 +30,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/shared_ptr.hpp>
 #include <list>
 #include <set>
 #include <vector>
@@ -48,6 +47,7 @@
 #include "mongo/s/catalog/catalog_cache.h"
 #include "mongo/s/catalog/catalog_manager.h"
 #include "mongo/s/chunk_manager.h"
+#include "mongo/s/client/shard_registry.h"
 #include "mongo/s/cluster_write.h"
 #include "mongo/s/config.h"
 #include "mongo/s/grid.h"
@@ -55,7 +55,7 @@
 
 namespace mongo {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::list;
     using std::set;
     using std::string;
@@ -174,7 +174,12 @@ namespace {
             }
 
             // The rest of the checks require a connection to the primary db
-            ScopedDbConnection conn(config->getPrimary().getConnString());
+            ConnectionString shardConnString;
+            {
+                const auto shard = grid.shardRegistry()->getShard(config->getPrimaryId());
+                shardConnString = shard->getConnString();
+            }
+            ScopedDbConnection conn(shardConnString);
 
             //check that collection is not capped
             BSONObj res;
@@ -353,10 +358,9 @@ namespace {
             // 2. move them one at a time
             // 3. split the big chunks to achieve the desired total number of initial chunks
 
-            vector<Shard> shards;
-            Shard primary = config->getPrimary();
-            primary.getAllShards(shards);
-            int numShards = shards.size();
+            vector<ShardId> shardIds;
+            grid.shardRegistry()->getAllShardIds(&shardIds);
+            int numShards = shardIds.size();
 
             vector<BSONObj> initSplits;  // there will be at most numShards-1 of these
             vector<BSONObj> allSplits;   // all of the initial desired split points
@@ -429,17 +433,22 @@ namespace {
                 // 2. Move and commit each "big chunk" to a different shard.
                 int i = 0;
                 for (ChunkMap::const_iterator c = chunkMap.begin(); c != chunkMap.end(); ++c, ++i){
-                    Shard to = shards[i % numShards];
+                    const ShardId& shardId = shardIds[i % numShards];
+                    const auto to = grid.shardRegistry()->getShard(shardId);
+                    if (!to) {
+                        continue;
+                    }
+
                     ChunkPtr chunk = c->second;
 
                     // can't move chunk to shard it's already on
-                    if (to == chunk->getShard()) {
+                    if (to->getId() == chunk->getShardId()) {
                         continue;
                     }
 
                     BSONObj moveResult;
                     WriteConcernOptions noThrottle;
-                    if (!chunk->moveAndCommit(to,
+                    if (!chunk->moveAndCommit(to->getId(),
                                               Chunk::MaxChunkSize,
                                               &noThrottle,
                                               true,
@@ -447,7 +456,7 @@ namespace {
                                               moveResult)) {
 
                         warning() << "couldn't move chunk " << chunk->toString()
-                                  << " to shard " << to
+                                  << " to shard " << *to
                                   << " while sharding collection " << ns << "."
                                   << " Reason: " << moveResult;
                     }

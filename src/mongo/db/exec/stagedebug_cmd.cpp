@@ -26,6 +26,8 @@
  *    it in the license file.
  */
 
+#define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kQuery
+
 #include "mongo/platform/basic.h"
 
 #include "mongo/base/init.h"
@@ -48,14 +50,16 @@
 #include "mongo/db/exec/skip.h"
 #include "mongo/db/exec/sort.h"
 #include "mongo/db/exec/text.h"
+#include "mongo/db/exec/working_set_common.h"
 #include "mongo/db/index/fts_access_method.h"
 #include "mongo/db/jsobj.h"
 #include "mongo/db/matcher/expression_parser.h"
 #include "mongo/db/query/plan_executor.h"
+#include "mongo/util/log.h"
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::string;
     using std::vector;
 
@@ -79,8 +83,8 @@ namespace mongo {
      *
      * Internal Nodes:
      *
-     * node -> {andHash: {filter: {filter}, args: { nodes: [node, node]}}}
-     * node -> {andSorted: {filter: {filter}, args: { nodes: [node, node]}}}
+     * node -> {andHash: {args: { nodes: [node, node]}}}
+     * node -> {andSorted: {args: { nodes: [node, node]}}}
      * node -> {or: {filter: {filter}, args: { dedup:bool, nodes:[node, node]}}}
      * node -> {fetch: {filter: {filter}, args: {node: node}}}
      * node -> {limit: {args: {node: node, num: posint}}}
@@ -149,7 +153,7 @@ namespace mongo {
 
             // Parse the plan into these.
             OwnedPointerVector<MatchExpression> exprs;
-            auto_ptr<WorkingSet> ws(new WorkingSet());
+            unique_ptr<WorkingSet> ws(new WorkingSet());
 
             PlanStage* userRoot = parseQuery(txn, collection, planObj, ws.get(), &exprs);
             uassert(16911, "Couldn't parse plan from " + cmdObj.toString(), NULL != userRoot);
@@ -162,15 +166,32 @@ namespace mongo {
             Status execStatus = PlanExecutor::make(txn, ws.release(), rootFetch, collection,
                                                    PlanExecutor::YIELD_AUTO, &rawExec);
             fassert(28536, execStatus);
-            boost::scoped_ptr<PlanExecutor> exec(rawExec);
+            std::unique_ptr<PlanExecutor> exec(rawExec);
 
             BSONArrayBuilder resultBuilder(result.subarrayStart("results"));
 
-            for (BSONObj obj; PlanExecutor::ADVANCED == exec->getNext(&obj, NULL); ) {
+            BSONObj obj;
+            PlanExecutor::ExecState state;
+            while (PlanExecutor::ADVANCED == (state = exec->getNext(&obj, NULL))) {
                 resultBuilder.append(obj);
             }
 
             resultBuilder.done();
+
+            if (PlanExecutor::FAILURE == state || PlanExecutor::DEAD == state) {
+                const std::unique_ptr<PlanStageStats> stats(exec->getStats());
+                error() << "Plan executor error during StageDebug command: "
+                        << PlanExecutor::statestr(state)
+                        << ", stats: " << Explain::statsToBSON(*stats);
+
+                return appendCommandStatus(result,
+                                           Status(ErrorCodes::OperationFailed,
+                                                  str::stream()
+                                                      << "Executor error during "
+                                                      << "StageDebug command: "
+                                                      << WorkingSetCommon::toStatusString(obj)));
+            }
+
             return true;
         }
 
@@ -239,7 +260,7 @@ namespace mongo {
                 uassert(16921, "Nodes argument must be provided to AND",
                         nodeArgs["nodes"].isABSONObj());
 
-                auto_ptr<AndHashStage> andStage(new AndHashStage(workingSet, matcher, collection));
+                unique_ptr<AndHashStage> andStage(new AndHashStage(workingSet, collection));
 
                 int nodesAdded = 0;
                 BSONObjIterator it(nodeArgs["nodes"].Obj());
@@ -264,8 +285,7 @@ namespace mongo {
                 uassert(16924, "Nodes argument must be provided to AND",
                         nodeArgs["nodes"].isABSONObj());
 
-                auto_ptr<AndSortedStage> andStage(new AndSortedStage(workingSet, matcher,
-                                                                     collection));
+                unique_ptr<AndSortedStage> andStage(new AndSortedStage(workingSet, collection));
 
                 int nodesAdded = 0;
                 BSONObjIterator it(nodeArgs["nodes"].Obj());
@@ -292,7 +312,7 @@ namespace mongo {
                 uassert(16935, "Dedup argument must be provided to OR",
                         !nodeArgs["dedup"].eoo());
                 BSONObjIterator it(nodeArgs["nodes"].Obj());
-                auto_ptr<OrStage> orStage(new OrStage(workingSet, nodeArgs["dedup"].Bool(),
+                unique_ptr<OrStage> orStage(new OrStage(workingSet, nodeArgs["dedup"].Bool(),
                                                       matcher));
                 while (it.more()) {
                     BSONElement e = it.next();
@@ -383,7 +403,7 @@ namespace mongo {
                 params.pattern = nodeArgs["pattern"].Obj();
                 // Dedup is true by default.
 
-                auto_ptr<MergeSortStage> mergeStage(new MergeSortStage(params, workingSet,
+                unique_ptr<MergeSortStage> mergeStage(new MergeSortStage(params, workingSet,
                                                                        collection));
 
                 BSONObjIterator it(nodeArgs["nodes"].Obj());

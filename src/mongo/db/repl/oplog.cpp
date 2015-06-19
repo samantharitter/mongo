@@ -104,7 +104,7 @@ namespace {
     // Synchronizes the section where a new Timestamp is generated and when it actually
     // appears in the oplog.
     mongo::mutex newOpMutex;
-    boost::condition newTimestampNotifier;
+    stdx::condition_variable newTimestampNotifier;
 
     static std::string _oplogCollectionName;
 
@@ -130,7 +130,7 @@ namespace {
                                                const char* ns,
                                                ReplicationCoordinator* replCoord,
                                                const char* opstr) {
-        boost::lock_guard<boost::mutex> lk(newOpMutex);
+        stdx::lock_guard<stdx::mutex> lk(newOpMutex);
         Timestamp ts = getNextGlobalTimestamp();
         newTimestampNotifier.notify_all();
 
@@ -244,11 +244,12 @@ namespace {
                 const BSONObj& obj,
                 BSONObj *o2,
                 bool fromMigrate) {
-        if ( strncmp(ns, "local.", 6) == 0 ) {
+        NamespaceString nss(ns);
+        if (nss.db() == "local") {
             return;
         }
 
-        if (NamespaceString(ns).isSystemDotProfile()) {
+        if (nss.isSystemDotProfile()) {
             return;
         }
 
@@ -267,7 +268,7 @@ namespace {
         ReplicationCoordinator* replCoord = getGlobalReplicationCoordinator();
 
         if (ns[0] && replCoord->getReplicationMode() == ReplicationCoordinator::modeReplSet &&
-                    !replCoord->canAcceptWritesForDatabase(nsToDatabaseSubstring(ns))) {
+                    !replCoord->canAcceptWritesFor(nss)) {
                 severe() << "logOp() but can't accept write to collection " << ns;
                 fassertFailed(17405);
         }
@@ -498,7 +499,8 @@ namespace {
             {
                 [](OperationContext* txn, const char* ns, BSONObj& cmd) -> Status {
                     return dropDatabase(txn, NamespaceString(ns).db().toString());
-                }
+                },
+                {ErrorCodes::DatabaseNotFound} 
             }
         },
         {"drop", 
@@ -507,7 +509,9 @@ namespace {
                     BSONObjBuilder resultWeDontCareAbout;
                     return dropCollection(txn, parseNs(ns, cmd), resultWeDontCareAbout);
                 },
-                {ErrorCodes::NamespaceNotFound}
+                // IllegalOperation is necessary because in 3.0 we replicate drops of system.profile
+                // TODO(dannenberg) remove IllegalOperation once we no longer need 3.0 compatibility
+                {ErrorCodes::NamespaceNotFound, ErrorCodes::IllegalOperation}
             }
         },
         // deleteIndex(es) is deprecated but still works as of April 10, 2015
@@ -563,7 +567,7 @@ namespace {
             {
                 [](OperationContext* txn, const char* ns, BSONObj& cmd) -> Status {
                     BSONObjBuilder resultWeDontCareAbout;
-                    return applyOps(txn, ns, cmd, &resultWeDontCareAbout);
+                    return applyOps(txn, nsToDatabase(ns), cmd, &resultWeDontCareAbout);
                 },
                 {ErrorCodes::UnknownError}
             }
@@ -828,6 +832,7 @@ namespace {
                 Lock::TempRelease release(txn->lockState());
 
                 BackgroundOperation::awaitNoBgOpInProgForDb(nsToDatabaseSubstring(ns));
+                txn->recoveryUnit()->abandonSnapshot();
                 break;
             }
             case ErrorCodes::BackgroundOperationInProgressForNamespace: {
@@ -836,6 +841,7 @@ namespace {
                 Command* cmd = Command::findCommand(o.firstElement().fieldName());
                 invariant(cmd);
                 BackgroundOperation::awaitNoBgOpInProgForNs(cmd->parseNs(nsToDatabase(ns), o));
+                txn->recoveryUnit()->abandonSnapshot();
                 break;
             }
             default:
@@ -865,17 +871,17 @@ namespace {
         return Status::OK();
     }
 
-    void waitForTimestampChange(const Timestamp& referenceTime, Microseconds timeout) {
-        boost::unique_lock<boost::mutex> lk(newOpMutex);
+    void waitUpToOneSecondForTimestampChange(const Timestamp& referenceTime) {
+        stdx::unique_lock<stdx::mutex> lk(newOpMutex);
 
         while (referenceTime == getLastSetTimestamp()) {
-            if (boost::cv_status::timeout == newTimestampNotifier.wait_for(lk, timeout))
+            if (!newTimestampNotifier.timed_wait(lk, boost::posix_time::seconds(1)))
                 return;
         }
     }
 
     void setNewTimestamp(const Timestamp& newTime) {
-        boost::lock_guard<boost::mutex> lk(newOpMutex);
+        stdx::lock_guard<stdx::mutex> lk(newOpMutex);
         setGlobalTimestamp(newTime);
         newTimestampNotifier.notify_all();
     }

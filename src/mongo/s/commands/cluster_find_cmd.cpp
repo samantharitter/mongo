@@ -35,8 +35,9 @@
 #include "mongo/util/timer.h"
 
 namespace mongo {
+namespace {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::string;
     using std::vector;
 
@@ -89,15 +90,20 @@ namespace mongo {
                                BSONObjBuilder* out) const {
 
             const string fullns = parseNs(dbname, cmdObj);
+            const NamespaceString nss(fullns);
+            if (!nss.isValid()) {
+                return {ErrorCodes::InvalidNamespace,
+                        str::stream() << "Invalid collection name: " << nss.ns()};
+            }
 
             // Parse the command BSON to a LiteParsedQuery.
-            LiteParsedQuery* rawLpq;
             bool isExplain = true;
-            Status lpqStatus = LiteParsedQuery::make(fullns, cmdObj, isExplain, &rawLpq);
+            auto lpqStatus = LiteParsedQuery::makeFromFindCommand(nss, cmdObj, isExplain);
             if (!lpqStatus.isOK()) {
-                return lpqStatus;
+                return lpqStatus.getStatus();
             }
-            auto_ptr<LiteParsedQuery> lpq(rawLpq);
+
+            auto& lpq = lpqStatus.getValue();
 
             BSONObjBuilder explainCmdBob;
             ClusterExplain::wrapAsExplain(cmdObj, verbosity, &explainCmdBob);
@@ -106,7 +112,7 @@ namespace mongo {
             Timer timer;
 
             vector<Strategy::CommandResult> shardResults;
-            STRATEGY->commandOp(dbname,
+            Strategy::commandOp(dbname,
                                 explainCmdBob.obj(),
                                 lpq->getOptions(),
                                 fullns,
@@ -137,4 +143,5 @@ namespace mongo {
 
     } cmdFindCluster;
 
+} // namespace
 } // namespace mongo

@@ -28,7 +28,6 @@
 
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/db/exec/plan_stage.h"
 #include "mongo/scripting/engine.h"
@@ -144,14 +143,14 @@ namespace mongo {
         CommonStats _commonStats;
         GroupStats _specificStats;
 
-        boost::scoped_ptr<PlanStage> _child;
+        std::unique_ptr<PlanStage> _child;
 
         // Current state for this stage.
         GroupState _groupState;
 
         // The Scope object that all script operations for this group stage will use.  Initialized
         // by initGroupScripting().  Owned here.
-        std::auto_ptr<Scope> _scope;
+        std::unique_ptr<Scope> _scope;
 
         // The reduce function for the group operation.  Initialized by initGroupScripting().  Owned
         // by _scope.

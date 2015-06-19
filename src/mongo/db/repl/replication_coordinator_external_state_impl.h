@@ -28,13 +28,11 @@
 
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread.hpp>
-
 #include "mongo/base/disallow_copying.h"
 #include "mongo/db/concurrency/d_concurrency.h"
 #include "mongo/db/repl/replication_coordinator_external_state.h"
 #include "mongo/db/repl/sync_source_feedback.h"
+#include "mongo/stdx/thread.h"
 
 namespace mongo {
 namespace repl {
@@ -70,7 +68,7 @@ namespace repl {
 
     private:
         // Guards starting threads and setting _startedThreads
-        boost::mutex _threadMutex;
+        stdx::mutex _threadMutex;
 
         // True when the threads have been started
         bool _startedThreads;
@@ -81,16 +79,16 @@ namespace repl {
         SyncSourceFeedback _syncSourceFeedback;
 
         // Thread running SyncSourceFeedback::run().
-        boost::scoped_ptr<boost::thread> _syncSourceFeedbackThread;
+        std::unique_ptr<stdx::thread> _syncSourceFeedbackThread;
 
         // Thread running runSyncThread().
-        boost::scoped_ptr<boost::thread> _applierThread;
+        std::unique_ptr<stdx::thread> _applierThread;
 
         // Thread running BackgroundSync::producerThread().
-        boost::scoped_ptr<boost::thread> _producerThread;
+        std::unique_ptr<stdx::thread> _producerThread;
 
         // Mutex guarding the _nextThreadId value to prevent concurrent incrementing.
-        boost::mutex _nextThreadIdMutex;
+        stdx::mutex _nextThreadIdMutex;
         // Number used to uniquely name threads.
         long long _nextThreadId;
     };

@@ -31,11 +31,11 @@
 #include "mongo/db/repl/replication_coordinator_mock.h"
 
 #include "mongo/base/status.h"
+#include "mongo/db/namespace_string.h"
 #include "mongo/db/write_concern_options.h"
 #include "mongo/db/repl/read_after_optime_args.h"
 #include "mongo/db/repl/read_after_optime_response.h"
 #include "mongo/db/repl/replica_set_config.h"
-#include "mongo/db/repl/optime.h"
 #include "mongo/util/assert_util.h"
 
 namespace mongo {
@@ -64,12 +64,17 @@ namespace repl {
     }
 
     ReplicationCoordinator::Mode ReplicationCoordinatorMock::getReplicationMode() const {
+        if (_settings.usingReplSets()) {
+            return modeReplSet;
+        }
+        if (_settings.master || _settings.slave) {
+            return modeMasterSlave;
+        }
         return modeNone;
     }
 
     MemberState ReplicationCoordinatorMock::getMemberState() const {
-        // TODO
-        invariant(false);
+        return _memberState;
     }
 
     bool ReplicationCoordinatorMock::isInPrimaryOrSecondaryState() const {
@@ -83,7 +88,7 @@ namespace repl {
     void ReplicationCoordinatorMock::clearSyncSourceBlacklist() {}
 
     ReplicationCoordinator::StatusAndDuration ReplicationCoordinatorMock::awaitReplication(
-            const OperationContext* txn,
+            OperationContext* txn,
             const OpTime& opTime,
             const WriteConcernOptions& writeConcern) {
         // TODO
@@ -92,7 +97,7 @@ namespace repl {
 
     ReplicationCoordinator::StatusAndDuration
             ReplicationCoordinatorMock::awaitReplicationOfLastOpForClient(
-                    const OperationContext* txn,
+                    OperationContext* txn,
                     const WriteConcernOptions& writeConcern) {
         return StatusAndDuration(Status::OK(), Milliseconds(0));
     }
@@ -112,6 +117,11 @@ namespace repl {
     bool ReplicationCoordinatorMock::canAcceptWritesForDatabase(StringData dbName) {
         // TODO
         return true;
+    }
+
+    bool ReplicationCoordinatorMock::canAcceptWritesFor(const NamespaceString& ns) {
+        // TODO
+        return canAcceptWritesForDatabase(ns.db());
     }
 
     Status ReplicationCoordinatorMock::checkCanServeReadsFor(OperationContext* txn,
@@ -134,17 +144,20 @@ namespace repl {
         // TODO
     }
 
-    void ReplicationCoordinatorMock::setMyLastOptime(const OpTime& opTime) {}
+    void ReplicationCoordinatorMock::setMyLastOptime(const OpTime& opTime) {
+        _myLastOpTime = opTime;
+    }
 
-    void ReplicationCoordinatorMock::resetMyLastOptime() {}
+    void ReplicationCoordinatorMock::resetMyLastOptime() {
+        _myLastOpTime = OpTime();
+    }
 
     OpTime ReplicationCoordinatorMock::getMyLastOptime() const {
-        // TODO
-        return OpTime();
+        return _myLastOpTime;
     }
 
     ReadAfterOpTimeResponse ReplicationCoordinatorMock::waitUntilOpTime(
-            const OperationContext* txn,
+            OperationContext* txn,
             const ReadAfterOpTimeArgs& settings) {
         return ReadAfterOpTimeResponse();
     }
@@ -164,6 +177,7 @@ namespace repl {
     }
 
     bool ReplicationCoordinatorMock::setFollowerMode(const MemberState& newState) {
+        _memberState = newState;
         return true;
     }
 
@@ -288,12 +302,10 @@ namespace repl {
     }
 
     HostAndPort ReplicationCoordinatorMock::chooseNewSyncSource() {
-        invariant(false);
         return HostAndPort();
     }
 
     void ReplicationCoordinatorMock::blacklistSyncSource(const HostAndPort& host, Date_t until) {
-        invariant(false);
     }
 
     void ReplicationCoordinatorMock::resetLastOpTimeFromOplog(OperationContext* txn) {
@@ -335,6 +347,8 @@ namespace repl {
     void ReplicationCoordinatorMock::summarizeAsHtml(ReplSetHtmlSummary* output) {}
 
     long long ReplicationCoordinatorMock::getTerm() { return OpTime::kDefaultTerm; }
+
+    bool ReplicationCoordinatorMock::updateTerm(long long term) { return false; }
 
 } // namespace repl
 } // namespace mongo

@@ -33,7 +33,6 @@
 #include "mongo/db/query/plan_cache.h"
 
 #include <algorithm>
-#include <boost/scoped_ptr.hpp>
 #include <ostream>
 #include <memory>
 
@@ -51,8 +50,8 @@ using namespace mongo;
 
 namespace {
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::unique_ptr;
     using std::string;
     using std::unique_ptr;
     using std::vector;
@@ -173,7 +172,7 @@ namespace {
      */
     struct GenerateQuerySolution {
         QuerySolution* operator()() const {
-            auto_ptr<QuerySolution> qs(new QuerySolution());
+            unique_ptr<QuerySolution> qs(new QuerySolution());
             qs->cacheData.reset(new SolutionCacheData());
             qs->cacheData->solnType = SolutionCacheData::COLLSCAN_SOLN;
             qs->cacheData->tree.reset(new PlanCacheIndexTree());
@@ -185,10 +184,10 @@ namespace {
      * Utility function to create a PlanRankingDecision
      */
     PlanRankingDecision* createDecision(size_t numPlans) {
-        auto_ptr<PlanRankingDecision> why(new PlanRankingDecision());
+        unique_ptr<PlanRankingDecision> why(new PlanRankingDecision());
         for (size_t i = 0; i < numPlans; ++i) {
             CommonStats common("COLLSCAN");
-            auto_ptr<PlanStageStats> stats(new PlanStageStats(common, STAGE_COLLSCAN));
+            unique_ptr<PlanStageStats> stats(new PlanStageStats(common, STAGE_COLLSCAN));
             stats->specific.reset(new CollectionScanStats());
             why->stats.mutableVector().push_back(stats.release());
             why->scores.push_back(0U);
@@ -222,12 +221,12 @@ namespace {
     }
 
     void assertShouldNotCacheQuery(const BSONObj& query) {
-        auto_ptr<CanonicalQuery> cq(canonicalize(query));
+        unique_ptr<CanonicalQuery> cq(canonicalize(query));
         assertShouldNotCacheQuery(*cq);
     }
 
     void assertShouldNotCacheQuery(const char* queryStr) {
-        auto_ptr<CanonicalQuery> cq(canonicalize(queryStr));
+        unique_ptr<CanonicalQuery> cq(canonicalize(queryStr));
         assertShouldNotCacheQuery(*cq);
     }
 
@@ -238,12 +237,12 @@ namespace {
      */
 
     TEST(PlanCacheTest, ShouldCacheQueryBasic) {
-        auto_ptr<CanonicalQuery> cq(canonicalize("{a: 1}"));
+        unique_ptr<CanonicalQuery> cq(canonicalize("{a: 1}"));
         assertShouldCacheQuery(*cq);
     }
 
     TEST(PlanCacheTest, ShouldCacheQuerySort) {
-        auto_ptr<CanonicalQuery> cq(canonicalize("{}", "{a: -1}", "{_id: 0, a: 1}"));
+        unique_ptr<CanonicalQuery> cq(canonicalize("{}", "{a: -1}", "{_id: 0, a: 1}"));
         assertShouldCacheQuery(*cq);
     }
 
@@ -257,7 +256,7 @@ namespace {
      * This should normally be handled by the IDHack runner.
      */
     TEST(PlanCacheTest, ShouldNotCacheQueryCollectionScan) {
-        auto_ptr<CanonicalQuery> cq(canonicalize("{}"));
+        unique_ptr<CanonicalQuery> cq(canonicalize("{}"));
         assertShouldNotCacheQuery(*cq);
     }
 
@@ -267,7 +266,7 @@ namespace {
      * Therefore, not much point in caching.
      */
     TEST(PlanCacheTest, ShouldNotCacheQueryWithHint) {
-        auto_ptr<CanonicalQuery> cq(canonicalize("{a: 1}", "{}", "{}", 0, 0, "{a: 1, b: 1}",
+        unique_ptr<CanonicalQuery> cq(canonicalize("{a: 1}", "{}", "{}", 0, 0, "{a: 1, b: 1}",
                                                  "{}", "{}"));
         assertShouldNotCacheQuery(*cq);
     }
@@ -276,7 +275,7 @@ namespace {
      * Min queries are a specialized case of hinted queries
      */
     TEST(PlanCacheTest, ShouldNotCacheQueryWithMin) {
-        auto_ptr<CanonicalQuery> cq(canonicalize("{a: 1}", "{}", "{}", 0, 0, "{}",
+        unique_ptr<CanonicalQuery> cq(canonicalize("{a: 1}", "{}", "{}", 0, 0, "{}",
                                                  "{a: 100}", "{}"));
         assertShouldNotCacheQuery(*cq);
     }
@@ -285,7 +284,7 @@ namespace {
      *  Max queries are non-cacheable for the same reasons as min queries.
      */
     TEST(PlanCacheTest, ShouldNotCacheQueryWithMax) {
-        auto_ptr<CanonicalQuery> cq(canonicalize("{a: 1}", "{}", "{}", 0, 0, "{}",
+        unique_ptr<CanonicalQuery> cq(canonicalize("{a: 1}", "{}", "{}", 0, 0, "{}",
                                                  "{}", "{a: 100}"));
         assertShouldNotCacheQuery(*cq);
     }
@@ -295,7 +294,7 @@ namespace {
      * the planner is able to come up with a cacheable solution.
      */
     TEST(PlanCacheTest, ShouldCacheQueryWithGeoWithinLegacyCoordinates) {
-        auto_ptr<CanonicalQuery> cq(canonicalize("{a: {$geoWithin: "
+        unique_ptr<CanonicalQuery> cq(canonicalize("{a: {$geoWithin: "
                                                  "{$box: [[-180, -90], [180, 90]]}}}"));
         assertShouldCacheQuery(*cq);
     }
@@ -304,7 +303,7 @@ namespace {
      * $geoWithin queries with GeoJSON coordinates are supported by the index bounds builder.
      */
     TEST(PlanCacheTest, ShouldCacheQueryWithGeoWithinJSONCoordinates) {
-        auto_ptr<CanonicalQuery> cq(canonicalize("{a: {$geoWithin: "
+        unique_ptr<CanonicalQuery> cq(canonicalize("{a: {$geoWithin: "
                                                  "{$geometry: {type: 'Polygon', coordinates: "
                                                  "[[[0, 0], [0, 90], [90, 0], [0, 0]]]}}}}"));
         assertShouldCacheQuery(*cq);
@@ -314,7 +313,7 @@ namespace {
      * $geoWithin queries with both legacy and GeoJSON coordinates are cacheable.
      */
     TEST(PlanCacheTest, ShouldCacheQueryWithGeoWithinLegacyAndJSONCoordinates) {
-        auto_ptr<CanonicalQuery> cq(canonicalize(
+        unique_ptr<CanonicalQuery> cq(canonicalize(
             "{$or: [{a: {$geoWithin: {$geometry: {type: 'Polygon', "
                                                  "coordinates: [[[0, 0], [0, 90], "
                                                                 "[90, 0], [0, 0]]]}}}},"
@@ -326,7 +325,7 @@ namespace {
      * $geoIntersects queries are always cacheable because they support GeoJSON coordinates only.
      */
     TEST(PlanCacheTest, ShouldCacheQueryWithGeoIntersects) {
-        auto_ptr<CanonicalQuery> cq(canonicalize("{a: {$geoIntersects: "
+        unique_ptr<CanonicalQuery> cq(canonicalize("{a: {$geoIntersects: "
                                                  "{$geometry: {type: 'Point', coordinates: "
                                                  "[10.0, 10.0]}}}}"));
         assertShouldCacheQuery(*cq);
@@ -337,7 +336,7 @@ namespace {
      * between flat and spherical queries.
      */
     TEST(PlanCacheTest, ShouldNotCacheQueryWithGeoNear) {
-        auto_ptr<CanonicalQuery> cq(canonicalize("{a: {$geoNear: {$geometry: {type: 'Point',"
+        unique_ptr<CanonicalQuery> cq(canonicalize("{a: {$geoNear: {$geometry: {type: 'Point',"
                                                  "coordinates: [0,0]}, $maxDistance:100}}}"));
         assertShouldCacheQuery(*cq);
     }
@@ -348,7 +347,7 @@ namespace {
      * non-winning plans.
      */
     TEST(PlanCacheTest, ShouldNotCacheQueryExplain) {
-        auto_ptr<CanonicalQuery> cq(canonicalize("{a: 1}", "{}", "{}", 0, 0, "{}",
+        unique_ptr<CanonicalQuery> cq(canonicalize("{a: 1}", "{}", "{}", 0, 0, "{}",
                                                  "{}", "{}", // min, max
                                                  false, // snapshot
                                                  true // explain
@@ -361,15 +360,15 @@ namespace {
     // Adding an empty vector of query solutions should fail.
     TEST(PlanCacheTest, AddEmptySolutions) {
         PlanCache planCache;
-        auto_ptr<CanonicalQuery> cq(canonicalize("{a: 1}"));
+        unique_ptr<CanonicalQuery> cq(canonicalize("{a: 1}"));
         std::vector<QuerySolution*> solns;
-        boost::scoped_ptr<PlanRankingDecision> decision(createDecision(1U));
+        std::unique_ptr<PlanRankingDecision> decision(createDecision(1U));
         ASSERT_NOT_OK(planCache.add(*cq, solns, decision.get()));
     }
 
     TEST(PlanCacheTest, AddValidSolution) {
         PlanCache planCache;
-        auto_ptr<CanonicalQuery> cq(canonicalize("{a: 1}"));
+        unique_ptr<CanonicalQuery> cq(canonicalize("{a: 1}"));
         QuerySolution qs;
         qs.cacheData.reset(new SolutionCacheData());
         qs.cacheData->tree.reset(new PlanCacheIndexTree());
@@ -386,7 +385,7 @@ namespace {
 
     TEST(PlanCacheTest, NotifyOfWriteOp) {
         PlanCache planCache;
-        auto_ptr<CanonicalQuery> cq(canonicalize("{a: 1}"));
+        unique_ptr<CanonicalQuery> cq(canonicalize("{a: 1}"));
         QuerySolution qs;
         qs.cacheData.reset(new SolutionCacheData());
         qs.cacheData->tree.reset(new PlanCacheIndexTree());
@@ -637,7 +636,7 @@ namespace {
             CanonicalQuery* cq;
             Status s = CanonicalQuery::canonicalize(ns, query, sort, proj, &cq);
             ASSERT_OK(s);
-            scoped_ptr<CanonicalQuery> scopedCq(cq);
+            unique_ptr<CanonicalQuery> scopedCq(cq);
             cq = NULL;
 
             // Create a CachedSolution the long way..
@@ -1066,7 +1065,7 @@ namespace {
                         const char* projStr,
                         const char *expectedStr) {
         PlanCache planCache;
-        auto_ptr<CanonicalQuery> cq(canonicalize(queryStr, sortStr, projStr));
+        unique_ptr<CanonicalQuery> cq(canonicalize(queryStr, sortStr, projStr));
         PlanCacheKey key = planCache.computeKey(*cq);
         PlanCacheKey expectedKey(expectedStr);
         if (key == expectedKey) {
@@ -1101,23 +1100,29 @@ namespace {
         testComputeKey("{a: 1}", "{b: 1}", "{}", "eqa~ab");
 
         // With projection
-        testComputeKey("{}", "{}", "{a: 1}", "an|1a");
-        testComputeKey("{}", "{}", "{a: 0}", "an|0a");
-        testComputeKey("{}", "{}", "{a: 99}", "an|99a");
-        testComputeKey("{}", "{}", "{a: 'foo'}", "an|\"foo\"a");
+        testComputeKey("{}", "{}", "{a: 1}", "an|ia");
+        testComputeKey("{}", "{}", "{a: -1}", "an|ia");
+        testComputeKey("{}", "{}", "{a: -1.0}", "an|ia");
+        testComputeKey("{}", "{}", "{a: true}", "an|ia");
+        testComputeKey("{}", "{}", "{a: 0}", "an|ea");
+        testComputeKey("{}", "{}", "{a: false}", "an|ea");
+        testComputeKey("{}", "{}", "{a: 99}", "an|ia");
+        testComputeKey("{}", "{}", "{a: 'foo'}", "an|ia");
         testComputeKey("{}", "{}", "{a: {$slice: [3, 5]}}", "an|{ $slice: \\[ 3\\, 5 \\] }a");
         testComputeKey("{}", "{}", "{a: {$elemMatch: {x: 2}}}",
                        "an|{ $elemMatch: { x: 2 } }a");
-        testComputeKey("{a: 1}", "{}", "{'a.$': 1}", "eqa|1a.$");
-        testComputeKey("{a: 1}", "{}", "{a: 1}", "eqa|1a");
+        testComputeKey("{}", "{}", "{a: ObjectId('507f191e810c19729de860ea')}",
+                       "an|ia");
+        testComputeKey("{a: 1}", "{}", "{'a.$': 1}", "eqa|ia.$");
+        testComputeKey("{a: 1}", "{}", "{a: 1}", "eqa|ia");
 
         // Projection should be order-insensitive
-        testComputeKey("{}", "{}", "{a: 1, b: 1}", "an|1a1b");
-        testComputeKey("{}", "{}", "{b: 1, a: 1}", "an|1a1b");
+        testComputeKey("{}", "{}", "{a: 1, b: 1}", "an|iaib");
+        testComputeKey("{}", "{}", "{b: 1, a: 1}", "an|iaib");
 
         // With or-elimination and projection
-        testComputeKey("{$or: [{a: 1}]}", "{}", "{_id: 0, a: 1}", "eqa|0_id1a");
-        testComputeKey("{$or: [{a: 1}]}", "{}", "{'a.$': 1}", "eqa|1a.$");
+        testComputeKey("{$or: [{a: 1}]}", "{}", "{_id: 0, a: 1}", "eqa|e_idia");
+        testComputeKey("{$or: [{a: 1}]}", "{}", "{'a.$': 1}", "eqa|ia.$");
     }
 
     // Delimiters found in user field names or non-standard projection field values
@@ -1130,10 +1135,10 @@ namespace {
         testComputeKey("{}", "{'a,[]~|<>': 1}", "{}", "an~aa\\,\\[\\]\\~\\|\\<\\>");
 
         // Field name in projection.
-        testComputeKey("{}", "{}", "{'a,[]~|<>': 1}", "an|1a\\,\\[\\]\\~\\|\\<\\>");
+        testComputeKey("{}", "{}", "{'a,[]~|<>': 1}", "an|ia\\,\\[\\]\\~\\|\\<\\>");
 
         // Value in projection.
-        testComputeKey("{}", "{}", "{a: 'foo,[]~|<>'}", "an|\"foo\\,\\[\\]\\~\\|\\<\\>\"a");
+        testComputeKey("{}", "{}", "{a: 'foo,[]~|<>'}", "an|ia");
     }
 
     // Cache keys for $geoWithin queries with legacy and GeoJSON coordinates should
@@ -1142,10 +1147,10 @@ namespace {
         PlanCache planCache;
 
         // Legacy coordinates.
-        auto_ptr<CanonicalQuery> cqLegacy(canonicalize("{a: {$geoWithin: "
+        unique_ptr<CanonicalQuery> cqLegacy(canonicalize("{a: {$geoWithin: "
                                                        "{$box: [[-180, -90], [180, 90]]}}}"));
         // GeoJSON coordinates.
-        auto_ptr<CanonicalQuery> cqNew(canonicalize("{a: {$geoWithin: "
+        unique_ptr<CanonicalQuery> cqNew(canonicalize("{a: {$geoWithin: "
                                                     "{$geometry: {type: 'Polygon', coordinates: "
                                                     "[[[0, 0], [0, 90], [90, 0], [0, 0]]]}}}}"));
         ASSERT_NOT_EQUALS(planCache.computeKey(*cqLegacy),

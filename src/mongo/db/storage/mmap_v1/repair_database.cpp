@@ -35,7 +35,6 @@
 #include "mongo/db/storage/mmap_v1/mmap_v1_engine.h"
 
 #include <boost/filesystem/operations.hpp>
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/db/background.h"
 #include "mongo/db/catalog/collection.h"
@@ -56,7 +55,7 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::map;
     using std::string;
@@ -281,7 +280,7 @@ namespace mongo {
                                          const std::string& dbName,
                                          bool preserveClonedFilesOnFailure,
                                          bool backupOriginalFiles ) {
-        scoped_ptr<RepairFileDeleter> repairFileDeleter;
+        unique_ptr<RepairFileDeleter> repairFileDeleter;
 
         // Must be done before and after repair
         getDur().syncDataAndTruncateJournal(txn);
@@ -318,8 +317,8 @@ namespace mongo {
                 return Status(ErrorCodes::NamespaceNotFound, "database does not exist to repair");
             }
 
-            scoped_ptr<MMAPV1DatabaseCatalogEntry> dbEntry;
-            scoped_ptr<Database> tempDatabase;
+            unique_ptr<MMAPV1DatabaseCatalogEntry> dbEntry;
+            unique_ptr<Database> tempDatabase;
 
             // Must call this before MMAPV1DatabaseCatalogEntry's destructor closes the DB files
             ON_BLOCK_EXIT(&dur::DurableInterface::syncDataAndTruncateJournal, &getDur(), txn);
@@ -339,10 +338,9 @@ namespace mongo {
                 OldClientContext ctx(txn,  ns );
                 Collection* coll = originalDatabase->getCollection( ns );
                 if ( coll ) {
-                    scoped_ptr<RecordIterator> it( coll->getIterator(txn) );
-                    while ( !it->isEOF() ) {
-                        RecordId loc = it->getNext();
-                        BSONObj obj = coll->docFor(txn, loc).value();
+                    auto cursor = coll->getCursor(txn);
+                    while (auto record = cursor->next()) {
+                        BSONObj obj = record->data.releaseToBson();
 
                         string ns = obj["name"].String();
 
@@ -404,12 +402,9 @@ namespace mongo {
                     }
                 }
 
-                scoped_ptr<RecordIterator> iterator(originalCollection->getIterator(txn));
-                while ( !iterator->isEOF() ) {
-                    RecordId loc = iterator->getNext();
-                    invariant( !loc.isNull() );
-
-                    BSONObj doc = originalCollection->docFor(txn, loc).value();
+                auto cursor = originalCollection->getCursor(txn);
+                while (auto record = cursor->next()) {
+                    BSONObj doc = record->data.releaseToBson();
 
                     WriteUnitOfWork wunit(txn);
                     StatusWith<RecordId> result = tempCollection->insertDocument(txn,

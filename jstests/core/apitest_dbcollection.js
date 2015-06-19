@@ -193,8 +193,10 @@ assert(db.getCollection( "test_db" ).getIndexes().length == 0,24);
                'indexDetails missing from ' + 'db.collection.stats(' + tojson(options) +
                ') result: ' + tojson(collectionStats));
         // Currently, indexDetails is only supported with WiredTiger.
-        if (jsTest.options().storageEngine == undefined) { return; }
-        if (jsTest.options().storageEngine.toLowerCase() != "wiredtiger") { return; }
+        var storageEngine = jsTest.options().storageEngine;
+        if (storageEngine && storageEngine !== 'wiredTiger') {
+            return;
+        }
         assert.eq(1, Object.keys(collectionStats.indexDetails).length,
                   'indexDetails must have exactly one entry');
         assert(collectionStats.indexDetails[indexName],
@@ -249,7 +251,7 @@ assert(db.getCollection( "test_db" ).getIndexes().length == 0,24);
     assert.neq(undefined, t.totalIndexSize(),
                'db.collection.totalIndexSize() cannot be undefined on a non-empty collection');
 
-    if (db.serverStatus().storageEngine.name === 'mmapv1') {
+    if (db.isMaster().msg !== 'isdbgrid' && db.serverStatus().storageEngine.name === 'mmapv1') {
         // Only in MMAPv1 do we guarantee that storageSize only changes when you write to a
         // collection.
         assert.eq(stats.storageSize, t.storageSize());

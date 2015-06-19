@@ -26,8 +26,6 @@
  *    then also delete it in the license file.
  */
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/database.h"
@@ -51,9 +49,9 @@
 
 namespace QueryPlanExecutor {
 
-    using boost::scoped_ptr;
-    using boost::shared_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::shared_ptr;
+    using std::unique_ptr;
     using std::string;
 
     class PlanExecutorBase {
@@ -97,7 +95,7 @@ namespace QueryPlanExecutor {
             CollectionScanParams csparams;
             csparams.collection = coll;
             csparams.direction = CollectionScanParams::FORWARD;
-            auto_ptr<WorkingSet> ws(new WorkingSet());
+            unique_ptr<WorkingSet> ws(new WorkingSet());
 
             // Canonicalize the query
             CanonicalQuery* cq;
@@ -105,7 +103,7 @@ namespace QueryPlanExecutor {
             verify(NULL != cq);
 
             // Make the stage.
-            auto_ptr<PlanStage> root(new CollectionScan(&_txn, csparams, ws.get(), cq->root()));
+            unique_ptr<PlanStage> root(new CollectionScan(&_txn, csparams, ws.get(), cq->root()));
 
             PlanExecutor* exec;
             // Hand the plan off to the executor.
@@ -140,9 +138,9 @@ namespace QueryPlanExecutor {
 
             const Collection* coll = db->getCollection(ns());
 
-            auto_ptr<WorkingSet> ws(new WorkingSet());
+            unique_ptr<WorkingSet> ws(new WorkingSet());
             IndexScan* ix = new IndexScan(&_txn, ixparams, ws.get(), NULL);
-            auto_ptr<PlanStage> root(new FetchStage(&_txn, ws.get(), ix, NULL, coll));
+            unique_ptr<PlanStage> root(new FetchStage(&_txn, ws.get(), ix, NULL, coll));
 
             CanonicalQuery* cq;
             verify(CanonicalQuery::canonicalize(ns(), BSONObj(), &cq).isOK());
@@ -210,7 +208,7 @@ namespace QueryPlanExecutor {
             BSONObj filterObj = fromjson("{_id: {$gt: 0}}");
 
             Collection* coll = ctx.getCollection();
-            scoped_ptr<PlanExecutor> exec(makeCollScanExec(coll, filterObj));
+            unique_ptr<PlanExecutor> exec(makeCollScanExec(coll, filterObj));
             registerExec(exec.get());
 
             BSONObj objOut;
@@ -239,7 +237,7 @@ namespace QueryPlanExecutor {
             BSONObj indexSpec = BSON("a" << 1);
             addIndex(indexSpec);
 
-            scoped_ptr<PlanExecutor> exec(makeIndexScanExec(ctx.db(), indexSpec, 7, 10));
+            unique_ptr<PlanExecutor> exec(makeIndexScanExec(ctx.db(), indexSpec, 7, 10));
             registerExec(exec.get());
 
             BSONObj objOut;
@@ -270,7 +268,7 @@ namespace QueryPlanExecutor {
             addIndex(indexSpec);
 
             // Create the PlanExecutor which feeds the aggregation pipeline.
-            boost::shared_ptr<PlanExecutor> innerExec(
+            std::shared_ptr<PlanExecutor> innerExec(
                 makeIndexScanExec(ctx.db(), indexSpec, 7, 10));
 
             // Create the aggregation pipeline.
@@ -284,8 +282,8 @@ namespace QueryPlanExecutor {
             ASSERT_EQUALS(errmsg, "");
 
             // Create the output PlanExecutor that pulls results from the pipeline.
-            std::auto_ptr<WorkingSet> ws(new WorkingSet());
-            std::auto_ptr<PipelineProxyStage> proxy(
+            std::unique_ptr<WorkingSet> ws(new WorkingSet());
+            std::unique_ptr<PipelineProxyStage> proxy(
                 new PipelineProxyStage(pipeline, innerExec, ws.get()));
             Collection* collection = ctx.getCollection();
 
@@ -293,7 +291,7 @@ namespace QueryPlanExecutor {
             Status status = PlanExecutor::make(&_txn, ws.release(), proxy.release(), collection,
                                                PlanExecutor::YIELD_MANUAL, &rawExec);
             ASSERT_OK(status);
-            boost::scoped_ptr<PlanExecutor> outerExec(rawExec);
+            std::unique_ptr<PlanExecutor> outerExec(rawExec);
 
             // Only the outer executor gets registered.
             registerExec(outerExec.get());
@@ -363,7 +361,7 @@ namespace QueryPlanExecutor {
             BSONObj filterObj = fromjson("{a: {$gte: 2}}");
 
             Collection* coll = ctx.getCollection();
-            scoped_ptr<PlanExecutor> exec(makeCollScanExec(coll, filterObj));
+            unique_ptr<PlanExecutor> exec(makeCollScanExec(coll, filterObj));
 
             BSONObj objOut;
             ASSERT_EQUALS(PlanExecutor::ADVANCED, exec->getNext(&objOut, NULL));
@@ -390,7 +388,7 @@ namespace QueryPlanExecutor {
             addIndex(indexSpec);
 
             BSONObj filterObj = fromjson("{a: {$gte: 2}}");
-            scoped_ptr<PlanExecutor> exec(makeIndexScanExec(ctx.db(), indexSpec, 2, 5));
+            unique_ptr<PlanExecutor> exec(makeIndexScanExec(ctx.db(), indexSpec, 2, 5));
 
             BSONObj objOut;
             ASSERT_EQUALS(PlanExecutor::ADVANCED, exec->getNext(&objOut, NULL));

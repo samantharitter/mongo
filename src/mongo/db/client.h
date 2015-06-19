@@ -36,14 +36,12 @@
 
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread/thread.hpp>
-
 #include "mongo/db/client_basic.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/service_context.h"
 #include "mongo/platform/unordered_set.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/concurrency/spin_lock.h"
 #include "mongo/util/concurrency/threadlocal.h"
 
@@ -86,11 +84,35 @@ namespace mongo {
         void lock() { _lock.lock(); }
         void unlock() { _lock.unlock(); }
 
-        // Changes the currently active operation context on this client. There can only be one
-        // active OperationContext at a time.
+        /**
+         * Makes a new operation context representing an operation on this client.  At most
+         * one operation context may be in scope on a client at a time.
+         */
+        ServiceContext::UniqueOperationContext makeOperationContext();
+
+        /**
+         * Sets the active operation context on this client to "txn", which must be non-NULL.
+         *
+         * It is an error to call this method if there is already an operation context on Client.
+         * It is an error to call this on an unlocked client.
+         */
         void setOperationContext(OperationContext* txn);
+
+        /**
+         * Clears the active operation context on this client.
+         *
+         * There must already be such a context set on this client.
+         * It is an error to call this on an unlocked client.
+         */
         void resetOperationContext();
-        const OperationContext* getOperationContext() const { return _txn; }
+
+        /**
+         * Gets the operation context active on this client, or nullptr if there is no such context.
+         *
+         * It is an error to call this method on an unlocked client, or to use the value returned
+         * by this method while the client is not locked.
+         */
+        OperationContext* getOperationContext() { return _txn; }
 
         // TODO(spencer): SERVER-10228 SERVER-14779 Remove this/move it fully into OperationContext.
         bool isInDirectClient() const { return _inDirectClient; }
@@ -110,7 +132,7 @@ namespace mongo {
         const std::string _desc;
 
         // OS id of the thread, which owns this client
-        const boost::thread::id _threadId;
+        const stdx::thread::id _threadId;
 
         // > 0 for things "conn", 0 otherwise
         const ConnectionId _connectionId;

@@ -32,10 +32,11 @@
 
 #include "mongo/db/service_context_d.h"
 
+#include <boost/optional.hpp>
+
 #include "mongo/base/init.h"
 #include "mongo/base/initializer.h"
 #include "mongo/db/client.h"
-#include "mongo/db/curop.h"
 #include "mongo/db/op_observer.h"
 #include "mongo/db/operation_context_impl.h"
 #include "mongo/db/storage/storage_engine.h"
@@ -44,7 +45,9 @@
 #include "mongo/db/storage_options.h"
 #include "mongo/scripting/engine.h"
 #include "mongo/stdx/memory.h"
+#include "mongo/stdx/mutex.h"
 #include "mongo/util/log.h"
+#include "mongo/util/map_util.h"
 #include "mongo/util/mongoutils/str.h"
 #include "mongo/util/scopeguard.h"
 
@@ -72,21 +75,52 @@ namespace mongo {
 
     extern bool _supportsDocLocking;
 
-    void ServiceContextMongoD::setGlobalStorageEngine(const std::string& name) {
+    void ServiceContextMongoD::initializeGlobalStorageEngine() {
         // This should be set once.
         invariant(!_storageEngine);
 
-        const StorageEngine::Factory* factory = _storageFactories[name];
+        const std::string dbpath = storageGlobalParams.dbpath;
+        if (auto existingStorageEngine = StorageEngineMetadata::getStorageEngineForPath(dbpath)) {
+            if (storageGlobalParams.engineSetByUser) {
+                // Verify that the name of the user-supplied storage engine matches the contents of
+                // the metadata file.
+                const StorageEngine::Factory* factory = mapFindWithDefault(
+                    _storageFactories,
+                    storageGlobalParams.engine,
+                    static_cast<const StorageEngine::Factory*>(nullptr));
+
+                if (factory) {
+                    uassert(28662, str::stream()
+                        << "Cannot start server. Detected data files in " << dbpath << " created by"
+                        << " the '" << *existingStorageEngine << "' storage engine, but the"
+                        << " specified storage engine was '" << factory->getCanonicalName() << "'.",
+                        factory->getCanonicalName() == *existingStorageEngine);
+                }
+            }
+            else {
+                // Otherwise set the active storage engine as the contents of the metadata file.
+                log() << "Detected data files in " << dbpath << " created by the '"
+                      << *existingStorageEngine << "' storage engine, so setting the active"
+                      << " storage engine to '" << *existingStorageEngine << "'.";
+                storageGlobalParams.engine = *existingStorageEngine;
+            }
+        }
+        else if (!storageGlobalParams.engineSetByUser) {
+            // Ensure the default storage engine is available with this build of mongod.
+            uassert(28663, str::stream()
+                << "Cannot start server. The default storage engine '" << storageGlobalParams.engine
+                << "' is not available with this build of mongod. Please specify a different"
+                << " storage engine explicitly, e.g. --storageEngine=mmapv1.",
+                isRegisteredStorageEngine(storageGlobalParams.engine));
+        }
+
+        const StorageEngine::Factory* factory = _storageFactories[storageGlobalParams.engine];
 
         uassert(18656, str::stream()
-            << "Cannot start server with an unknown storage engine: " << name,
+            << "Cannot start server with an unknown storage engine: " << storageGlobalParams.engine,
             factory);
 
-        std::string canonicalName = factory->getCanonicalName().toString();
-
-        // Do not proceed if data directory has been used by a different storage engine previously.
-        std::auto_ptr<StorageEngineMetadata> metadata =
-            StorageEngineMetadata::validate(storageGlobalParams.dbpath, canonicalName);
+        std::unique_ptr<StorageEngineMetadata> metadata = StorageEngineMetadata::forPath(dbpath);
 
         // Validate options in metadata against current startup options.
         if (metadata.get()) {
@@ -116,7 +150,7 @@ namespace mongo {
         // Write a new metadata file if it is not present.
         if (!metadata.get()) {
             metadata.reset(new StorageEngineMetadata(storageGlobalParams.dbpath));
-            metadata->setStorageEngine(canonicalName);
+            metadata->setStorageEngine(factory->getCanonicalName().toString());
             metadata->setStorageEngineOptions(factory->createMetadataOptions(storageGlobalParams));
             uassertStatusOK(metadata->write());
         }
@@ -171,11 +205,11 @@ namespace mongo {
     }
 
     void ServiceContextMongoD::setKillAllOperations() {
-        boost::lock_guard<boost::mutex> clientLock(_mutex);
+        stdx::lock_guard<stdx::mutex> clientLock(_mutex);
         _globalKill = true;
-        for (size_t i = 0; i < _killOpListeners.size(); i++) {
+        for (const auto listener : _killOpListeners) {
             try {
-                _killOpListeners[i]->interruptAll();
+                listener->interruptAll();
             }
             catch (...) {
                 std::terminate();
@@ -189,30 +223,33 @@ namespace mongo {
 
     bool ServiceContextMongoD::_killOperationsAssociatedWithClientAndOpId_inlock(
             Client* client, unsigned int opId) {
-        for( CurOp *k = CurOp::getFromClient(client); k; k = k->parent() ) {
-            if ( k->opNum() != opId )
-                continue;
-
-            k->kill();
-            for( CurOp *l = CurOp::getFromClient(client); l; l = l->parent() ) {
-                l->kill();
-            }
-
-            for (size_t i = 0; i < _killOpListeners.size(); i++) {
-                try {
-                    _killOpListeners[i]->interrupt(opId);
-                }
-                catch (...) {
-                    std::terminate();
-                }
-            }
-            return true;
+        OperationContext* opCtx = client->getOperationContext();
+        if (!opCtx) {
+            return false;
         }
-        return false;
+        if (opCtx->getOpID() != opId) {
+            return false;
+        }
+        _killOperation_inlock(opCtx);
+        return true;
+    }
+
+    void ServiceContextMongoD::_killOperation_inlock(OperationContext* opCtx) {
+        opCtx->markKilled();
+
+        for (const auto listener : _killOpListeners) {
+            try {
+                listener->interrupt(opCtx->getOpID());
+            }
+            catch (...) {
+                std::terminate();
+            }
+        }
     }
 
     bool ServiceContextMongoD::killOperation(unsigned int opId) {
         for (LockedClientsCursor cursor(this); Client* client = cursor.next();) {
+            stdx::lock_guard<Client> lk(*client);
             bool found = _killOperationsAssociatedWithClientAndOpId_inlock(client, opId);
             if (found) {
                 return true;
@@ -229,17 +266,18 @@ namespace mongo {
                 continue;
             }
 
-            if (CurOp::getFromClient(client)->opNum() == txn->getOpID()) {
+            stdx::lock_guard<Client> lk(*client);
+            OperationContext* toKill = client->getOperationContext();
+            if (!toKill) {
+                continue;
+            }
+
+            if (toKill->getOpID() == txn->getOpID()) {
                 // Don't kill ourself.
                 continue;
             }
 
-            bool found = _killOperationsAssociatedWithClientAndOpId_inlock(
-                    client, CurOp::getFromClient(client)->opNum());
-            if (!found) {
-                warning() << "Attempted to kill operation " << CurOp::getFromClient(client)->opNum()
-                          << " but the opId changed";
-            }
+            _killOperation_inlock(toKill);
         }
     }
 
@@ -248,12 +286,13 @@ namespace mongo {
     }
 
     void ServiceContextMongoD::registerKillOpListener(KillOpListenerInterface* listener) {
-        boost::lock_guard<boost::mutex> clientLock(_mutex);
+        stdx::lock_guard<stdx::mutex> clientLock(_mutex);
         _killOpListeners.push_back(listener);
     }
 
-    OperationContext* ServiceContextMongoD::newOpCtx() {
-        return new OperationContextImpl();
+    std::unique_ptr<OperationContext> ServiceContextMongoD::_newOpCtx(Client* client) {
+        invariant(&cc() == client);
+        return stdx::make_unique<OperationContextImpl>();
     }
 
     void ServiceContextMongoD::setOpObserver(std::unique_ptr<OpObserver> opObserver) {

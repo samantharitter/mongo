@@ -32,12 +32,12 @@
 
 #include "mongo/db/background.h"
 
-#include <boost/shared_ptr.hpp>
-#include <boost/thread.hpp>
 #include <iostream>
 #include <string>
 
 #include "mongo/base/disallow_copying.h"
+#include "mongo/stdx/condition_variable.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/map_util.h"
 #include "mongo/util/mongoutils/str.h"
@@ -45,7 +45,7 @@
 
 namespace mongo {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
 
 namespace {
 
@@ -56,19 +56,19 @@ namespace {
 
         void recordBegin();
         int recordEnd();
-        void awaitNoBgOps(boost::unique_lock<boost::mutex>& lk);
+        void awaitNoBgOps(stdx::unique_lock<stdx::mutex>& lk);
 
         int getOpsInProgCount() const { return _opsInProgCount; }
 
     private:
         int _opsInProgCount;
-        boost::condition_variable _noOpsInProg;
+        stdx::condition_variable _noOpsInProg;
     };
 
-    typedef StringMap<boost::shared_ptr<BgInfo> > BgInfoMap;
+    typedef StringMap<std::shared_ptr<BgInfo> > BgInfoMap;
     typedef BgInfoMap::const_iterator BgInfoMapIterator;
 
-    boost::mutex m;
+    stdx::mutex m;
     BgInfoMap dbsInProg;
     BgInfoMap nsInProg;
 
@@ -85,13 +85,13 @@ namespace {
         return _opsInProgCount;
     }
 
-    void BgInfo::awaitNoBgOps(boost::unique_lock<boost::mutex>& lk) {
+    void BgInfo::awaitNoBgOps(stdx::unique_lock<stdx::mutex>& lk) {
         while (_opsInProgCount > 0)
             _noOpsInProg.wait(lk);
     }
 
     void recordBeginAndInsert(BgInfoMap* bgiMap, StringData key) {
-        boost::shared_ptr<BgInfo>& bgInfo = bgiMap->get(key);
+        std::shared_ptr<BgInfo>& bgInfo = bgiMap->get(key);
         if (!bgInfo)
             bgInfo.reset(new BgInfo);
         bgInfo->recordBegin();
@@ -106,12 +106,12 @@ namespace {
     }
 
     void awaitNoBgOps(
-            boost::unique_lock<boost::mutex>& lk,
+            stdx::unique_lock<stdx::mutex>& lk,
             BgInfoMap* bgiMap,
             StringData key) {
 
-        boost::shared_ptr<BgInfo> bgInfo = mapFindWithDefault(
-                *bgiMap, key, boost::shared_ptr<BgInfo>());
+        std::shared_ptr<BgInfo> bgInfo = mapFindWithDefault(
+                *bgiMap, key, std::shared_ptr<BgInfo>());
         if (!bgInfo)
             return;
         bgInfo->awaitNoBgOps(lk);
@@ -119,12 +119,12 @@ namespace {
 
 }  // namespace
     bool BackgroundOperation::inProgForDb(StringData db) {
-        boost::lock_guard<boost::mutex> lk(m);
+        stdx::lock_guard<stdx::mutex> lk(m);
         return dbsInProg.find(db) != dbsInProg.end();
     }
 
     bool BackgroundOperation::inProgForNs(StringData ns) {
-        boost::lock_guard<boost::mutex> lk(m);
+        stdx::lock_guard<stdx::mutex> lk(m);
         return nsInProg.find(ns) != nsInProg.end();
     }
 
@@ -143,29 +143,29 @@ namespace {
     }
 
     void BackgroundOperation::awaitNoBgOpInProgForDb(StringData db) {
-        boost::unique_lock<boost::mutex> lk(m);
+        stdx::unique_lock<stdx::mutex> lk(m);
         awaitNoBgOps(lk, &dbsInProg, db);
     }
 
     void BackgroundOperation::awaitNoBgOpInProgForNs(StringData ns) {
-        boost::unique_lock<boost::mutex> lk(m);
+        stdx::unique_lock<stdx::mutex> lk(m);
         awaitNoBgOps(lk, &nsInProg, ns);
     }
 
     BackgroundOperation::BackgroundOperation(StringData ns) : _ns(ns) {
-        boost::lock_guard<boost::mutex> lk(m);
+        stdx::lock_guard<stdx::mutex> lk(m);
         recordBeginAndInsert(&dbsInProg, _ns.db());
         recordBeginAndInsert(&nsInProg, _ns.ns());
     }
 
     BackgroundOperation::~BackgroundOperation() {
-        boost::lock_guard<boost::mutex> lk(m);
+        stdx::lock_guard<stdx::mutex> lk(m);
         recordEndAndRemove(&dbsInProg, _ns.db());
         recordEndAndRemove(&nsInProg, _ns.ns());
     }
 
     void BackgroundOperation::dump(std::ostream& ss) {
-        boost::lock_guard<boost::mutex> lk(m);
+        stdx::lock_guard<stdx::mutex> lk(m);
         if( nsInProg.size() ) {
             ss << "\n<b>Background Jobs in Progress</b>\n";
             for( BgInfoMapIterator i = nsInProg.begin(); i != nsInProg.end(); ++i )

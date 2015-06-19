@@ -32,6 +32,7 @@
 
 #include "mongo/db/catalog/rename_collection.h"
 
+#include "mongo/db/background.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/collection_catalog_entry.h"
 #include "mongo/db/catalog/database.h"
@@ -57,31 +58,6 @@ namespace {
             wunit.commit();
         }
     }
-
-    // renameCollection's
-    std::vector<BSONObj> stopIndexBuilds(OperationContext* opCtx,
-                                         Database* db,
-                                         const NamespaceString& source,
-                                         const NamespaceString& target) {
-
-        IndexCatalog::IndexKillCriteria criteria;
-        criteria.ns = source;
-        std::vector<BSONObj> prelim = 
-            IndexBuilder::killMatchingIndexBuilds(db->getCollection(source), criteria);
-
-        std::vector<BSONObj> indexes;
-
-        for (int i = 0; i < static_cast<int>(prelim.size()); i++) {
-            // Change the ns
-            BSONObj stripped = prelim[i].removeField("ns");
-            BSONObjBuilder builder;
-            builder.appendElements(stripped);
-            builder.append("ns", target);
-            indexes.push_back(builder.obj());
-        }
-
-        return indexes;
-    }
 } // namespace
 
     Status renameCollection(OperationContext* txn,
@@ -97,7 +73,7 @@ namespace {
         OldClientContext ctx(txn, source);
 
         bool userInitiatedWritesAndNotPrimary = txn->writesAreReplicated() &&
-            !repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(source.db());
+            !repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(source);
 
         if (userInitiatedWritesAndNotPrimary) {
             return Status(ErrorCodes::NotMaster, str::stream()
@@ -136,9 +112,7 @@ namespace {
             }
         }
 
-        const std::vector<BSONObj> indexesInProg = stopIndexBuilds(txn, sourceDB, source, target);
-        // Dismissed on success
-        ScopeGuard indexBuildRestorer = MakeGuard(IndexBuilder::restoreIndexes, txn, indexesInProg);
+        BackgroundOperation::assertNoBgOpInProgForNs(source.ns());
 
         Database* const targetDB = dbHolder().openDb(txn, target.db());
 
@@ -175,7 +149,6 @@ namespace {
                         stayTemp);
 
                 wunit.commit();
-                indexBuildRestorer.Dismiss();
                 return Status::OK();
             }
 
@@ -231,18 +204,18 @@ namespace {
 
         {
             // Copy over all the data from source collection to target collection.
-            boost::scoped_ptr<RecordIterator> sourceIt(sourceColl->getIterator(txn));
-            while (!sourceIt->isEOF()) {
+            auto cursor = sourceColl->getCursor(txn);
+            while (auto record = cursor->next()) {
                 txn->checkForInterrupt();
 
-                const Snapshotted<BSONObj> obj = sourceColl->docFor(txn, sourceIt->getNext());
+                const auto obj = record->data.releaseToBson();
 
                 WriteUnitOfWork wunit(txn);
                 // No logOp necessary because the entire renameCollection command is one logOp.
                 bool shouldReplicateWrites = txn->writesAreReplicated();
                 txn->setReplicatedWrites(false);
                 Status status =
-                    targetColl->insertDocument(txn, obj.value(), &indexer, true).getStatus();
+                    targetColl->insertDocument(txn, obj, &indexer, true).getStatus();
                 txn->setReplicatedWrites(shouldReplicateWrites);
                 if (!status.isOK())
                     return status;
@@ -278,7 +251,6 @@ namespace {
             wunit.commit();
         }
 
-        indexBuildRestorer.Dismiss();
         targetCollectionDropper.Dismiss();
         return Status::OK();
     }

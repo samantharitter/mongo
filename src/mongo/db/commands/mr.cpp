@@ -32,7 +32,6 @@
 
 #include "mongo/db/commands/mr.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/client/connpool.h"
 #include "mongo/client/parallel.h"
@@ -66,14 +65,15 @@
 #include "mongo/s/shard_key_pattern.h"
 #include "mongo/s/stale_exception.h"
 #include "mongo/scripting/engine.h"
+#include "mongo/stdx/mutex.h"
 #include "mongo/util/log.h"
 #include "mongo/util/scopeguard.h"
 
 namespace mongo {
 
-    using boost::scoped_ptr;
-    using boost::shared_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::shared_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::set;
     using std::string;
@@ -204,7 +204,7 @@ namespace mongo {
 
             // need to build the reduce args: ( key, [values] )
             BSONObjBuilder reduceArgs( sizeEstimate );
-            boost::scoped_ptr<BSONArrayBuilder>  valueBuilder;
+            std::unique_ptr<BSONArrayBuilder>  valueBuilder;
             unsigned n = 0;
             for ( ; n<tuples.size(); n++ ) {
                 BSONObjIterator j(tuples[n]);
@@ -441,9 +441,9 @@ namespace mongo {
                 // create temp collection and insert the indexes from temporary storage
                 OldClientWriteContext tempCtx(_txn, _config.tempNamespace);
                 WriteUnitOfWork wuow(_txn);
+                NamespaceString tempNss(_config.tempNamespace);
                 uassert(ErrorCodes::NotMaster, "no longer master", 
-                        repl::getGlobalReplicationCoordinator()->
-                        canAcceptWritesForDatabase(nsToDatabase(_config.tempNamespace.c_str())));
+                        repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(tempNss));
                 Collection* tempColl = tempCtx.getCollection();
                 invariant(!tempColl);
 
@@ -572,7 +572,8 @@ namespace mongo {
          *
          * TODO: make count work with versioning
          */
-        unsigned long long _safeCount( // Can't be const b/c count isn't
+        unsigned long long _safeCount( Client* client,
+                                       // Can't be const b/c count isn't
                                        /* const */ DBDirectClient& db,
                                        const string &ns,
                                        const BSONObj& query = BSONObj(),
@@ -580,7 +581,7 @@ namespace mongo {
                                        int limit = 0,
                                        int skip = 0 )
         {
-            ShardForceVersionOkModeBlock ignoreVersion; // ignore versioning here
+            ShardForceVersionOkModeBlock ignoreVersion(client); // ignore versioning here
             return db.count( ns, query, options, limit, skip );
         }
 
@@ -591,11 +592,13 @@ namespace mongo {
         long long State::postProcessCollectionNonAtomic(
                                 OperationContext* txn, CurOp* op, ProgressMeterHolder& pm) {
 
+            auto client = txn->getClient();
+
             if ( _config.outputOptions.finalNamespace == _config.tempNamespace )
-                return _safeCount( _db, _config.outputOptions.finalNamespace );
+                return _safeCount( client, _db, _config.outputOptions.finalNamespace );
 
             if (_config.outputOptions.outType == Config::REPLACE ||
-                    _safeCount(_db, _config.outputOptions.finalNamespace) == 0) {
+                    _safeCount(client, _db, _config.outputOptions.finalNamespace) == 0) {
 
                 ScopedTransaction transaction(txn, MODE_X);
                 Lock::GlobalWrite lock(txn->lockState()); // TODO(erh): why global???
@@ -615,10 +618,14 @@ namespace mongo {
             }
             else if ( _config.outputOptions.outType == Config::MERGE ) {
                 // merge: upsert new docs into old collection
-                op->setMessage("m/r: merge post processing",
-                               "M/R Merge Post Processing Progress",
-                               _safeCount(_db, _config.tempNamespace, BSONObj()));
-                auto_ptr<DBClientCursor> cursor = _db.query(_config.tempNamespace , BSONObj());
+                {
+                    const auto count = _safeCount(client, _db, _config.tempNamespace, BSONObj());
+                    stdx::lock_guard<Client> lk(*txn->getClient());
+                    op->setMessage_inlock("m/r: merge post processing",
+                                          "M/R Merge Post Processing Progress",
+                                          count);
+                }
+                unique_ptr<DBClientCursor> cursor = _db.query(_config.tempNamespace , BSONObj());
                 while (cursor->more()) {
                     ScopedTransaction scopedXact(_txn, MODE_IX);
                     Lock::DBLock lock(_txn->lockState(),
@@ -635,10 +642,14 @@ namespace mongo {
                 // reduce: apply reduce op on new result and existing one
                 BSONList values;
 
-                op->setMessage("m/r: reduce post processing",
-                               "M/R Reduce Post Processing Progress",
-                               _safeCount(_db, _config.tempNamespace, BSONObj()));
-                auto_ptr<DBClientCursor> cursor = _db.query( _config.tempNamespace , BSONObj() );
+                {
+                    const auto count = _safeCount(client, _db, _config.tempNamespace, BSONObj());
+                    stdx::lock_guard<Client> lk(*txn->getClient());
+                    op->setMessage_inlock("m/r: reduce post processing",
+                                          "M/R Reduce Post Processing Progress",
+                                          count);
+                }
+                unique_ptr<DBClientCursor> cursor = _db.query( _config.tempNamespace , BSONObj() );
                 while ( cursor->more() ) {
                     ScopedTransaction transaction(txn, MODE_X);
                     Lock::GlobalWrite lock(txn->lockState()); // TODO(erh) why global?
@@ -647,9 +658,9 @@ namespace mongo {
 
                     bool found;
                     {
-                        OldClientContext tx(txn, _config.outputOptions.finalNamespace);
-                        Collection* coll =
-                            tx.db()->getCollection(_config.outputOptions.finalNamespace);
+                        const std::string& finalNamespace = _config.outputOptions.finalNamespace;
+                        OldClientContext tx(txn, finalNamespace);
+                        Collection* coll = getCollectionOrUassert(tx.db(), finalNamespace);
                         found = Helpers::findOne(_txn,
                                                  coll,
                                                  temp["_id"].wrap(),
@@ -675,7 +686,7 @@ namespace mongo {
                 pm.finished();
             }
 
-            return _safeCount( _db, _config.outputOptions.finalNamespace );
+            return _safeCount( txn->getClient(), _db, _config.outputOptions.finalNamespace );
         }
 
         /**
@@ -687,9 +698,9 @@ namespace mongo {
 
             OldClientWriteContext ctx(_txn,  ns );
             WriteUnitOfWork wuow(_txn);
+            NamespaceString nss(ns);
             uassert(ErrorCodes::NotMaster, "no longer master", 
-                    repl::getGlobalReplicationCoordinator()->
-                    canAcceptWritesForDatabase(nsToDatabase(ns.c_str())));
+                    repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nss));
             Collection* coll = getCollectionOrUassert(ctx.db(), ns);
 
             BSONObjBuilder b;
@@ -736,7 +747,7 @@ namespace mongo {
         }
 
         long long State::incomingDocuments() {
-            return _safeCount( _db, _config.ns , _config.filter , QueryOption_SlaveOk , (unsigned) _config.limit );
+            return _safeCount( _txn->getClient(), _db, _config.ns , _config.filter , QueryOption_SlaveOk , (unsigned) _config.limit );
         }
 
         State::~State() {
@@ -1013,14 +1024,18 @@ namespace mongo {
                 wuow.commit();
             }
 
-            scoped_ptr<AutoGetCollectionForRead> ctx(new AutoGetCollectionForRead(_txn, _config.incLong));
+            unique_ptr<AutoGetCollectionForRead> ctx(new AutoGetCollectionForRead(_txn, _config.incLong));
 
             BSONObj prev;
             BSONList all;
 
-            verify(pm == op->setMessage("m/r: (3/3) final reduce to collection",
-                                        "M/R: (3/3) Final Reduce Progress",
-                                        _db.count(_config.incLong, BSONObj(), QueryOption_SlaveOk)));
+            {
+                const auto count = _db.count(_config.incLong, BSONObj(), QueryOption_SlaveOk);
+                stdx::lock_guard<Client> lk(*_txn->getClient());
+                verify(pm == op->setMessage_inlock("m/r: (3/3) final reduce to collection",
+                                                   "M/R: (3/3) Final Reduce Progress",
+                                                   count));
+            }
 
             const NamespaceString nss(_config.incLong);
             const WhereCallbackReal whereCallback(_txn, nss.db());
@@ -1032,7 +1047,7 @@ namespace mongo {
                                                 BSONObj(),
                                                 &cqRaw,
                                                 whereCallback).isOK());
-            std::auto_ptr<CanonicalQuery> cq(cqRaw);
+            std::unique_ptr<CanonicalQuery> cq(cqRaw);
 
             Collection* coll = getCollectionOrUassert(ctx->getDb(), _config.incLong);
             invariant(coll);
@@ -1045,7 +1060,7 @@ namespace mongo {
                                &rawExec,
                                QueryPlannerParams::NO_TABLE_SCAN).isOK());
 
-            scoped_ptr<PlanExecutor> exec(rawExec);
+            unique_ptr<PlanExecutor> exec(rawExec);
 
             // iterate over all sorted objects
             BSONObj o;
@@ -1104,7 +1119,7 @@ namespace mongo {
                 return;
             }
 
-            auto_ptr<InMemory> n( new InMemory() ); // for new data
+            unique_ptr<InMemory> n( new InMemory() ); // for new data
             long nSize = 0;
             _dupCount = 0;
 
@@ -1292,7 +1307,9 @@ namespace mongo {
                 if (shouldBypassDocumentValidationForCommand(cmd))
                     maybeDisableValidation.emplace(txn);
 
-                if (txn->getClient()->isInDirectClient()) {
+                auto client = txn->getClient();
+
+                if (client->isInDirectClient()) {
                     return appendCommandStatus(result,
                                                Status(ErrorCodes::IllegalOperation,
                                                       "Cannot run mapReduce command from eval()"));
@@ -1309,7 +1326,7 @@ namespace mongo {
                 CollectionMetadataPtr collMetadata;
 
                 // Prevent sharding state from changing during the MR.
-                auto_ptr<RangePreserver> rangePreserver;
+                unique_ptr<RangePreserver> rangePreserver;
                 {
                     AutoGetCollectionForRead ctx(txn, config.ns);
 
@@ -1320,7 +1337,7 @@ namespace mongo {
 
                     // Get metadata before we check our version, to make sure it doesn't increment
                     // in the meantime.  Need to do this in the same lock scope as the block.
-                    if (shardingState.needCollectionMetadata(config.ns)) {
+                    if (shardingState.needCollectionMetadata(client, config.ns)) {
                         collMetadata = shardingState.getCollectionMetadata( config.ns );
                     }
                 }
@@ -1337,9 +1354,8 @@ namespace mongo {
                 if (state.isOnDisk()) {
                     // this means that it will be doing a write operation, make sure we are on Master
                     // ideally this check should be in slaveOk(), but at that point config is not known
-                    repl::ReplicationCoordinator* const replCoord =
-                        repl::getGlobalReplicationCoordinator();
-                    if (!replCoord->canAcceptWritesForDatabase(dbname)) {
+                    NamespaceString nss(config.ns);
+                    if (!repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nss)) {
                         errmsg = "not master";
                         return false;
                     }
@@ -1361,9 +1377,11 @@ namespace mongo {
                         progressTotal = 1;
                     }
 
-                    ProgressMeter& progress( op->setMessage("m/r: (1/3) emit phase",
-                                             "M/R: (1/3) Emit Progress",
-                                             progressTotal ));
+                    stdx::unique_lock<Client> lk(*txn->getClient());
+                    ProgressMeter& progress( op->setMessage_inlock("m/r: (1/3) emit phase",
+                                                                   "M/R: (1/3) Emit Progress",
+                                                                   progressTotal ));
+                    lk.unlock();
                     progress.showTotal(showTotal);
                     ProgressMeterHolder pm(progress);
 
@@ -1381,9 +1399,9 @@ namespace mongo {
                         const NamespaceString nss(config.ns);
 
                         // Need lock and context to use it
-                        scoped_ptr<ScopedTransaction> scopedXact(
+                        unique_ptr<ScopedTransaction> scopedXact(
                                                         new ScopedTransaction(txn, MODE_IS));
-                        scoped_ptr<AutoGetDb> scopedAutoDb(new AutoGetDb(txn, nss.db(), MODE_S));
+                        unique_ptr<AutoGetDb> scopedAutoDb(new AutoGetDb(txn, nss.db(), MODE_S));
 
                         const WhereCallbackReal whereCallback(txn, nss.db());
 
@@ -1397,7 +1415,7 @@ namespace mongo {
                             uasserted(17238, "Can't canonicalize query " + config.filter.toString());
                             return 0;
                         }
-                        std::auto_ptr<CanonicalQuery> cq(cqRaw);
+                        std::unique_ptr<CanonicalQuery> cq(cqRaw);
 
                         Database* db = scopedAutoDb->getDb();
                         Collection* coll = state.getCollectionOrUassert(db, config.ns);
@@ -1414,7 +1432,7 @@ namespace mongo {
                             return 0;
                         }
 
-                        scoped_ptr<PlanExecutor> exec(rawExec);
+                        unique_ptr<PlanExecutor> exec(rawExec);
 
                         Timer mt;
 
@@ -1494,8 +1512,11 @@ namespace mongo {
                     timingBuilder.appendNumber( "mapTime" , mapTime / 1000 );
                     timingBuilder.append( "emitLoop" , t.millis() );
 
-                    op->setMessage("m/r: (2/3) final reduce in memory",
-                                   "M/R: (2/3) Final In-Memory Reduce Progress");
+                    {
+                        stdx::lock_guard<Client> lk(*txn->getClient());
+                        op->setMessage_inlock("m/r: (2/3) final reduce in memory",
+                                              "M/R: (2/3) Final In-Memory Reduce Progress");
+                    }
                     Timer rt;
                     // do reduce in memory
                     // this will be the last reduce needed for inline mode
@@ -1603,8 +1624,10 @@ namespace mongo {
                 BSONObj shardCounts = cmdObj["shardCounts"].embeddedObjectUserCheck();
                 BSONObj counts = cmdObj["counts"].embeddedObjectUserCheck();
 
-                ProgressMeterHolder pm(op->setMessage("m/r: merge sort and reduce",
-                                                      "M/R Merge Sort and Reduce Progress"));
+                stdx::unique_lock<Client> lk(*txn->getClient());
+                ProgressMeterHolder pm(op->setMessage_inlock("m/r: merge sort and reduce",
+                                                             "M/R Merge Sort and Reduce Progress"));
+                lk.unlock();
                 set<string> servers;
 
                 {
@@ -1652,7 +1675,7 @@ namespace mongo {
 
                     for ( ChunkMap::const_iterator it = chunkMap.begin(); it != chunkMap.end(); ++it ) {
                         ChunkPtr chunk = it->second;
-                        if (chunk->getShard().getName() == shardName) {
+                        if (chunk->getShardId() == shardName) {
                             chunks.push_back(chunk);
                         }
                     }

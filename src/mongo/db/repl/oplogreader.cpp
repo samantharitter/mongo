@@ -32,7 +32,6 @@
 
 #include "mongo/db/repl/oplogreader.h"
 
-#include <boost/shared_ptr.hpp>
 #include <string>
 
 #include "mongo/base/counter.h"
@@ -47,12 +46,13 @@
 #include "mongo/db/repl/minvalid.h"
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/repl/replication_coordinator.h"
+#include "mongo/executor/network_interface.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/log.h"
 
 namespace mongo {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::endl;
     using std::string;
 
@@ -101,6 +101,7 @@ namespace repl {
                 error() << errmsg << endl;
                 return false;
             }
+            _conn->port().tag |= executor::NetworkInterface::kMessagingPortKeepOpen;
             _host = host;
         }
         return true;

@@ -32,9 +32,8 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/thread/thread.hpp>
 #include <boost/filesystem/operations.hpp>
-#include <boost/shared_ptr.hpp>
+#include <boost/optional.hpp>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -61,8 +60,6 @@
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/dbmessage.h"
 #include "mongo/db/dbwebserver.h"
-#include "mongo/db/service_context_d.h"
-#include "mongo/db/service_context.h"
 #include "mongo/db/index_names.h"
 #include "mongo/db/index_rebuilder.h"
 #include "mongo/db/initialize_server_global_state.h"
@@ -76,15 +73,17 @@
 #include "mongo/db/query/internal_plans.h"
 #include "mongo/db/range_deleter_service.h"
 #include "mongo/db/repair_database.h"
-#include "mongo/db/repl/network_interface_impl.h"
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/repl/repl_settings.h"
 #include "mongo/db/repl/replication_coordinator_external_state_impl.h"
 #include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/repl/replication_coordinator_impl.h"
+#include "mongo/db/repl/storage_interface_impl.h"
 #include "mongo/db/repl/topology_coordinator_impl.h"
 #include "mongo/db/restapi.h"
 #include "mongo/db/server_parameters.h"
+#include "mongo/db/service_context.h"
+#include "mongo/db/service_context_d.h"
 #include "mongo/db/startup_warnings_mongod.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/db/stats/snapshots.h"
@@ -92,9 +91,12 @@
 #include "mongo/db/storage/storage_engine.h"
 #include "mongo/db/storage_options.h"
 #include "mongo/db/ttl.h"
+#include "mongo/executor/network_interface_asio.h"
+#include "mongo/executor/network_interface_impl.h"
 #include "mongo/platform/process_id.h"
 #include "mongo/scripting/engine.h"
 #include "mongo/stdx/memory.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/cmdline_utils/censor_cmdline.h"
 #include "mongo/util/concurrency/task.h"
@@ -122,7 +124,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::cout;
     using std::cerr;
     using std::endl;
@@ -156,7 +158,6 @@ namespace mongo {
         }
 
         virtual void process(Message& m , AbstractMessagingPort* port) {
-            OperationContextImpl txn;
             while ( true ) {
                 if ( inShutdown() ) {
                     log() << "got request after shutdown()" << endl;
@@ -164,7 +165,12 @@ namespace mongo {
                 }
 
                 DbResponse dbresponse;
-                assembleResponse(&txn, m, dbresponse, port->remote());
+                {
+                    OperationContextImpl txn;
+                    assembleResponse(&txn, m, dbresponse, port->remote());
+                    // txn must go out of scope here so that the operation cannot show up in
+                    // currentOp results after the response reaches the client.
+                }
 
                 if ( dbresponse.response ) {
                     port->reply(m, *dbresponse.response, dbresponse.responseTo);
@@ -345,7 +351,7 @@ namespace mongo {
             const string systemIndexes = db->name() + ".system.indexes";
 
             Collection* coll = db->getCollection( systemIndexes );
-            auto_ptr<PlanExecutor> exec(
+            unique_ptr<PlanExecutor> exec(
                 InternalPlanner::collectionScan(&txn, systemIndexes, coll));
 
             BSONObj index;
@@ -409,13 +415,15 @@ namespace mongo {
         // do not want connections to just hang if recovery takes a very long time.
         server->setupSockets();
 
-        boost::shared_ptr<DbWebServer> dbWebServer;
+        std::shared_ptr<DbWebServer> dbWebServer;
         if (serverGlobalParams.isHttpInterfaceEnabled) {
             dbWebServer.reset(new DbWebServer(serverGlobalParams.bind_ip,
                                               serverGlobalParams.port + 1000,
                                               new RestAdminAccess()));
             dbWebServer->setupSockets();
         }
+
+        getGlobalServiceContext()->initializeGlobalStorageEngine();
 
         // Warn if we detect configurations for multiple registered storage engines in
         // the same configuration file/environment.
@@ -441,7 +449,6 @@ namespace mongo {
             }
         }
 
-        getGlobalServiceContext()->setGlobalStorageEngine(storageGlobalParams.engine);
         getGlobalServiceContext()->setOpObserver(stdx::make_unique<OpObserver>());
 
         const repl::ReplSettings& replSettings =
@@ -483,7 +490,7 @@ namespace mongo {
         {
             stringstream ss;
             ss << "repairpath (" << storageGlobalParams.repairpath << ") does not exist";
-            uassert(12590, 
+            uassert(12590,
                     ss.str().c_str(),
                     boost::filesystem::exists(storageGlobalParams.repairpath));
         }
@@ -516,7 +523,7 @@ namespace mongo {
         }
 
         /* this is for security on certain platforms (nonce generation) */
-        srand((unsigned) (curTimeMicros() ^ startupSrandTimer.micros()));
+        srand((unsigned) (curTimeMicros64() ^ startupSrandTimer.micros()));
 
         // The snapshot thread provides historical collection level and lock statistics for use
         // by the web interface. Only needed when HTTP is enabled.
@@ -524,7 +531,7 @@ namespace mongo {
             snapshotThread.go();
 
             invariant(dbWebServer);
-            boost::thread web(stdx::bind(&webServerListenThread, dbWebServer));
+            stdx::thread web(stdx::bind(&webServerListenThread, dbWebServer));
             web.detach();
         }
 
@@ -576,7 +583,7 @@ namespace mongo {
                       << " documents are present in local.system.replset" << startupWarningsLog;
                 log() << "**          Restart with --replSet unless you are doing maintenance and "
                       << " no other clients are connected." << startupWarningsLog;
-                log() << "**          The TTL collection monitor will not start because of this." 
+                log() << "**          The TTL collection monitor will not start because of this."
                       << startupWarningsLog;
                 log() << "**         ";
                 log() << " For more info see http://dochub.mongodb.org/core/ttlcollections";
@@ -748,21 +755,23 @@ static void startupConfigActions(const std::vector<std::string>& args) {
 
 MONGO_INITIALIZER_WITH_PREREQUISITES(CreateReplicationManager, ("SetGlobalEnvironment"))
         (InitializerContext* context) {
-    repl::ReplicationCoordinatorImpl* replCoord = new repl::ReplicationCoordinatorImpl(
-            getGlobalReplSettings(),
-            new repl::ReplicationCoordinatorExternalStateImpl,
-            new repl::NetworkInterfaceImpl,
-            new repl::TopologyCoordinatorImpl(Seconds(repl::maxSyncSourceLagSecs)),
-            static_cast<int64_t>(curTimeMillis64()));
-    repl::setGlobalReplicationCoordinator(replCoord);
+    auto replCoord = stdx::make_unique<repl::ReplicationCoordinatorImpl>(
+        getGlobalReplSettings(),
+        new repl::ReplicationCoordinatorExternalStateImpl,
+        new executor::NetworkInterfaceASIO,
+        new repl::StorageInterfaceImpl{},
+        new repl::TopologyCoordinatorImpl(Seconds(repl::maxSyncSourceLagSecs)),
+        static_cast<int64_t>(curTimeMillis64()));
+    auto serviceContext = getGlobalServiceContext();
+    serviceContext->registerKillOpListener(replCoord.get());
+    repl::ReplicationCoordinator::set(serviceContext, std::move(replCoord));
     repl::setOplogCollectionName();
-    getGlobalServiceContext()->registerKillOpListener(replCoord);
     return Status::OK();
 }
 
 #ifdef MONGO_CONFIG_SSL
-MONGO_INITIALIZER_GENERAL(setSSLManagerType, 
-                          MONGO_NO_PREREQUISITES, 
+MONGO_INITIALIZER_GENERAL(setSSLManagerType,
+                          MONGO_NO_PREREQUISITES,
                           ("SSLManager"))(InitializerContext* context) {
     isSSLServer = true;
     return Status::OK();
@@ -802,7 +811,7 @@ static int mongoDbMain(int argc, char* argv[], char **envp) {
 
     dbExecCommand = argv[0];
 
-    srand(curTimeMicros());
+    srand(static_cast<unsigned>(curTimeMicros64()));
 
     {
         unsigned x = 0x12345678;

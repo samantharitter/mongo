@@ -33,8 +33,6 @@
 
 #include "mongo/s/catalog/legacy/distlock.h"
 
-#include <boost/shared_ptr.hpp>
-#include <boost/thread/thread.hpp>
 #include <iostream>
 #include <vector>
 
@@ -46,6 +44,7 @@
 #include "mongo/db/commands.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/s/catalog/legacy/legacy_dist_lock_pinger.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/bson_util.h"
 #include "mongo/util/concurrency/thread_name.h"
 #include "mongo/util/log.h"
@@ -78,7 +77,7 @@
 
 namespace mongo {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::endl;
     using std::string;
     using std::stringstream;
@@ -303,11 +302,11 @@ namespace mongo {
             count.store(0);
             keepGoing.store(true);
 
-            vector<shared_ptr<boost::thread> > threads;
+            vector<shared_ptr<stdx::thread> > threads;
             vector<shared_ptr<BSONObjBuilder> > results;
             for (int i = 0; i < numThreads; i++) {
                 results.push_back(shared_ptr<BSONObjBuilder> (new BSONObjBuilder()));
-                threads.push_back(shared_ptr<boost::thread> (new boost::thread(
+                threads.push_back(shared_ptr<stdx::thread> (new stdx::thread(
                                       stdx::bind(&TestDistLockWithSkew::runThread, this,
                                                   hostConn, (unsigned) i, seed + i, boost::ref(cmdObj),
                                                   boost::ref(*(results[i].get()))))));

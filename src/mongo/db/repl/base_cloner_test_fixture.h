@@ -28,8 +28,7 @@
 
 #pragma once
 
-#include <boost/thread/mutex.hpp>
-#include <boost/thread/condition_variable.hpp>
+#include <memory>
 #include <vector>
 
 #include "mongo/base/status.h"
@@ -37,8 +36,10 @@
 #include "mongo/db/clientcursor.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/repl/collection_cloner.h"
-#include "mongo/db/repl/network_interface_mock.h"
 #include "mongo/db/repl/replication_executor_test_fixture.h"
+#include "mongo/executor/network_interface_mock.h"
+#include "mongo/stdx/mutex.h"
+#include "mongo/stdx/condition_variable.h"
 #include "mongo/util/net/hostandport.h"
 
 namespace mongo {
@@ -49,10 +50,11 @@ namespace mongo {
 namespace repl {
 
     class BaseCloner;
+    class ClonerStorageInterfaceMock;
 
     class BaseClonerTest : public ReplicationExecutorTest {
     public:
-        typedef NetworkInterfaceMock::NetworkOperationIterator NetworkOperationIterator;
+        typedef executor::NetworkInterfaceMock::NetworkOperationIterator NetworkOperationIterator;
 
         /**
          * Creates an initial error status suitable for checking if
@@ -106,7 +108,6 @@ namespace repl {
 
         void setStatus(const Status& status);
         const Status& getStatus() const;
-        void waitForStatus();
 
         void scheduleNetworkResponse(NetworkOperationIterator noi,
                                      const BSONObj& obj);
@@ -124,19 +125,35 @@ namespace repl {
         virtual BaseCloner* getCloner() const = 0;
         void testLifeCycle();
 
+    protected:
+
+        std::unique_ptr<ClonerStorageInterfaceMock> storageInterface;
+
     private:
 
         // Protects member data of this base cloner fixture.
-        mutable boost::mutex _mutex;
+        mutable stdx::mutex _mutex;
 
-        boost::condition_variable _setStatusCondition;
+        stdx::condition_variable _setStatusCondition;
 
         Status _status;
 
     };
 
-    class StorageInterfaceMock : public CollectionCloner::StorageInterface {
+    class ClonerStorageInterfaceMock : public CollectionCloner::StorageInterface {
     public:
+        using InsertCollectionFn = stdx::function<Status (OperationContext*,
+                                                          const NamespaceString&,
+                                                          const std::vector<BSONObj>&)>;
+        using BeginCollectionFn = stdx::function<Status (OperationContext*,
+                                                         const NamespaceString&,
+                                                         const CollectionOptions&,
+                                                         const std::vector<BSONObj>&)>;
+        using InsertMissingDocFn = stdx::function<Status (OperationContext*,
+                                                          const NamespaceString&,
+                                                          const BSONObj&)>;
+        using DropUserDatabases = stdx::function<Status (OperationContext*)>;
+
         Status beginCollection(OperationContext* txn,
                                const NamespaceString& nss,
                                const CollectionOptions& options,
@@ -146,14 +163,19 @@ namespace repl {
                                const NamespaceString& nss,
                                const std::vector<BSONObj>& docs) override;
 
-        stdx::function<Status (OperationContext*,
-                               const NamespaceString&,
-                               const CollectionOptions&,
-                               const std::vector<BSONObj>&)> beginCollectionFn;
+        Status commitCollection(OperationContext* txn,
+                                const NamespaceString& nss) override;
 
-        stdx::function<Status (OperationContext*,
-                               const NamespaceString&,
-                               const std::vector<BSONObj>&)> insertDocumentsFn;
+        Status insertMissingDoc(OperationContext* txn,
+                                const NamespaceString& nss,
+                                const BSONObj& doc) override;
+
+        Status dropUserDatabases(OperationContext* txn);
+
+        BeginCollectionFn beginCollectionFn;
+        InsertCollectionFn insertDocumentsFn;
+        InsertMissingDocFn insertMissingDocFn;
+        DropUserDatabases dropUserDatabasesFn;
     };
 
 } // namespace repl

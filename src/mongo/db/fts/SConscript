@@ -30,6 +30,7 @@ baseEnv.Library('base', [
         'fts_index_format.cpp',
         'fts_matcher.cpp',
         'fts_query.cpp',
+        'fts_query_parser.cpp',
         'fts_spec.cpp',
         'fts_spec_legacy.cpp',
         'fts_language.cpp',
@@ -65,6 +66,9 @@ env.CppUnitTest( "fts_stop_words_test", "stop_words_test.cpp",
                  LIBDEPS=["base"] )
 
 env.CppUnitTest( "fts_stemmer_test", "stemmer_test.cpp",
+                 LIBDEPS=["base"] )
+
+env.CppUnitTest( "fts_basic_tokenizer_test", "fts_basic_tokenizer_test.cpp",
                  LIBDEPS=["base"] )
 
 env.CppUnitTest( "fts_tokenizer_test", "tokenizer_test.cpp",

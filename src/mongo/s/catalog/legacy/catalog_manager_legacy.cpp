@@ -60,11 +60,13 @@
 #include "mongo/s/catalog/type_tags.h"
 #include "mongo/s/chunk_manager.h"
 #include "mongo/s/client/dbclient_multi_command.h"
-#include "mongo/s/client/shard_connection.h"
 #include "mongo/s/client/shard.h"
+#include "mongo/s/client/shard_connection.h"
+#include "mongo/s/client/shard_registry.h"
 #include "mongo/s/config.h"
 #include "mongo/s/catalog/dist_lock_manager.h"
 #include "mongo/s/catalog/legacy/legacy_dist_lock_manager.h"
+#include "mongo/s/grid.h"
 #include "mongo/s/shard_key_pattern.h"
 #include "mongo/s/type_config_version.h"
 #include "mongo/s/write_ops/batched_command_request.h"
@@ -374,7 +376,7 @@ namespace {
         _distLockManager->startUp();
 
         {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
             _inShutdown = false;
             _consistentFromLastCheck = true;
         }
@@ -382,7 +384,17 @@ namespace {
         return Status::OK();
     }
 
-    Status CatalogManagerLegacy::checkAndUpgradeConfigMetadata(bool doUpgrade) {
+    Status CatalogManagerLegacy::startup(bool upgrade) {
+        Status status = _startConfigServerChecker();
+        if (!status.isOK()) {
+            return status;
+        }
+
+        status = _checkAndUpgradeConfigMetadata(upgrade);
+        return status;
+    }
+
+    Status CatalogManagerLegacy::_checkAndUpgradeConfigMetadata(bool doUpgrade) {
         VersionType initVersionInfo;
         VersionType versionInfo;
         string errMsg;
@@ -401,13 +413,13 @@ namespace {
         return Status::OK();
     }
 
-    Status CatalogManagerLegacy::startConfigServerChecker() {
+    Status CatalogManagerLegacy::_startConfigServerChecker() {
         if (!_checkConfigServersConsistent()) {
-            return Status(ErrorCodes::IncompatibleShardingMetadata,
+            return Status(ErrorCodes::ConfigServersInconsistent,
                           "Data inconsistency detected amongst config servers");
         }
 
-        boost::thread t(stdx::bind(&CatalogManagerLegacy::_consistencyChecker, this));
+        stdx::thread t(stdx::bind(&CatalogManagerLegacy::_consistencyChecker, this));
         _consistencyCheckerThread.swap(t);
 
         return Status::OK();
@@ -420,7 +432,7 @@ namespace {
     void CatalogManagerLegacy::shutDown() {
         LOG(1) << "CatalogManagerLegacy::shutDown() called.";
         {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
             _inShutdown = true;
             _consistencyCheckerCV.notify_one();
         }
@@ -439,12 +451,12 @@ namespace {
         Status status = _checkDbDoesNotExist(dbName);
         if (status.isOK()) {
             // Database does not exist, create a new entry
-            const Shard primary = Shard::pick();
-            if (primary.ok()) {
-                log() << "Placing [" << dbName << "] on: " << primary;
+            const ShardPtr primary = Shard::pick();
+            if (primary) {
+                log() << "Placing [" << dbName << "] on: " << primary->toString();
 
                 db.setName(dbName);
-                db.setPrimary(primary.getName());
+                db.setPrimary(primary->getId());
                 db.setSharded(true);
             }
             else {
@@ -475,7 +487,7 @@ namespace {
                                                  const ShardKeyPattern& fieldsAndOrder,
                                                  bool unique,
                                                  vector<BSONObj>* initPoints,
-                                                 vector<Shard>* initShards) {
+                                                 set<ShardId>* initShardIds) {
 
         StatusWith<DatabaseType> status = getDatabase(nsToDatabase(ns));
         if (!status.isOK()) {
@@ -483,7 +495,7 @@ namespace {
         }
 
         DatabaseType dbt = status.getValue();
-        Shard dbPrimary = Shard::make(dbt.getPrimary());
+        ShardId dbPrimaryShardId = dbt.getPrimary();
 
         // This is an extra safety check that the collection is not getting sharded concurrently by
         // two different mongos instances. It is not 100%-proof, but it reduces the chance that two
@@ -508,15 +520,20 @@ namespace {
         BSONObjBuilder collectionDetail;
         collectionDetail.append("shardKey", fieldsAndOrder.toBSON());
         collectionDetail.append("collection", ns);
-        collectionDetail.append("primary", dbPrimary.toString());
+        string dbPrimaryShardStr;
+        {
+            const auto shard = grid.shardRegistry()->getShard(dbPrimaryShardId);
+            dbPrimaryShardStr = shard->toString();
+        }
+        collectionDetail.append("primary", dbPrimaryShardStr);
 
         BSONArray initialShards;
-        if (initShards == NULL)
+        if (initShardIds == NULL)
             initialShards = BSONArray();
         else {
             BSONArrayBuilder b;
-            for (unsigned i = 0; i < initShards->size(); i++) {
-                b.append((*initShards)[i].getName());
+            for (const ShardId& shardId : *initShardIds) {
+                b.append(shardId);
             }
             initialShards = b.arr();
         }
@@ -527,9 +544,9 @@ namespace {
         logChange(NULL, "shardCollection.start", ns, collectionDetail.obj());
 
         ChunkManagerPtr manager(new ChunkManager(ns, fieldsAndOrder, unique));
-        manager->createFirstChunks(dbPrimary,
+        manager->createFirstChunks(dbPrimaryShardId,
                                    initPoints,
-                                   initShards);
+                                   initShardIds);
         manager->loadExistingRanges(nullptr);
 
         CollectionInfo collInfo;
@@ -543,25 +560,26 @@ namespace {
         for (int i = 0;i < 4;i++) {
             if (i == 3) {
                 warning() << "too many tries updating initial version of " << ns
-                          << " on shard primary " << dbPrimary
+                          << " on shard primary " << dbPrimaryShardStr
                           << ", other mongoses may not see the collection as sharded immediately";
                 break;
             }
 
             try {
-                ShardConnection conn(dbPrimary.getConnString(), ns);
+                const auto shard = grid.shardRegistry()->getShard(dbPrimaryShardId);
+                ShardConnection conn(shard->getConnString(), ns);
                 bool isVersionSet = conn.setVersion();
                 conn.done();
                 if (!isVersionSet) {
                     warning() << "could not update initial version of "
-                              << ns << " on shard primary " << dbPrimary;
+                              << ns << " on shard primary " << dbPrimaryShardStr;
                 } else {
                     break;
                 }
             }
             catch (const DBException& e) {
                 warning() << "could not update initial version of " << ns
-                          << " on shard primary " << dbPrimary
+                          << " on shard primary " << dbPrimaryShardStr
                           << causedBy(e);
             }
 
@@ -602,16 +620,16 @@ namespace {
         }
 
         // Database does not exist, pick a shard and create a new entry
-        const Shard primaryShard = Shard::pick();
-        if (!primaryShard.ok()) {
+        const ShardPtr primaryShard = Shard::pick();
+        if (!primaryShard) {
             return Status(ErrorCodes::ShardNotFound, "can't find a shard to put new db on");
         }
 
-        log() << "Placing [" << dbName << "] on: " << primaryShard;
+        log() << "Placing [" << dbName << "] on: " << primaryShard->toString();
 
         DatabaseType db;
         db.setName(dbName);
-        db.setPrimary(primaryShard.getName());
+        db.setPrimary(primaryShard->getId());
         db.setSharded(false);
 
         BatchedCommandResponse response;
@@ -665,8 +683,10 @@ namespace {
         }
         catch (const DBException& e) {
             if (shardConnectionString.type() == ConnectionString::SET) {
+                shardConnectionPool.removeHost(shardConnectionString.getSetName());
                 ReplicaSetMonitor::remove(shardConnectionString.getSetName());
             }
+
             return Status(ErrorCodes::OperationFailed,
                           str::stream() << "couldn't connect to new shard "
                                         << e.what());
@@ -701,7 +721,7 @@ namespace {
         b.append(ShardType::host(),
                  rsMonitor ? rsMonitor->getServerAddress() : shardConnectionString.toString());
         if (maxSize > 0) {
-            b.append(ShardType::maxSize(), maxSize);
+            b.append(ShardType::maxSizeMB(), maxSize);
         }
         BSONObj shardDoc = b.obj();
 
@@ -764,8 +784,7 @@ namespace {
         BSONObj searchDoc = BSON(ShardType::name() << name);
 
         // Case 1: start draining chunks
-        BSONObj drainingDoc =
-            BSON(ShardType::name() << name << ShardType::draining(true));
+        BSONObj drainingDoc = BSON(ShardType::name() << name << ShardType::draining(true));
         BSONObj shardDoc = conn->findOne(ShardType::ConfigNS, drainingDoc);
         if (shardDoc.isEmpty()) {
             log() << "going to start draining shard: " << name;
@@ -820,9 +839,10 @@ namespace {
                 return status;
             }
 
-            Shard::removeShard(name);
+            grid.shardRegistry()->remove(name);
+
             shardConnectionPool.removeHost(name);
-            ReplicaSetMonitor::remove(name, true);
+            ReplicaSetMonitor::remove(name);
 
             Shard::reloadShardInfo();
             conn.done();
@@ -891,7 +911,7 @@ namespace {
                                coll.toBSON(),
                                true,    // upsert
                                false,   // multi
-                               NULL);
+                               &response);
         if (!status.isOK()) {
             return Status(status.code(),
                           str::stream() << "collection metadata write failed: "
@@ -972,8 +992,8 @@ namespace {
 
         // Delete data from all mongods
         for (vector<ShardType>::const_iterator i = allShards.begin(); i != allShards.end(); i++) {
-            Shard shard = Shard::make(i->getHost());
-            ScopedDbConnection conn(shard.getConnString());
+            const auto shard = grid.shardRegistry()->getShard(i->getName());
+            ScopedDbConnection conn(shard->getConnString());
 
             BSONObj info;
             if (!conn->dropCollection(collectionNs, &info)) {
@@ -984,7 +1004,7 @@ namespace {
                     continue;
                 }
 
-                errors[shard.getConnString().toString()] = info;
+                errors[shard->getConnString().toString()] = info;
             }
 
             conn.done();
@@ -1022,8 +1042,8 @@ namespace {
         LOG(1) << "dropCollection " << collectionNs << " chunk data deleted";
 
         for (vector<ShardType>::const_iterator i = allShards.begin(); i != allShards.end(); i++) {
-            Shard shard = Shard::make(i->getHost());
-            ScopedDbConnection conn(shard.getConnString());
+            const auto shard = grid.shardRegistry()->getShard(i->getName());
+            ScopedDbConnection conn(shard->getConnString());
 
             BSONObj res;
 
@@ -1141,13 +1161,23 @@ namespace {
             ScopedDbConnection conn(_configServerConnectionString, 30);
             BSONObj settingsDoc = conn->findOne(SettingsType::ConfigNS,
                                                 BSON(SettingsType::key(key)));
-            StatusWith<SettingsType> settingsResult = SettingsType::fromBSON(settingsDoc);
             conn.done();
 
-            if (!settingsResult.isOK()) {
-                return settingsResult.getStatus();
+            if (settingsDoc.isEmpty()) {
+                return Status(ErrorCodes::NoMatchingDocument,
+                              str::stream() << "can't find settings document with key: " << key);
             }
+
+            StatusWith<SettingsType> settingsResult = SettingsType::fromBSON(settingsDoc);
+            if (!settingsResult.isOK()) {
+                return Status(ErrorCodes::FailedToParse,
+                              str::stream() << "error while parsing settings document: "
+                                            << settingsDoc
+                                            << " : " << settingsResult.getStatus().toString());
+            }
+
             const SettingsType& settings = settingsResult.getValue();
+
             Status validationStatus = settings.validate();
             if (!validationStatus.isOK()) {
                 return validationStatus;
@@ -1211,9 +1241,11 @@ namespace {
                 StatusWith<ChunkType> chunkRes = ChunkType::fromBSON(chunkObj);
                 if (!chunkRes.isOK()) {
                     conn.done();
-                    return Status(ErrorCodes::FailedToParse,
-                                  str::stream() << "Failed to parse chunk BSONObj: "
-                                                << chunkRes.getStatus().reason());
+                    chunks->clear();
+                    return {ErrorCodes::FailedToParse,
+                            stream() << "Failed to parse chunk with id ("
+                                     << chunkObj[ChunkType::name()].toString() << "): "
+                                     << chunkRes.getStatus().reason()};
                 }
 
                 chunks->push_back(chunkRes.getValue());
@@ -1305,14 +1337,15 @@ namespace {
 
             StatusWith<ShardType> shardRes = ShardType::fromBSON(shardObj);
             if (!shardRes.isOK()) {
+                shards->clear();
                 conn.done();
                 return Status(ErrorCodes::FailedToParse,
-                              str::stream() << "Failed to parse chunk BSONObj: "
+                              str::stream() << "Failed to parse shard with id ("
+                                            <<  shardObj[ShardType::name()].toString() << "): "
                                             << shardRes.getStatus().reason());
             }
 
-            ShardType shard = shardRes.getValue();
-            shards->push_back(shard);
+            shards->push_back(shardRes.getValue());
         }
         conn.done();
 
@@ -1321,10 +1354,6 @@ namespace {
 
     bool CatalogManagerLegacy::isShardHost(const ConnectionString& connectionString) {
         return _getShardCount(BSON(ShardType::host(connectionString.toString())));
-    }
-
-    bool CatalogManagerLegacy::doShardsExist() {
-        return _getShardCount() > 0;
     }
 
     bool CatalogManagerLegacy::runUserManagementWriteCommand(const string& commandName,
@@ -1459,7 +1488,7 @@ namespace {
         // check if config servers are consistent
         if (!_isConsistentFromLastCheck()) {
             toBatchError(
-                Status(ErrorCodes::IncompatibleShardingMetadata,
+                Status(ErrorCodes::ConfigServersInconsistent,
                        "Data inconsistency detected amongst config servers"),
                 response);
             return;
@@ -1499,7 +1528,7 @@ namespace {
             }
         }
 
-        ConfigCoordinator exec(&dispatcher, _configServers);
+        ConfigCoordinator exec(&dispatcher, _configServerConnectionString);
         exec.executeBatch(request, response);
     }
 
@@ -1686,7 +1715,7 @@ namespace {
     }
 
     void CatalogManagerLegacy::_consistencyChecker() {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         while (!_inShutdown) {
             lk.unlock();
             const bool isConsistent = _checkConfigServersConsistent();
@@ -1700,7 +1729,7 @@ namespace {
     }
 
     bool CatalogManagerLegacy::_isConsistentFromLastCheck() {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         return _consistentFromLastCheck;
     }
 

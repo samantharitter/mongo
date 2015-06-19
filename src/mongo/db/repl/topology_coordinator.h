@@ -110,6 +110,13 @@ namespace repl {
          */
         virtual long long getTerm() const = 0;
 
+        /**
+         * Sets the latest term this member is aware of to the higher of its current value and
+         * the value passed in as "term".
+         * Returns true if the local term value is changed.
+         */
+        virtual bool updateTerm(long long term) = 0;
+
         ////////////////////////////////////////////////////////////
         //
         // Basic state manipulation methods.
@@ -190,7 +197,7 @@ namespace repl {
         ////////////////////////////////////////////////////////////
 
         // produces a reply to a replSetSyncFrom command
-        virtual void prepareSyncFromResponse(const ReplicationExecutor::CallbackData& data,
+        virtual void prepareSyncFromResponse(const ReplicationExecutor::CallbackArgs& data,
                                              const HostAndPort& target,
                                              const OpTime& lastOpApplied,
                                              BSONObjBuilder* response,
@@ -225,7 +232,7 @@ namespace repl {
                                                   ReplSetHeartbeatResponse* response) = 0;
 
         // produce a reply to a status request
-        virtual void prepareStatusResponse(const ReplicationExecutor::CallbackData& data,
+        virtual void prepareStatusResponse(const ReplicationExecutor::CallbackArgs& data,
                                            Date_t now,
                                            unsigned uptime,
                                            const OpTime& lastOpApplied,

@@ -35,8 +35,17 @@
 
 namespace mongo {
 
-    RemoteCommandTargeterMock::RemoteCommandTargeterMock():
-            _findHostReturnValue(Status(ErrorCodes::InternalError, "No return value set")) {
+    RemoteCommandTargeterMock::RemoteCommandTargeterMock()
+        : _findHostReturnValue(Status(ErrorCodes::InternalError, "No return value set")) {
+    }
+
+    RemoteCommandTargeterMock::~RemoteCommandTargeterMock() = default;
+
+    RemoteCommandTargeterMock* RemoteCommandTargeterMock::get(RemoteCommandTargeter* targeter) {
+        auto mock = dynamic_cast<RemoteCommandTargeterMock*>(targeter);
+        invariant(mock);
+
+        return mock;
     }
 
     StatusWith<HostAndPort> RemoteCommandTargeterMock::findHost(

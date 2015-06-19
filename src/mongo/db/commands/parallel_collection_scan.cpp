@@ -28,19 +28,20 @@
 *    it in the license file.
 */
 
+#include "mongo/platform/basic.h"
+
 #include "mongo/db/auth/authorization_session.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/database.h"
-#include "mongo/db/client.h"
 #include "mongo/db/commands.h"
-#include "mongo/db/commands/cursor_responses.h"
 #include "mongo/db/db_raii.h"
 #include "mongo/db/exec/multi_iterator.h"
+#include "mongo/db/query/cursor_responses.h"
 #include "mongo/util/touch_pages.h"
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::string;
 
     class ParallelCollectionScanCmd : public Command {
@@ -99,8 +100,7 @@ namespace mongo {
                                                     "numCursors has to be between 1 and 10000" <<
                                                     " was: " << numCursors ) );
 
-            OwnedPointerVector<RecordIterator> iterators(collection->getManyIterators(txn));
-
+            auto iterators = collection->getManyCursors(txn);
             if (iterators.size() < numCursors) {
                 numCursors = iterators.size();
             }
@@ -115,7 +115,7 @@ namespace mongo {
                 Status execStatus = PlanExecutor::make(txn, ws, mis, collection,
                                                        PlanExecutor::YIELD_AUTO, &rawExec);
                 invariant(execStatus.isOK());
-                auto_ptr<PlanExecutor> curExec(rawExec);
+                unique_ptr<PlanExecutor> curExec(rawExec);
 
                 // The PlanExecutor was registered on construction due to the YIELD_AUTO policy.
                 // We have to deregister it, as it will be registered with ClientCursor.
@@ -134,9 +134,9 @@ namespace mongo {
                 MultiIteratorStage* mis = static_cast<MultiIteratorStage*>(theExec->getRootStage());
 
                 // This wasn't called above as they weren't assigned yet
-                iterators[i]->saveState();
+                iterators[i]->savePositioned();
 
-                mis->addIterator(iterators.releaseAt(i));
+                mis->addIterator(std::move(iterators[i]));
             }
 
             {

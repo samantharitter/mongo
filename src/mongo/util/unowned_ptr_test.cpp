@@ -39,8 +39,8 @@ namespace mongo {
          //non-const
          std::unique_ptr<int> p1(new int(1));
          std::shared_ptr<int> p2(new int(2));
-         boost::scoped_ptr<int> p3(new int(3));
-         boost::shared_ptr<int> p4(new int(4));
+         std::unique_ptr<int> p3(new int(3));
+         std::shared_ptr<int> p4(new int(4));
 
          ASSERT_EQUALS(aNullPtr, unowned_ptr<int>());
          ASSERT_EQUALS(aNullPtr, unowned_ptr<int>({}));
@@ -52,8 +52,8 @@ namespace mongo {
          ASSERT_EQUALS(p2.get(), unowned_ptr<int>(unowned_ptr<int>(p2)));
 
          //const
-         boost::scoped_ptr<const int> cp1(new int(11));
-         boost::shared_ptr<const int> cp2(new int(12));
+         std::unique_ptr<const int> cp1(new int(11));
+         std::shared_ptr<const int> cp2(new int(12));
 
          ASSERT_EQUALS(aNullPtr, unowned_ptr<const int>());
          ASSERT_EQUALS(aNullPtr, unowned_ptr<const int>({}));
@@ -80,8 +80,8 @@ namespace mongo {
          //non-const
          std::unique_ptr<int> p1(new int(1));
          std::shared_ptr<int> p2(new int(2));
-         boost::scoped_ptr<int> p3(new int(3));
-         boost::shared_ptr<int> p4(new int(4));
+         std::unique_ptr<int> p3(new int(3));
+         std::shared_ptr<int> p4(new int(4));
 
          ASSERT_EQUALS(aNullPtr, (unowned_ptr<int>() = {}));
          ASSERT_EQUALS(aNullPtr, (unowned_ptr<int>() = nullptr));
@@ -93,7 +93,7 @@ namespace mongo {
 
          //const
          std::unique_ptr<const int> cp1(new int(11));
-         boost::shared_ptr<const int> cp2(new int(12));
+         std::shared_ptr<const int> cp2(new int(12));
 
          ASSERT_EQUALS(aNullPtr, (unowned_ptr<const int>() = {}));
          ASSERT_EQUALS(aNullPtr, (unowned_ptr<const int>() = nullptr));

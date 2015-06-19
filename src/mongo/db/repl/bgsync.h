@@ -28,12 +28,12 @@
 
 #pragma once
 
-#include <boost/thread/mutex.hpp>
-
-#include "mongo/util/queue.h"
+#include "mongo/db/jsobj.h"
 #include "mongo/db/repl/oplogreader.h"
 #include "mongo/db/repl/optime.h"
-#include "mongo/db/jsobj.h"
+#include "mongo/stdx/condition_variable.h"
+#include "mongo/stdx/mutex.h"
+#include "mongo/util/queue.h"
 
 namespace mongo {
 
@@ -50,7 +50,7 @@ namespace repl {
     public:
         virtual ~BackgroundSyncInterface();
 
-        // Gets the head of the buffer, but does not remove it. 
+        // Gets the head of the buffer, but does not remove it.
         // Returns true if an element was present at the head;
         // false if the queue was empty.
         virtual bool peek(BSONObj* op) = 0;
@@ -132,14 +132,14 @@ namespace repl {
     private:
         static BackgroundSync *s_instance;
         // protects creation of s_instance
-        static boost::mutex s_mutex;
+        static stdx::mutex s_mutex;
 
         // Production thread
         BlockingQueue<BSONObj> _buffer;
         OplogReader _syncSourceReader;
 
         // _mutex protects all of the class variables except _syncSourceReader and _buffer
-        mutable boost::mutex _mutex;
+        mutable stdx::mutex _mutex;
 
         OpTime _lastOpTimeFetched;
 
@@ -151,9 +151,9 @@ namespace repl {
 
         // if produce thread should be running
         bool _pause;
-        boost::condition _pausedCondition;
+        stdx::condition_variable _pausedCondition;
         bool _appliedBuffer;
-        boost::condition _appliedBufferCondition;
+        stdx::condition_variable _appliedBufferCondition;
 
         HostAndPort _syncSourceHost;
 
@@ -182,7 +182,7 @@ namespace repl {
         // bool for indicating resync need on this node and the mutex that protects it
         // The resync command sets this flag; the Applier thread observes and clears it.
         bool _initialSyncRequestedFlag;
-        boost::mutex _initialSyncMutex;
+        stdx::mutex _initialSyncMutex;
 
         // This setting affects the Applier prefetcher behavior.
         IndexPrefetchConfig _indexPrefetchConfig;

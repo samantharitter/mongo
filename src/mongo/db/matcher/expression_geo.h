@@ -31,7 +31,6 @@
 
 #pragma once
 
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/db/geo/geometry_container.h"
 #include "mongo/db/matcher/expression.h"
@@ -71,7 +70,7 @@ namespace mongo {
 
         // Name of the field in the query.
         std::string field;
-        boost::scoped_ptr<GeometryContainer> geoContainer;
+        std::unique_ptr<GeometryContainer> geoContainer;
         Predicate predicate;
     };
 
@@ -101,7 +100,7 @@ namespace mongo {
     private:
         BSONObj _rawObj;
         // Share ownership of our query with all of our clones
-        boost::shared_ptr<const GeoExpression> _query;
+        std::shared_ptr<const GeoExpression> _query;
     };
 
 
@@ -120,7 +119,7 @@ namespace mongo {
         std::string field;
 
         // The starting point of the near search. Use forward declaration of geometries.
-        boost::scoped_ptr<PointWithCRS> centroid;
+        std::unique_ptr<PointWithCRS> centroid;
 
         // Min and max distance from centroid that we're willing to search.
         // Distance is in units of the geometry's CRS, except SPHERE and isNearSphere => radians
@@ -170,7 +169,7 @@ namespace mongo {
     private:
         BSONObj _rawObj;
         // Share ownership of our query with all of our clones
-        boost::shared_ptr<const GeoNearExpression> _query;
+        std::shared_ptr<const GeoNearExpression> _query;
     };
 
 }  // namespace mongo

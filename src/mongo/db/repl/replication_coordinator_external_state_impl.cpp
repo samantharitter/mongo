@@ -32,7 +32,6 @@
 
 #include "mongo/db/repl/replication_coordinator_external_state_impl.h"
 
-#include <boost/thread.hpp>
 #include <sstream>
 #include <string>
 
@@ -44,20 +43,22 @@
 #include "mongo/db/concurrency/d_concurrency.h"
 #include "mongo/db/concurrency/write_conflict_exception.h"
 #include "mongo/db/dbhelpers.h"
-#include "mongo/db/service_context.h"
 #include "mongo/db/jsobj.h"
-#include "mongo/db/operation_context_impl.h"
 #include "mongo/db/op_observer.h"
+#include "mongo/db/operation_context_impl.h"
 #include "mongo/db/repl/bgsync.h"
 #include "mongo/db/repl/isself.h"
+#include "mongo/db/repl/last_vote.h"
 #include "mongo/db/repl/master_slave.h"
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/repl/replication_executor.h"
 #include "mongo/db/repl/rs_sync.h"
-#include "mongo/db/repl/last_vote.h"
+#include "mongo/db/service_context.h"
 #include "mongo/db/storage/storage_engine.h"
+#include "mongo/executor/network_interface.h"
 #include "mongo/s/d_state.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
@@ -84,16 +85,16 @@ namespace {
     ReplicationCoordinatorExternalStateImpl::~ReplicationCoordinatorExternalStateImpl() {}
 
     void ReplicationCoordinatorExternalStateImpl::startThreads() {
-        boost::lock_guard<boost::mutex> lk(_threadMutex);
+        stdx::lock_guard<stdx::mutex> lk(_threadMutex);
         if (_startedThreads) {
             return;
         }
         log() << "Starting replication applier threads";
-        _applierThread.reset(new boost::thread(runSyncThread));
+        _applierThread.reset(new stdx::thread(runSyncThread));
         BackgroundSync* bgsync = BackgroundSync::get();
-        _producerThread.reset(new boost::thread(stdx::bind(&BackgroundSync::producerThread,
+        _producerThread.reset(new stdx::thread(stdx::bind(&BackgroundSync::producerThread,
                                                            bgsync)));
-        _syncSourceFeedbackThread.reset(new boost::thread(stdx::bind(&SyncSourceFeedback::run,
+        _syncSourceFeedbackThread.reset(new stdx::thread(stdx::bind(&SyncSourceFeedback::run,
                                                                      &_syncSourceFeedback)));
         _startedThreads = true;
     }
@@ -103,7 +104,7 @@ namespace {
     }
 
     void ReplicationCoordinatorExternalStateImpl::shutdown() {
-        boost::lock_guard<boost::mutex> lk(_threadMutex);
+        stdx::lock_guard<stdx::mutex> lk(_threadMutex);
         if (_startedThreads) {
             log() << "Stopping replication applier threads";
             _syncSourceFeedback.shutdown();
@@ -294,8 +295,7 @@ namespace {
     }
 
     void ReplicationCoordinatorExternalStateImpl::closeConnections() {
-        MessagingPort::closeAllSockets(
-            ReplicationExecutor::NetworkInterface::kMessagingPortKeepOpen);
+        MessagingPort::closeAllSockets(executor::NetworkInterface::kMessagingPortKeepOpen);
     }
 
     void ReplicationCoordinatorExternalStateImpl::killAllUserOperations(OperationContext* txn) {

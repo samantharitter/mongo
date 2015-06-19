@@ -32,7 +32,6 @@
 
 #include "mongo/db/matcher/expression.h"
 
-#include <boost/scoped_ptr.hpp>
 
 /**
  * this contains all Expessions that define the structure of the tree
@@ -190,7 +189,7 @@ namespace mongo {
         void resetChild( MatchExpression* newChild) { _exp.reset(newChild); }
 
     private:
-        std::auto_ptr<MatchExpression> _exp;
+        std::unique_ptr<MatchExpression> _exp;
     };
 
 }

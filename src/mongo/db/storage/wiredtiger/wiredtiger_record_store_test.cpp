@@ -30,7 +30,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
 #include <sstream>
 #include <string>
 
@@ -51,7 +50,7 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
+    using std::unique_ptr;
     using std::string;
     using std::stringstream;
 
@@ -190,14 +189,14 @@ namespace mongo {
     }
 
     TEST(WiredTigerRecordStoreTest, Isolation1 ) {
-        scoped_ptr<HarnessHelper> harnessHelper( newHarnessHelper() );
-        scoped_ptr<RecordStore> rs( harnessHelper->newNonCappedRecordStore() );
+        unique_ptr<HarnessHelper> harnessHelper( newHarnessHelper() );
+        unique_ptr<RecordStore> rs( harnessHelper->newNonCappedRecordStore() );
 
         RecordId loc1;
         RecordId loc2;
 
         {
-            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            unique_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
             {
                 WriteUnitOfWork uow( opCtx.get() );
 
@@ -214,11 +213,11 @@ namespace mongo {
         }
 
         {
-            scoped_ptr<OperationContext> t1( harnessHelper->newOperationContext() );
-            scoped_ptr<OperationContext> t2( harnessHelper->newOperationContext() );
+            unique_ptr<OperationContext> t1( harnessHelper->newOperationContext() );
+            unique_ptr<OperationContext> t2( harnessHelper->newOperationContext() );
 
-            scoped_ptr<WriteUnitOfWork> w1( new WriteUnitOfWork( t1.get() ) );
-            scoped_ptr<WriteUnitOfWork> w2( new WriteUnitOfWork( t2.get() ) );
+            unique_ptr<WriteUnitOfWork> w1( new WriteUnitOfWork( t1.get() ) );
+            unique_ptr<WriteUnitOfWork> w2( new WriteUnitOfWork( t2.get() ) );
 
             rs->dataFor( t1.get(), loc1 );
             rs->dataFor( t2.get(), loc1 );
@@ -241,14 +240,14 @@ namespace mongo {
     }
 
     TEST(WiredTigerRecordStoreTest, Isolation2 ) {
-        scoped_ptr<HarnessHelper> harnessHelper( newHarnessHelper() );
-        scoped_ptr<RecordStore> rs( harnessHelper->newNonCappedRecordStore() );
+        unique_ptr<HarnessHelper> harnessHelper( newHarnessHelper() );
+        unique_ptr<RecordStore> rs( harnessHelper->newNonCappedRecordStore() );
 
         RecordId loc1;
         RecordId loc2;
 
         {
-            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            unique_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
             {
                 WriteUnitOfWork uow( opCtx.get() );
 
@@ -265,8 +264,8 @@ namespace mongo {
         }
 
         {
-            scoped_ptr<OperationContext> t1( harnessHelper->newOperationContext() );
-            scoped_ptr<OperationContext> t2( harnessHelper->newOperationContext() );
+            unique_ptr<OperationContext> t1( harnessHelper->newOperationContext() );
+            unique_ptr<OperationContext> t2( harnessHelper->newOperationContext() );
 
             // ensure we start transactions
             rs->dataFor( t1.get(), loc2 );
@@ -295,8 +294,8 @@ namespace mongo {
     }
 
     TEST(WiredTigerRecordStoreTest, SizeStorer1 ) {
-        scoped_ptr<WiredTigerHarnessHelper> harnessHelper(new WiredTigerHarnessHelper());
-        scoped_ptr<RecordStore> rs( harnessHelper->newNonCappedRecordStore() );
+        unique_ptr<WiredTigerHarnessHelper> harnessHelper(new WiredTigerHarnessHelper());
+        unique_ptr<RecordStore> rs( harnessHelper->newNonCappedRecordStore() );
 
         string uri = checked_cast<WiredTigerRecordStore*>( rs.get() )->getURI();
 
@@ -307,7 +306,7 @@ namespace mongo {
         int N = 12;
 
         {
-            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            unique_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
             {
                 WriteUnitOfWork uow( opCtx.get() );
                 for ( int i = 0; i < N; i++ ) {
@@ -319,7 +318,7 @@ namespace mongo {
         }
 
         {
-            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            unique_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
             ASSERT_EQUALS( N, rs->numRecords( opCtx.get() ) );
         }
 
@@ -333,18 +332,18 @@ namespace mongo {
         }
 
         {
-            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            unique_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
             rs.reset( new WiredTigerRecordStore( opCtx.get(), "a.b", uri,
                                                  false, -1, -1, NULL, &ss ) );
         }
 
         {
-            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            unique_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
             ASSERT_EQUALS( N, rs->numRecords( opCtx.get() ) );
         }
 
         {
-            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            unique_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
             WiredTigerRecoveryUnit* ru =
                 checked_cast<WiredTigerRecoveryUnit*>( opCtx->recoveryUnit() );
 
@@ -359,7 +358,7 @@ namespace mongo {
         }
 
         {
-            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            unique_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
             WiredTigerSizeStorer ss2(harnessHelper->conn(), indexUri);
             ss2.fillCache();
             long long numRecords;
@@ -402,7 +401,7 @@ namespace {
             expectedNumRecords = WiredTigerRecordStore::kCollectionScanOnCreationThreshold;
             expectedDataSize = expectedNumRecords * 2;
             {
-                scoped_ptr<OperationContext> opCtx(harnessHelper->newOperationContext());
+                unique_ptr<OperationContext> opCtx(harnessHelper->newOperationContext());
                 WriteUnitOfWork uow( opCtx.get() );
                 for (int i=0; i < expectedNumRecords; i++) {
                     ASSERT_OK(rs->insertRecord( opCtx.get(), "a", 2, false ).getStatus());
@@ -438,9 +437,9 @@ namespace {
             return dataSize;
         }
 
-        boost::scoped_ptr<WiredTigerHarnessHelper> harnessHelper;
-        boost::scoped_ptr<WiredTigerSizeStorer> sizeStorer;
-        boost::scoped_ptr<RecordStore> rs;
+        std::unique_ptr<WiredTigerHarnessHelper> harnessHelper;
+        std::unique_ptr<WiredTigerSizeStorer> sizeStorer;
+        std::unique_ptr<RecordStore> rs;
         std::string uri;
 
         long long expectedNumRecords;
@@ -449,7 +448,7 @@ namespace {
 
     // Basic validation - size storer data is not updated.
     TEST_F(SizeStorerValidateTest, Basic) {
-        scoped_ptr<OperationContext> opCtx(harnessHelper->newOperationContext());
+        unique_ptr<OperationContext> opCtx(harnessHelper->newOperationContext());
         ValidateResults results;
         BSONObjBuilder output;
         ASSERT_OK(rs->validate(opCtx.get(), false, false, NULL, &results, &output));
@@ -461,7 +460,7 @@ namespace {
 
     // Full validation - size storer data is updated.
     TEST_F(SizeStorerValidateTest, FullWithGoodAdaptor) {
-        scoped_ptr<OperationContext> opCtx(harnessHelper->newOperationContext());
+        unique_ptr<OperationContext> opCtx(harnessHelper->newOperationContext());
         GoodValidateAdaptor adaptor;
         ValidateResults results;
         BSONObjBuilder output;
@@ -474,7 +473,7 @@ namespace {
 
     // Full validation with a validation adaptor that fails - size storer data is not updated.
     TEST_F(SizeStorerValidateTest, FullWithBadAdapter) {
-        scoped_ptr<OperationContext> opCtx(harnessHelper->newOperationContext());
+        unique_ptr<OperationContext> opCtx(harnessHelper->newOperationContext());
         BadValidateAdaptor adaptor;
         ValidateResults results;
         BSONObjBuilder output;
@@ -489,7 +488,7 @@ namespace {
     TEST_F(SizeStorerValidateTest, InvalidSizeStorerAtCreation) {
         rs.reset(NULL);
 
-        scoped_ptr<OperationContext> opCtx(harnessHelper->newOperationContext());
+        unique_ptr<OperationContext> opCtx(harnessHelper->newOperationContext());
         sizeStorer->storeToCache(uri, expectedNumRecords*2, expectedDataSize*2);
         rs.reset(new WiredTigerRecordStore(opCtx.get(), "a.b", uri, false, -1, -1, NULL,
                                            sizeStorer.get()));
@@ -513,8 +512,8 @@ namespace {
 }  // namespace
 
 
-    StatusWith<RecordId> insertBSON(scoped_ptr<OperationContext>& opCtx,
-                                   scoped_ptr<RecordStore>& rs,
+    StatusWith<RecordId> insertBSON(unique_ptr<OperationContext>& opCtx,
+                                   unique_ptr<RecordStore>& rs,
                                    const Timestamp& opTime) {
         BSONObj obj = BSON( "ts" << opTime );
         WriteUnitOfWork wuow(opCtx.get());
@@ -535,9 +534,9 @@ namespace {
     // TODO make generic
     TEST(WiredTigerRecordStoreTest, OplogHack) {
         WiredTigerHarnessHelper harnessHelper;
-        scoped_ptr<RecordStore> rs(harnessHelper.newNonCappedRecordStore("local.oplog.foo"));
+        unique_ptr<RecordStore> rs(harnessHelper.newNonCappedRecordStore("local.oplog.foo"));
         {
-            scoped_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
+            unique_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
 
             // always illegal
             ASSERT_EQ(insertBSON(opCtx, rs, Timestamp(2,-1)).getStatus(),
@@ -571,7 +570,7 @@ namespace {
         }
 
         {
-            scoped_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
+            unique_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
             // find start
             ASSERT_EQ(rs->oplogStartHack(opCtx.get(), RecordId(0,1)), RecordId()); // nothing <=
             ASSERT_EQ(rs->oplogStartHack(opCtx.get(), RecordId(2,1)), RecordId(1,2)); // between
@@ -580,53 +579,53 @@ namespace {
         }
 
         {
-            scoped_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
+            unique_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
             rs->temp_cappedTruncateAfter(opCtx.get(), RecordId(2,2),  false); // no-op
         }
 
         {
-            scoped_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
+            unique_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
             ASSERT_EQ(rs->oplogStartHack(opCtx.get(), RecordId(2,3)), RecordId(2,2));
         }
 
         {
-            scoped_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
+            unique_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
             rs->temp_cappedTruncateAfter(opCtx.get(), RecordId(1,2),  false); // deletes 2,2
         }
 
         {
-            scoped_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
+            unique_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
             ASSERT_EQ(rs->oplogStartHack(opCtx.get(), RecordId(2,3)), RecordId(1,2));
         }
 
         {
-            scoped_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
+            unique_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
             rs->temp_cappedTruncateAfter(opCtx.get(), RecordId(1,2),  true); // deletes 1,2
         }
 
         {
-            scoped_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
+            unique_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
             ASSERT_EQ(rs->oplogStartHack(opCtx.get(), RecordId(2,3)), RecordId(1,1));
         }
 
         {
-            scoped_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
+            unique_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
             WriteUnitOfWork wuow(opCtx.get());
             ASSERT_OK(rs->truncate(opCtx.get())); // deletes 1,1 and leaves collection empty
             wuow.commit();
         }
 
         {
-            scoped_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
+            unique_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
             ASSERT_EQ(rs->oplogStartHack(opCtx.get(), RecordId(2,3)), RecordId());
         }
     }
 
     TEST(WiredTigerRecordStoreTest, OplogHackOnNonOplog) {
         WiredTigerHarnessHelper harnessHelper;
-        scoped_ptr<RecordStore> rs(harnessHelper.newNonCappedRecordStore("local.NOT_oplog.foo"));
+        unique_ptr<RecordStore> rs(harnessHelper.newNonCappedRecordStore("local.NOT_oplog.foo"));
 
-        scoped_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
+        unique_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
 
         BSONObj obj = BSON( "ts" << Timestamp(2,-1) );
         {
@@ -639,13 +638,13 @@ namespace {
     }
 
     TEST(WiredTigerRecordStoreTest, CappedOrder) {
-        scoped_ptr<WiredTigerHarnessHelper> harnessHelper( new WiredTigerHarnessHelper() );
-        scoped_ptr<RecordStore> rs(harnessHelper->newCappedRecordStore("a.b", 100000,10000));
+        unique_ptr<WiredTigerHarnessHelper> harnessHelper( new WiredTigerHarnessHelper() );
+        unique_ptr<RecordStore> rs(harnessHelper->newCappedRecordStore("a.b", 100000,10000));
 
         RecordId loc1;
 
         { // first insert a document
-            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            unique_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
             {
                 WriteUnitOfWork uow( opCtx.get() );
                 StatusWith<RecordId> res = rs->insertRecord( opCtx.get(), "a", 2, false );
@@ -656,23 +655,23 @@ namespace {
         }
 
         {
-            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
-            scoped_ptr<RecordIterator> it( rs->getIterator( opCtx.get(), loc1 ) );
-            ASSERT( !it->isEOF() );
-            ASSERT_EQ( loc1, it->getNext() );
-            ASSERT( it->isEOF() );
+            unique_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            auto cursor = rs->getCursor(opCtx.get());
+            auto record = cursor->seekExact(loc1);
+            ASSERT_EQ( loc1, record->id );
+            ASSERT(!cursor->next());
         }
 
         {
             // now we insert 2 docs, but commit the 2nd one fiirst
             // we make sure we can't find the 2nd until the first is commited
-            scoped_ptr<OperationContext> t1( harnessHelper->newOperationContext() );
-            scoped_ptr<WriteUnitOfWork> w1( new WriteUnitOfWork( t1.get() ) );
+            unique_ptr<OperationContext> t1( harnessHelper->newOperationContext() );
+            unique_ptr<WriteUnitOfWork> w1( new WriteUnitOfWork( t1.get() ) );
             rs->insertRecord( t1.get(), "b", 2, false );
             // do not commit yet
 
             { // create 2nd doc
-                scoped_ptr<OperationContext> t2( harnessHelper->newOperationContext() );
+                unique_ptr<OperationContext> t2( harnessHelper->newOperationContext() );
                 {
                     WriteUnitOfWork w2( t2.get() );
                     rs->insertRecord( t2.get(), "c", 2, false );
@@ -681,35 +680,33 @@ namespace {
             }
 
             { // state should be the same
-                scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
-                scoped_ptr<RecordIterator> it( rs->getIterator( opCtx.get(), loc1 ) );
-                ASSERT( !it->isEOF() );
-                ASSERT_EQ( loc1, it->getNext() );
-                ASSERT( it->isEOF() );
+                unique_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+                auto cursor = rs->getCursor(opCtx.get());
+                auto record = cursor->seekExact(loc1);
+                ASSERT_EQ( loc1, record->id );
+                ASSERT(!cursor->next());
             }
 
             w1->commit();
         }
 
         { // now all 3 docs should be visible
-            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
-            scoped_ptr<RecordIterator> it( rs->getIterator( opCtx.get(), loc1 ) );
-            ASSERT( !it->isEOF() );
-            ASSERT_EQ( loc1, it->getNext() );
-            ASSERT( !it->isEOF() );
-            it->getNext();
-            ASSERT( !it->isEOF() );
-            it->getNext();
-            ASSERT( it->isEOF() );
+            unique_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            auto cursor = rs->getCursor(opCtx.get());
+            auto record = cursor->seekExact(loc1);
+            ASSERT_EQ( loc1, record->id );
+            ASSERT(cursor->next());
+            ASSERT(cursor->next());
+            ASSERT(!cursor->next());
         }
     }
 
     TEST(WiredTigerRecordStoreTest, CappedCursorRollover) {
-        scoped_ptr<WiredTigerHarnessHelper> harnessHelper( new WiredTigerHarnessHelper() );
-        scoped_ptr<RecordStore> rs(harnessHelper->newCappedRecordStore("a.b", 10000, 5));
+        unique_ptr<WiredTigerHarnessHelper> harnessHelper( new WiredTigerHarnessHelper() );
+        unique_ptr<RecordStore> rs(harnessHelper->newCappedRecordStore("a.b", 10000, 5));
 
         { // first insert 3 documents
-            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            unique_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
             for ( int i = 0; i < 3; ++i ) {
                 WriteUnitOfWork uow( opCtx.get() );
                 StatusWith<RecordId> res = rs->insertRecord( opCtx.get(), "a", 2, false );
@@ -719,17 +716,14 @@ namespace {
         }
 
         // set up our cursor that should rollover
-        scoped_ptr<OperationContext> cursorCtx( harnessHelper->newOperationContext() );
-        scoped_ptr<RecordIterator> it;
-        it.reset( rs->getIterator(cursorCtx.get()) );
-        ASSERT_FALSE(it->isEOF());
-        it->getNext();
-        ASSERT_FALSE(it->isEOF());
-        it->saveState();
+        unique_ptr<OperationContext> cursorCtx( harnessHelper->newOperationContext() );
+        auto cursor = rs->getCursor(cursorCtx.get());
+        ASSERT(cursor->next());
+        cursor->savePositioned();
         cursorCtx->recoveryUnit()->abandonSnapshot();
 
         { // insert 100 documents which causes rollover
-            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            unique_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
             for ( int i = 0; i < 100; i++ ) {
                 WriteUnitOfWork uow( opCtx.get() );
                 StatusWith<RecordId> res = rs->insertRecord( opCtx.get(), "a", 2, false );
@@ -739,12 +733,12 @@ namespace {
         }
 
         // cursor should now be dead
-        ASSERT_FALSE(it->restoreState(cursorCtx.get()));
-        ASSERT_TRUE(it->isEOF());
+        ASSERT_FALSE(cursor->restore(cursorCtx.get()));
+        ASSERT(!cursor->next());
     }
 
     RecordId _oplogOrderInsertOplog( OperationContext* txn,
-                                    scoped_ptr<RecordStore>& rs,
+                                    unique_ptr<RecordStore>& rs,
                                     int inc ) {
         Timestamp opTime = Timestamp(5,inc);
         WiredTigerRecordStore* wrs = checked_cast<WiredTigerRecordStore*>(rs.get());
@@ -757,8 +751,8 @@ namespace {
     }
 
     TEST(WiredTigerRecordStoreTest, OplogOrder) {
-        scoped_ptr<WiredTigerHarnessHelper> harnessHelper( new WiredTigerHarnessHelper() );
-        scoped_ptr<RecordStore> rs(harnessHelper->newCappedRecordStore("local.oplog.foo",
+        unique_ptr<WiredTigerHarnessHelper> harnessHelper( new WiredTigerHarnessHelper() );
+        unique_ptr<RecordStore> rs(harnessHelper->newCappedRecordStore("local.oplog.foo",
                                                                        100000,
                                                                        -1));
 
@@ -771,7 +765,7 @@ namespace {
         RecordId loc1;
 
         { // first insert a document
-            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            unique_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
             {
                 WriteUnitOfWork uow( opCtx.get() );
                 loc1 = _oplogOrderInsertOplog( opCtx.get(), rs, 1 );
@@ -780,23 +774,23 @@ namespace {
         }
 
         {
-            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
-            scoped_ptr<RecordIterator> it( rs->getIterator( opCtx.get(), loc1 ) );
-            ASSERT( !it->isEOF() );
-            ASSERT_EQ( loc1, it->getNext() );
-            ASSERT( it->isEOF() );
+            unique_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            auto cursor = rs->getCursor(opCtx.get());
+            auto record = cursor->seekExact(loc1);
+            ASSERT_EQ( loc1, record->id );
+            ASSERT(!cursor->next());
         }
 
         {
             // now we insert 2 docs, but commit the 2nd one fiirst
             // we make sure we can't find the 2nd until the first is commited
-            scoped_ptr<OperationContext> t1( harnessHelper->newOperationContext() );
-            scoped_ptr<WriteUnitOfWork> w1( new WriteUnitOfWork( t1.get() ) );
+            unique_ptr<OperationContext> t1( harnessHelper->newOperationContext() );
+            unique_ptr<WriteUnitOfWork> w1( new WriteUnitOfWork( t1.get() ) );
             _oplogOrderInsertOplog( t1.get(), rs, 2 );
             // do not commit yet
 
             { // create 2nd doc
-                scoped_ptr<OperationContext> t2( harnessHelper->newOperationContext() );
+                unique_ptr<OperationContext> t2( harnessHelper->newOperationContext() );
                 {
                     WriteUnitOfWork w2( t2.get() );
                     _oplogOrderInsertOplog( t2.get(), rs, 3 );
@@ -805,42 +799,40 @@ namespace {
             }
 
             { // state should be the same
-                scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
-                scoped_ptr<RecordIterator> it( rs->getIterator( opCtx.get(), loc1 ) );
-                ASSERT( !it->isEOF() );
-                ASSERT_EQ( loc1, it->getNext() );
-                ASSERT( it->isEOF() );
+                unique_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+                auto cursor = rs->getCursor(opCtx.get());
+                auto record = cursor->seekExact(loc1);
+                ASSERT_EQ( loc1, record->id );
+                ASSERT(!cursor->next());
             }
 
             w1->commit();
         }
 
         { // now all 3 docs should be visible
-            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
-            scoped_ptr<RecordIterator> it( rs->getIterator( opCtx.get(), loc1 ) );
-            ASSERT( !it->isEOF() );
-            ASSERT_EQ( loc1, it->getNext() );
-            ASSERT( !it->isEOF() );
-            it->getNext();
-            ASSERT( !it->isEOF() );
-            it->getNext();
-            ASSERT( it->isEOF() );
+            unique_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            auto cursor = rs->getCursor(opCtx.get());
+            auto record = cursor->seekExact(loc1);
+            ASSERT_EQ( loc1, record->id );
+            ASSERT(cursor->next());
+            ASSERT(cursor->next());
+            ASSERT(!cursor->next());
         }
     }
 
     TEST(WiredTigerRecordStoreTest, StorageSizeStatisticsDisabled) {
         WiredTigerHarnessHelper harnessHelper("statistics=(none)");
-        scoped_ptr<RecordStore> rs(harnessHelper.newNonCappedRecordStore("a.b"));
+        unique_ptr<RecordStore> rs(harnessHelper.newNonCappedRecordStore("a.b"));
 
-        scoped_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
+        unique_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
         ASSERT_THROWS(rs->storageSize(opCtx.get()), UserException);
     }
 
     TEST(WiredTigerRecordStoreTest, AppendCustomStatsMetadata) {
         WiredTigerHarnessHelper harnessHelper;
-        scoped_ptr<RecordStore> rs(harnessHelper.newNonCappedRecordStore("a.b"));
+        unique_ptr<RecordStore> rs(harnessHelper.newNonCappedRecordStore("a.b"));
 
-        scoped_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
+        unique_ptr<OperationContext> opCtx(harnessHelper.newOperationContext());
         BSONObjBuilder builder;
         rs->appendCustomStats(opCtx.get(), &builder, 1.0);
         BSONObj customStats = builder.obj();
@@ -861,13 +853,13 @@ namespace {
     }
 
     TEST(WiredTigerRecordStoreTest, CappedCursorYieldFirst) {
-        scoped_ptr<WiredTigerHarnessHelper> harnessHelper( new WiredTigerHarnessHelper() );
-        scoped_ptr<RecordStore> rs(harnessHelper->newCappedRecordStore("a.b", 10000, 50));
+        unique_ptr<WiredTigerHarnessHelper> harnessHelper( new WiredTigerHarnessHelper() );
+        unique_ptr<RecordStore> rs(harnessHelper->newCappedRecordStore("a.b", 10000, 50));
 
         RecordId loc1;
 
         { // first insert a document
-            scoped_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
+            unique_ptr<OperationContext> opCtx( harnessHelper->newOperationContext() );
             WriteUnitOfWork uow( opCtx.get() );
             StatusWith<RecordId> res = rs->insertRecord( opCtx.get(), "a", 2, false );
             ASSERT_OK( res.getStatus() );
@@ -875,16 +867,16 @@ namespace {
             uow.commit();
         }
 
-        scoped_ptr<OperationContext> cursorCtx( harnessHelper->newOperationContext() );
-        scoped_ptr<RecordIterator> it( rs->getIterator(cursorCtx.get()) );
-        ASSERT_FALSE(it->isEOF());
+        unique_ptr<OperationContext> cursorCtx( harnessHelper->newOperationContext() );
+        auto cursor = rs->getCursor(cursorCtx.get());
 
         // See that things work if you yield before you first call getNext().
-        it->saveState();
+        cursor->savePositioned();
         cursorCtx->recoveryUnit()->abandonSnapshot();
-        ASSERT_TRUE(it->restoreState(cursorCtx.get()));
-        ASSERT_EQ(loc1, it->getNext());
-        ASSERT_TRUE(it->isEOF());
+        ASSERT_TRUE(cursor->restore(cursorCtx.get()));
+        auto record = cursor->next();
+        ASSERT_EQ( loc1, record->id );
+        ASSERT(!cursor->next());
     }
 
 }  // namespace mongo

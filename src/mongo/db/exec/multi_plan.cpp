@@ -51,7 +51,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::list;
     using std::vector;
@@ -213,7 +213,7 @@ namespace mongo {
             numResults = std::min(static_cast<size_t>(*query.getParsed().getLimit()),
                                   numResults);
         }
-        else if (!query.getParsed().fromFindCommand() && query.getParsed().getBatchSize()) {
+        else if (!query.getParsed().isFromFindCommand() && query.getParsed().getBatchSize()) {
             numResults = std::min(static_cast<size_t>(*query.getParsed().getBatchSize()),
                                   numResults);
         }
@@ -245,7 +245,7 @@ namespace mongo {
 
         // After picking best plan, ranking will own plan stats from
         // candidate solutions (winner and losers).
-        std::auto_ptr<PlanRankingDecision> ranking(new PlanRankingDecision);
+        std::unique_ptr<PlanRankingDecision> ranking(new PlanRankingDecision);
         _bestPlanIdx = PlanRanker::pickBestPlan(_candidates, ranking.get());
         verify(_bestPlanIdx >= 0 && _bestPlanIdx < static_cast<int>(_candidates.size()));
 
@@ -316,9 +316,7 @@ namespace mongo {
             if (ix == (size_t)_backupPlanIdx) { continue; }
 
             PlanStageStats* stats = _candidates[ix].root->getStats();
-            if (stats) {
-                candidateStats.push_back(stats);
-            }
+            candidateStats.push_back(stats);
         }
 
         return candidateStats.release();
@@ -502,7 +500,7 @@ namespace mongo {
         }
         _commonStats.isEOF = isEOF();
 
-        auto_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_MULTI_PLAN));
+        unique_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_MULTI_PLAN));
 
         return ret.release();
     }

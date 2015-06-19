@@ -32,6 +32,7 @@
 #include "mongo/db/dbmessage.h"
 #include "mongo/db/jsobj.h"
 #include "mongo/rpc/document_range.h"
+#include "mongo/rpc/protocol.h"
 #include "mongo/rpc/request_interface.h"
 
 namespace mongo {
@@ -87,13 +88,15 @@ namespace rpc {
          */
         DocumentRange getInputDocs() const final;
 
+        Protocol getProtocol() const final;
+
     private:
         const Message* _message;
         // TODO: metadata will be handled in SERVER-18236
         // for now getMetadata() is a no op
         DbMessage _dbMessage;
         QueryMessage _queryMessage;
-        std::string _database;
+        StringData _database;
 
         BSONObj _upconvertedMetadata;
         BSONObj _upconvertedCommandArgs;

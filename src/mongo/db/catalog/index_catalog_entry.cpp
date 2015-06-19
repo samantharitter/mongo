@@ -101,7 +101,7 @@ namespace mongo {
         _head = _catalogHead( txn );
         _isMultikey = _catalogIsMultikey( txn );
 
-        BSONElement filterElement = _descriptor->getInfoElement("filter");
+        BSONElement filterElement = _descriptor->getInfoElement("partialFilterExpression");
         if ( filterElement.type() ) {
             invariant( filterElement.isABSONObj() );
             BSONObj filter = filterElement.Obj();
@@ -185,7 +185,7 @@ namespace mongo {
         OperationContext::RecoveryUnitState const _oldRecoveryUnitState;
 
         // Owned and life-time is controlled
-        const boost::scoped_ptr<RecoveryUnit> _newRecoveryUnit;
+        const std::unique_ptr<RecoveryUnit> _newRecoveryUnit;
     };
 
     void IndexCatalogEntry::setMultikey(OperationContext* txn) {

@@ -33,7 +33,6 @@
 #include "mongo/s/balance.h"
 
 #include <algorithm>
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/client/dbclientcursor.h"
 #include "mongo/db/client.h"
@@ -55,6 +54,7 @@
 #include "mongo/s/catalog/dist_lock_manager.h"
 #include "mongo/s/grid.h"
 #include "mongo/s/client/shard.h"
+#include "mongo/s/client/shard_registry.h"
 #include "mongo/s/type_mongos.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/fail_point_service.h"
@@ -64,9 +64,9 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
-    using boost::shared_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::shared_ptr;
+    using std::unique_ptr;
     using std::map;
     using std::set;
     using std::string;
@@ -97,14 +97,15 @@ namespace mongo {
                 grid.catalogManager()->getGlobalSettings(SettingsType::BalancerDocKey);
 
             const bool isBalSettingsAbsent =
-                balSettingsResult.getStatus() == ErrorCodes::NoSuchKey;
+                balSettingsResult.getStatus() == ErrorCodes::NoMatchingDocument;
 
             if (!balSettingsResult.isOK() && !isBalSettingsAbsent) {
                 warning() << balSettingsResult.getStatus();
                 return movedCount;
             }
 
-            const SettingsType& balancerConfig = balSettingsResult.getValue();
+            const SettingsType& balancerConfig = isBalSettingsAbsent ?
+                SettingsType{} : balSettingsResult.getValue();
 
             if ((!isBalSettingsAbsent && !grid.shouldBalance(balancerConfig)) ||
                  MONGO_FAIL_POINT(skipBalanceRound)) {
@@ -157,7 +158,7 @@ namespace mongo {
                 }
 
                 BSONObj res;
-                if (c->moveAndCommit(Shard::make(migrateInfo->to),
+                if (c->moveAndCommit(migrateInfo->to,
                                      Chunk::MaxChunkSize,
                                      writeConcern,
                                      waitForDelete,
@@ -256,28 +257,39 @@ namespace mongo {
     }
 
     bool Balancer::_checkOIDs() {
-        vector<Shard> all;
-        Shard::getAllShards( all );
+        vector<ShardId> all;
+        grid.shardRegistry()->getAllShardIds(&all);
 
-        map<int,Shard> oids;
+        // map of OID machine ID => shardId
+        map<int, string> oids;
 
-        for ( vector<Shard>::iterator i=all.begin(); i!=all.end(); ++i ) {
-            Shard s = *i;
-            BSONObj f = s.runCommand( "admin" , "features" );
+        for (const ShardId& shardId : all) {
+            const auto s = grid.shardRegistry()->getShard(shardId);
+            if (!s) {
+                continue;
+            }
+
+            BSONObj f = s->runCommand("admin", "features");
             if ( f["oidMachine"].isNumber() ) {
                 int x = f["oidMachine"].numberInt();
-                if ( oids.count(x) == 0 ) {
-                    oids[x] = s;
+                if (oids.count(x) == 0) {
+                    oids[x] = shardId;
                 }
                 else {
-                    log() << "error: 2 machines have " << x << " as oid machine piece " << s.toString() << " and " << oids[x].toString();
-                    s.runCommand( "admin" , BSON( "features" << 1 << "oidReset" << 1 ) );
-                    oids[x].runCommand( "admin" , BSON( "features" << 1 << "oidReset" << 1 ) );
+                    log() << "error: 2 machines have " << x
+                          << " as oid machine piece: " << shardId
+                          << " and " << oids[x];
+                    s->runCommand("admin", BSON("features" << 1 << "oidReset" << 1));
+
+                    const auto otherShard = grid.shardRegistry()->getShard(oids[x]);
+                    if (otherShard) {
+                        otherShard->runCommand("admin", BSON("features" << 1 << "oidReset" << 1));
+                    }
                     return false;
                 }
             }
             else {
-                log() << "warning: oidMachine not set on: " << s.toString();
+                log() << "warning: oidMachine not set on: " << s->toString();
             }
         }
         return true;
@@ -528,12 +540,13 @@ namespace mongo {
                 auto balSettingsResult =
                     grid.catalogManager()->getGlobalSettings(SettingsType::BalancerDocKey);
                 const bool isBalSettingsAbsent =
-                    balSettingsResult.getStatus() == ErrorCodes::NoSuchKey;
+                    balSettingsResult.getStatus() == ErrorCodes::NoMatchingDocument;
                 if (!balSettingsResult.isOK() && !isBalSettingsAbsent) {
                     warning() << balSettingsResult.getStatus();
                     return;
                 }
-                const SettingsType& balancerConfig = balSettingsResult.getValue();
+                const SettingsType& balancerConfig = isBalSettingsAbsent ?
+                    SettingsType{} : balSettingsResult.getValue();
 
                 // now make sure we should even be running
                 if ((!isBalSettingsAbsent && !grid.shouldBalance(balancerConfig)) ||

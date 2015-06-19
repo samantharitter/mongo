@@ -28,15 +28,17 @@
 *    it in the license file.
 */
 
+#include "mongo/platform/basic.h"
+
 #include <memory>
 
 #include "mongo/db/auth/authorization_session.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/client.h"
 #include "mongo/db/commands.h"
-#include "mongo/db/commands/cursor_responses.h"
 #include "mongo/db/db_raii.h"
 #include "mongo/db/exec/multi_iterator.h"
+#include "mongo/db/query/cursor_responses.h"
 
 namespace mongo {
 
@@ -78,18 +80,17 @@ namespace mongo {
                                                   "ns does not exist: " + ns.ns()));
             }
 
-            std::auto_ptr<RecordIterator> iter(
-                collection->getRecordStore()->getIteratorForRepair(txn));
-            if (iter.get() == NULL) {
+            auto cursor = collection->getRecordStore()->getCursorForRepair(txn);
+            if (!cursor) {
                 return appendCommandStatus(result,
                                            Status(ErrorCodes::CommandNotSupported,
                                                   "repair iterator not supported"));
             }
 
-            std::auto_ptr<WorkingSet> ws(new WorkingSet());
-            std::auto_ptr<MultiIteratorStage> stage(new MultiIteratorStage(txn, ws.get(),
+            std::unique_ptr<WorkingSet> ws(new WorkingSet());
+            std::unique_ptr<MultiIteratorStage> stage(new MultiIteratorStage(txn, ws.get(),
                                                                            collection));
-            stage->addIterator(iter.release());
+            stage->addIterator(std::move(cursor));
 
             PlanExecutor* rawExec;
             Status execStatus = PlanExecutor::make(txn,
@@ -99,7 +100,7 @@ namespace mongo {
                                                    PlanExecutor::YIELD_AUTO,
                                                    &rawExec);
             invariant(execStatus.isOK());
-            std::auto_ptr<PlanExecutor> exec(rawExec);
+            std::unique_ptr<PlanExecutor> exec(rawExec);
 
             // 'exec' will be used in getMore(). It was automatically registered on construction
             // due to the auto yield policy, so it could yield during plan selection. We deregister

@@ -32,12 +32,11 @@
 
 #include "mongo/s/catalog/legacy/legacy_dist_lock_pinger.h"
 
-#include <boost/thread.hpp>
-
 #include "mongo/client/connpool.h"
 #include "mongo/s/catalog/legacy/distlock.h"
 #include "mongo/s/type_lockpings.h"
 #include "mongo/s/type_locks.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/log.h"
 
@@ -157,7 +156,7 @@ namespace {
 
                 // Remove old locks, if possible
                 // Make sure no one else is adding to this list at the same time
-                boost::lock_guard<boost::mutex> lk(_mutex);
+                stdx::lock_guard<stdx::mutex> lk(_mutex);
 
                 int numOldLocks = _unlockList.size();
                 if (numOldLocks > 0) {
@@ -241,7 +240,7 @@ namespace {
 
         {
             // Make sure we don't start multiple threads for a process id.
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
 
             if (_inShutdown) {
                 return Status(ErrorCodes::ShutdownInProgress,
@@ -263,8 +262,8 @@ namespace {
         }
 
         {
-            boost::lock_guard<boost::mutex> lk(_mutex);
-            boost::thread thread(stdx::bind(&LegacyDistLockPinger::distLockPingThread,
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
+            stdx::thread thread(stdx::bind(&LegacyDistLockPinger::distLockPingThread,
                                             this,
                                             conn,
                                             getJSTimeVirtualThreadSkew(),
@@ -280,18 +279,18 @@ namespace {
 
     void LegacyDistLockPinger::addUnlockOID(const DistLockHandle& lockID) {
         // Modifying the lock from some other thread
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         _unlockList.push_back(lockID);
     }
 
     bool LegacyDistLockPinger::willUnlockOID(const DistLockHandle& lockID) {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         return find(_unlockList.begin(), _unlockList.end(), lockID) != _unlockList.end();
     }
 
     void LegacyDistLockPinger::stopPing(const ConnectionString& conn, const string& processId) {
         {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
 
             string pingId = pingThreadId(conn, processId);
 
@@ -303,7 +302,7 @@ namespace {
 
     void LegacyDistLockPinger::shutdown() {
         {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
             _inShutdown = true;
             _pingStoppedCV.notify_all();
         }
@@ -323,7 +322,7 @@ namespace {
             return true;
         }
 
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
 
         if (_inShutdown) {
             return true;
@@ -335,7 +334,7 @@ namespace {
     void LegacyDistLockPinger::acknowledgeStopPing(const ConnectionString& addr,
                                                    const string& processId) {
         {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
 
             string pingId = pingThreadId(addr, processId);
 
@@ -354,7 +353,7 @@ namespace {
     }
 
     void LegacyDistLockPinger::waitTillNextPingTime(stdx::chrono::milliseconds duration) {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         _pingStoppedCV.wait_for(lk, duration);
     }
 }

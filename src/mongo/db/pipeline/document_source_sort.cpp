@@ -30,8 +30,6 @@
 
 #include "mongo/db/pipeline/document_source.h"
 
-#include <boost/make_shared.hpp>
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/db/jsobj.h"
 #include "mongo/db/pipeline/document.h"
@@ -42,7 +40,7 @@
 namespace mongo {
 
     using boost::intrusive_ptr;
-    using boost::scoped_ptr;
+    using std::unique_ptr;
     using std::make_pair;
     using std::string;
     using std::vector;
@@ -239,7 +237,7 @@ namespace mongo {
                 msgasserted(17196, "can only mergePresorted from MergeCursors and CommandShards");
             }
         } else {
-            scoped_ptr<MySorter> sorter (MySorter::make(makeSortOptions(), Comparator(*this)));
+            unique_ptr<MySorter> sorter (MySorter::make(makeSortOptions(), Comparator(*this)));
             while (boost::optional<Document> next = pSource->getNext()) {
                 sorter->add(extractKey(*next), *next);
             }
@@ -266,9 +264,9 @@ namespace mongo {
     };
 
     void DocumentSourceSort::populateFromCursors(const vector<DBClientCursor*>& cursors) {
-        vector<boost::shared_ptr<MySorter::Iterator> > iterators;
+        vector<std::shared_ptr<MySorter::Iterator> > iterators;
         for (size_t i = 0; i < cursors.size(); i++) {
-            iterators.push_back(boost::make_shared<IteratorFromCursor>(this, cursors[i]));
+            iterators.push_back(std::make_shared<IteratorFromCursor>(this, cursors[i]));
         }
 
         _output.reset(MySorter::Iterator::merge(iterators, makeSortOptions(), Comparator(*this)));
@@ -292,9 +290,9 @@ namespace mongo {
     };
 
     void DocumentSourceSort::populateFromBsonArrays(const vector<BSONArray>& arrays) {
-        vector<boost::shared_ptr<MySorter::Iterator> > iterators;
+        vector<std::shared_ptr<MySorter::Iterator> > iterators;
         for (size_t i = 0; i < arrays.size(); i++) {
-            iterators.push_back(boost::make_shared<IteratorFromBsonArray>(this, arrays[i]));
+            iterators.push_back(std::make_shared<IteratorFromBsonArray>(this, arrays[i]));
         }
 
         _output.reset(MySorter::Iterator::merge(iterators, makeSortOptions(), Comparator(*this)));

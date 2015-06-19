@@ -39,6 +39,7 @@ env.Library(
     ],
     source=[
         'factory.cpp',
+        'object_check.cpp',
     ],
     LIBDEPS=[
         'command_reply',
@@ -113,7 +114,27 @@ env.Library(
         'metadata',
     ],
     source=[
-        'metadata.cpp'
+        'metadata.cpp',
+        'metadata/audit_metadata.cpp',
+        'metadata/server_selection_metadata.cpp',
+        'metadata/sharding_metadata.cpp',
+    ],
+    LIBDEPS=[
+        '$BUILD_DIR/mongo/client/read_preference',
+        '$BUILD_DIR/mongo/util/decorable',
+    ],
+)
+
+env.CppUnitTest(
+    target=[
+        'metadata_test',
+    ],
+    source=[
+        'metadata/server_selection_metadata_test.cpp',
+        'metadata/sharding_metadata_test.cpp',
+    ],
+    LIBDEPS=[
+        'metadata',
     ],
 )
 
@@ -126,11 +147,12 @@ env.CppUnitTest(
         'command_reply_test.cpp',
         'command_request_builder_test.cpp',
         'command_request_test.cpp',
+        'legacy_request_test.cpp',
+        'object_check_test.cpp',
         'protocol_test.cpp',
     ],
     LIBDEPS=[
-        'command_request',
-        'command_reply',
-        'protocol',
+        'rpc',
+        '$BUILD_DIR/mongo/client/clientdriver'
     ],
 )

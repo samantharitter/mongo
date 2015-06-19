@@ -38,6 +38,8 @@
 
 #include "mongo/db/concurrency/write_conflict_exception.h"
 #include "mongo/db/index/index_descriptor.h"
+#include "mongo/db/service_context.h"
+#include "mongo/db/storage/wiredtiger/wiredtiger_customization_hooks.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_global_options.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_index.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_record_store.h"
@@ -109,6 +111,8 @@ namespace mongo {
         ss << "checkpoint=(wait=" << wiredTigerGlobalOptions.checkpointDelaySecs;
         ss << ",log_size=2GB),";
         ss << "statistics_log=(wait=" << wiredTigerGlobalOptions.statisticsLogDelaySecs << "),";
+        ss << WiredTigerCustomizationHooks::get(
+                getGlobalServiceContext())->getOpenConfig("metadata");
         ss << extraOpenOptions;
         string config = ss.str();
         log() << "wiredtiger_open config: " << config;
@@ -338,7 +342,7 @@ namespace mongo {
         if ( ret == EBUSY ) {
             // this is expected, queue it up
             {
-                boost::lock_guard<boost::mutex> lk( _identToDropMutex );
+                stdx::lock_guard<stdx::mutex> lk( _identToDropMutex );
                 _identToDrop.insert( uri );
             }
             _sessionCache->closeAll();
@@ -354,14 +358,14 @@ namespace mongo {
             _sizeStorerSyncTracker.resetLastTime();
             syncSizeInfo(false);
         }
-        boost::lock_guard<boost::mutex> lk( _identToDropMutex );
+        stdx::lock_guard<stdx::mutex> lk( _identToDropMutex );
         return !_identToDrop.empty();
     }
 
     void WiredTigerKVEngine::dropAllQueued() {
         set<string> mine;
         {
-            boost::lock_guard<boost::mutex> lk( _identToDropMutex );
+            stdx::lock_guard<stdx::mutex> lk( _identToDropMutex );
             mine = _identToDrop;
         }
 
@@ -389,7 +393,7 @@ namespace mongo {
         }
 
         {
-            boost::lock_guard<boost::mutex> lk( _identToDropMutex );
+            stdx::lock_guard<stdx::mutex> lk( _identToDropMutex );
             for ( set<string>::const_iterator it = deleted.begin(); it != deleted.end(); ++it ) {
                 _identToDrop.erase( *it );
             }

@@ -58,8 +58,8 @@
 
 namespace mongo {
 
-    using boost::shared_ptr;
-    using std::auto_ptr;
+    using std::shared_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::hex;
     using std::map;
@@ -99,7 +99,7 @@ namespace mongo {
             const JEntry *e;  // local db sentinel is already parsed out here into dbName
 
             // if not one of the two simple JEntry's above, this is the operation:
-            boost::shared_ptr<DurOp> op;
+            std::shared_ptr<DurOp> op;
         };
 
 
@@ -157,7 +157,7 @@ namespace mongo {
                 const char *p = _uncompressed.c_str();
                 verify(compressedLen == _h.sectionLen() - sizeof(JSectFooter) - sizeof(JSectHeader));
 
-                _entries = auto_ptr<BufReader>(new BufReader(p, _uncompressed.size()));
+                _entries = unique_ptr<BufReader>(new BufReader(p, _uncompressed.size()));
             }
 
             // We work with the uncompressed buffer when doing a WRITETODATAFILES (for speed)
@@ -190,7 +190,7 @@ namespace mongo {
                     case JEntry::OpCode_FileCreated:
                     case JEntry::OpCode_DropDb: {
                         e.dbName = 0;
-                        boost::shared_ptr<DurOp> op = DurOp::read(lenOrOpCode, *_entries);
+                        std::shared_ptr<DurOp> op = DurOp::read(lenOrOpCode, *_entries);
                         if (_doDurOps) {
                             e.op = op;
                         }
@@ -228,7 +228,7 @@ namespace mongo {
 
 
         private:
-            auto_ptr<BufReader> _entries;
+            unique_ptr<BufReader> _entries;
             const JSectHeader _h;
             const char *_lastDbName; // pointer into mmaped journal file
             const bool _doDurOps;
@@ -267,7 +267,7 @@ namespace mongo {
         }
 
         void RecoveryJob::close() {
-            boost::lock_guard<boost::mutex> lk(_mx);
+            stdx::lock_guard<stdx::mutex> lk(_mx);
             _close();
         }
 
@@ -302,7 +302,7 @@ namespace mongo {
                     log() << "journal error applying writes, file " << fn << " is not open" << endl;
                     verify(false);
                 }
-                boost::shared_ptr<DurableMappedFile> sp (new DurableMappedFile);
+                std::shared_ptr<DurableMappedFile> sp (new DurableMappedFile);
                 verify(sp->open(fn, false));
                 rj._mmfs.push_back(sp);
                 mmf = sp.get();
@@ -387,7 +387,7 @@ namespace mongo {
 
         void RecoveryJob::processSection(const JSectHeader *h, const void *p, unsigned len, const JSectFooter *f) {
             LockMongoFilesShared lkFiles; // for RecoveryJob::Last
-            boost::lock_guard<boost::mutex> lk(_mx);
+            stdx::lock_guard<stdx::mutex> lk(_mx);
 
             // Check the footer checksum before doing anything else.
             if (_recovering) {
@@ -412,12 +412,12 @@ namespace mongo {
                 return;
             }
 
-            auto_ptr<JournalSectionIterator> i;
+            unique_ptr<JournalSectionIterator> i;
             if( _recovering ) {
-                i = auto_ptr<JournalSectionIterator>(new JournalSectionIterator(*h, p, len, _recovering));
+                i = unique_ptr<JournalSectionIterator>(new JournalSectionIterator(*h, p, len, _recovering));
             }
             else { 
-                i = auto_ptr<JournalSectionIterator>(new JournalSectionIterator(*h, /*after header*/p, /*w/out header*/len));
+                i = unique_ptr<JournalSectionIterator>(new JournalSectionIterator(*h, /*after header*/p, /*w/out header*/len));
             }
 
             // we use a static so that we don't have to reallocate every time through.  occasionally we 

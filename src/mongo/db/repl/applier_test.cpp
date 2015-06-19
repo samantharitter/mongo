@@ -103,24 +103,40 @@ namespace {
         auto callback = [](const StatusWith<Timestamp>& status, const Operations& operations) { };
 
         // Null executor.
-        ASSERT_THROWS(Applier(nullptr, operations, apply, callback), UserException);
+        ASSERT_THROWS_CODE(
+            Applier(nullptr, operations, apply, callback),
+            UserException,
+            ErrorCodes::BadValue);
 
         // Empty list of operations.
-        ASSERT_THROWS(Applier(&getExecutor(), {}, apply, callback), UserException);
+        ASSERT_THROWS_CODE(
+            Applier(&getExecutor(), {}, apply, callback),
+            UserException,
+            ErrorCodes::BadValue);
 
         // Last operation missing timestamp field.
-        ASSERT_THROWS(Applier(&getExecutor(), {BSONObj()}, apply, callback), UserException);
+        ASSERT_THROWS_CODE(
+            Applier(&getExecutor(), {BSONObj()}, apply, callback),
+            UserException,
+            ErrorCodes::FailedToParse);
 
         // "ts" field in last operation not a timestamp.
-        ASSERT_THROWS(Applier(&getExecutor(), {BSON("ts" << 99)}, apply, callback), UserException);
+        ASSERT_THROWS_CODE(
+            Applier(&getExecutor(), {BSON("ts" << 99)}, apply, callback),
+            UserException,
+            ErrorCodes::TypeMismatch);
 
         // Invalid apply operation function.
-        ASSERT_THROWS(Applier(&getExecutor(), operations, Applier::ApplyOperationFn(), callback),
-                      UserException);
+        ASSERT_THROWS_CODE(
+            Applier(&getExecutor(), operations, Applier::ApplyOperationFn(), callback),
+            UserException,
+            ErrorCodes::BadValue);
 
         // Invalid callback function.
-        ASSERT_THROWS(Applier(&getExecutor(), operations, apply, Applier::CallbackFn()),
-                      UserException);
+        ASSERT_THROWS_CODE(
+            Applier(&getExecutor(), operations, apply, Applier::CallbackFn()),
+            UserException,
+            ErrorCodes::BadValue);
     }
 
     TEST_F(ApplierTest, GetDiagnosticString) {
@@ -170,12 +186,12 @@ namespace {
         // Schedule a blocking DB work item before the applier to allow us to cancel the applier
         // work item before the executor runs it.
         unittest::Barrier barrier(2U);
-        using CallbackData = ReplicationExecutor::CallbackData;
+        using CallbackData = ReplicationExecutor::CallbackArgs;
         getExecutor().scheduleDBWork([&](const CallbackData& cbd) {
             barrier.countDownAndWait(); // generation 0
         });
         const BSONObj operation = BSON("ts" << Timestamp(Seconds(123), 0));
-        boost::mutex mutex;
+        stdx::mutex mutex;
         StatusWith<Timestamp> result = getDetectableErrorStatus();
         Applier::Operations operations;
         _applier.reset(new Applier(
@@ -183,7 +199,7 @@ namespace {
                 {operation},
                 [](OperationContext* txn, const BSONObj& operation) { return Status::OK(); },
                 [&](const StatusWith<Timestamp>& theResult, const Operations& theOperations) {
-            boost::lock_guard<boost::mutex> lock(mutex);
+            stdx::lock_guard<stdx::mutex> lock(mutex);
             result = theResult;
             operations = theOperations;
         }));
@@ -197,7 +213,7 @@ namespace {
         getApplier()->wait();
         ASSERT_FALSE(getApplier()->isActive());
 
-        boost::lock_guard<boost::mutex> lock(mutex);
+        stdx::lock_guard<stdx::mutex> lock(mutex);
         ASSERT_EQUALS(ErrorCodes::CallbackCanceled, result.getStatus().code());
         ASSERT_EQUALS(1U, operations.size());
         ASSERT_EQUALS(operation, operations.front());
@@ -207,14 +223,14 @@ namespace {
         // Schedule a blocking DB work item before the applier to allow us to destroy the applier
         // before the executor runs the work item.
         unittest::Barrier barrier(2U);
-        using CallbackData = ReplicationExecutor::CallbackData;
+        using CallbackData = ReplicationExecutor::CallbackArgs;
         getExecutor().scheduleDBWork([&](const CallbackData& cbd) {
             barrier.countDownAndWait(); // generation 0
             // Give the main thread a head start in invoking the applier destructor.
             sleepmillis(1);
         });
         const BSONObj operation = BSON("ts" << Timestamp(Seconds(123), 0));
-        boost::mutex mutex;
+        stdx::mutex mutex;
         StatusWith<Timestamp> result = getDetectableErrorStatus();
         Applier::Operations operations;
         _applier.reset(new Applier(
@@ -222,7 +238,7 @@ namespace {
                 {operation},
                 [](OperationContext* txn, const BSONObj& operation) { return Status::OK(); },
                 [&](const StatusWith<Timestamp>& theResult, const Operations& theOperations) {
-            boost::lock_guard<boost::mutex> lock(mutex);
+            stdx::lock_guard<stdx::mutex> lock(mutex);
             result = theResult;
             operations = theOperations;
         }));
@@ -237,7 +253,7 @@ namespace {
         // statuses.
         _applier.reset();
 
-        boost::lock_guard<boost::mutex> lock(mutex);
+        stdx::lock_guard<stdx::mutex> lock(mutex);
         if (result.isOK()) {
             ASSERT_TRUE(operations.empty());
         }
@@ -250,7 +266,7 @@ namespace {
 
     TEST_F(ApplierTest, WaitForCompletion) {
         const Timestamp timestamp(Seconds(123), 0);
-        boost::mutex mutex;
+        stdx::mutex mutex;
         StatusWith<Timestamp> result = getDetectableErrorStatus();
         Applier::Operations operations;
         _applier.reset(new Applier(
@@ -258,7 +274,7 @@ namespace {
                 {BSON("ts" << timestamp)},
                 [](OperationContext* txn, const BSONObj& operation) { return Status::OK(); },
                 [&](const StatusWith<Timestamp>& theResult, const Operations& theOperations) {
-            boost::lock_guard<boost::mutex> lock(mutex);
+            stdx::lock_guard<stdx::mutex> lock(mutex);
             result = theResult;
             operations = theOperations;
         }));
@@ -267,7 +283,7 @@ namespace {
         getApplier()->wait();
         ASSERT_FALSE(getApplier()->isActive());
 
-        boost::lock_guard<boost::mutex> lock(mutex);
+        stdx::lock_guard<stdx::mutex> lock(mutex);
         ASSERT_OK(result.getStatus());
         ASSERT_EQUALS(timestamp, result.getValue());
         ASSERT_TRUE(operations.empty());
@@ -276,7 +292,7 @@ namespace {
     TEST_F(ApplierTest, DestroyShouldBlockUntilInactive) {
         const Timestamp timestamp(Seconds(123), 0);
         unittest::Barrier barrier(2U);
-        boost::mutex mutex;
+        stdx::mutex mutex;
         StatusWith<Timestamp> result = getDetectableErrorStatus();
         Applier::Operations operations;
         _applier.reset(new Applier(
@@ -284,7 +300,7 @@ namespace {
                 {BSON("ts" << timestamp)},
                 [](OperationContext* txn, const BSONObj& operation) { return Status::OK(); },
                 [&](const StatusWith<Timestamp>& theResult, const Operations& theOperations) {
-            boost::lock_guard<boost::mutex> lock(mutex);
+            stdx::lock_guard<stdx::mutex> lock(mutex);
             result = theResult;
             operations = theOperations;
             barrier.countDownAndWait();
@@ -294,7 +310,7 @@ namespace {
         barrier.countDownAndWait();
         _applier.reset();
 
-        boost::lock_guard<boost::mutex> lock(mutex);
+        stdx::lock_guard<stdx::mutex> lock(mutex);
         ASSERT_OK(result.getStatus());
         ASSERT_EQUALS(timestamp, result.getValue());
         ASSERT_TRUE(operations.empty());
@@ -307,14 +323,14 @@ namespace {
             BSON("op" << "b" << "ts" << Timestamp(Seconds(456), 0)),
             BSON("op" << "c" << "ts" << Timestamp(Seconds(789), 0)),
         };
-        boost::mutex mutex;
+        stdx::mutex mutex;
         StatusWith<Timestamp> result = getDetectableErrorStatus();
         bool areWritesReplicationOnOperationContext = true;
         bool isLockBatchWriter = false;
         Applier::Operations operationsApplied;
         Applier::Operations operationsOnCompletion;
         auto apply = [&](OperationContext* txn, const BSONObj& operation) {
-            boost::lock_guard<boost::mutex> lock(mutex);
+            stdx::lock_guard<stdx::mutex> lock(mutex);
             areWritesReplicationOnOperationContext = txn->writesAreReplicated();
             isLockBatchWriter = txn->lockState()->isBatchWriter();
             operationsApplied.push_back(operation);
@@ -322,7 +338,7 @@ namespace {
         };
         auto callback = [&](const StatusWith<Timestamp>& theResult,
                             const Operations& theOperations) {
-            boost::lock_guard<boost::mutex> lock(mutex);
+            stdx::lock_guard<stdx::mutex> lock(mutex);
             result = theResult;
             operationsOnCompletion = theOperations;
         };
@@ -331,7 +347,7 @@ namespace {
         _applier->start();
         _applier->wait();
 
-        boost::lock_guard<boost::mutex> lock(mutex);
+        stdx::lock_guard<stdx::mutex> lock(mutex);
         ASSERT_FALSE(areWritesReplicationOnOperationContext);
         ASSERT_TRUE(isLockBatchWriter);
         ASSERT_EQUALS(operationsToApply.size(), operationsApplied.size());
@@ -350,12 +366,12 @@ namespace {
             BSON("op" << "b" << "ts" << Timestamp(Seconds(456), 0)),
             BSON("op" << "c" << "ts" << Timestamp(Seconds(789), 0)),
         };
-        boost::mutex mutex;
+        stdx::mutex mutex;
         StatusWith<Timestamp> result = getDetectableErrorStatus();
         Applier::Operations operationsApplied;
         Applier::Operations operationsOnCompletion;
         auto apply = [&](OperationContext* txn, const BSONObj& operation) {
-            boost::lock_guard<boost::mutex> lock(mutex);
+            stdx::lock_guard<stdx::mutex> lock(mutex);
             if (operationsApplied.size() == opIndex) {
                 return fail();
             }
@@ -364,7 +380,7 @@ namespace {
         };
         auto callback = [&](const StatusWith<Timestamp>& theResult,
                             const Operations& theOperations) {
-            boost::lock_guard<boost::mutex> lock(mutex);
+            stdx::lock_guard<stdx::mutex> lock(mutex);
             result = theResult;
             operationsOnCompletion = theOperations;
         };
@@ -373,7 +389,7 @@ namespace {
         _applier->start();
         _applier->wait();
 
-        boost::lock_guard<boost::mutex> lock(mutex);
+        stdx::lock_guard<stdx::mutex> lock(mutex);
         ASSERT_EQUALS(opIndex, operationsApplied.size());
         size_t i = 0;
         for (const auto& operation : operationsApplied) {
@@ -429,6 +445,228 @@ namespace {
             MONGO_UNREACHABLE;
             return Status(ErrorCodes::InternalError, "unreachable");
         });
+    }
+
+    class ApplyUntilAndPauseTest : public ApplierTest {};
+
+    TEST_F(ApplyUntilAndPauseTest, EmptyOperations) {
+        auto result =
+            applyUntilAndPause(
+                &getExecutor(),
+                {},
+                [](OperationContext* txn, const BSONObj& operation) { return Status::OK(); },
+                Timestamp(Seconds(123), 0),
+                [] {},
+                [](const StatusWith<Timestamp>& theResult, const Operations& theOperations) {});
+        ASSERT_EQUALS(ErrorCodes::BadValue, result.getStatus().code());
+    }
+
+    TEST_F(ApplyUntilAndPauseTest, NoOperationsInRange) {
+        auto result =
+            applyUntilAndPause(
+                &getExecutor(),
+                {
+                    BSON("ts" << Timestamp(Seconds(456), 0)),
+                    BSON("ts" << Timestamp(Seconds(789), 0)),
+                },
+                [](OperationContext* txn, const BSONObj& operation) { return Status::OK(); },
+                Timestamp(Seconds(123), 0),
+                [] {},
+                [](const StatusWith<Timestamp>& theResult, const Operations& theOperations) {});
+        ASSERT_EQUALS(ErrorCodes::BadValue, result.getStatus().code());
+    }
+
+    TEST_F(ApplyUntilAndPauseTest, OperationMissingTimestampField) {
+        auto result =
+            applyUntilAndPause(
+                &getExecutor(),
+                {BSONObj()},
+                [](OperationContext* txn, const BSONObj& operation) { return Status::OK(); },
+                Timestamp(Seconds(123), 0),
+                [] {},
+                [](const StatusWith<Timestamp>& theResult, const Operations& theOperations) {});
+        ASSERT_EQUALS(ErrorCodes::FailedToParse, result.getStatus().code());
+    }
+
+    TEST_F(ApplyUntilAndPauseTest, ApplyUntilAndPauseSingleOperation) {
+        Timestamp ts(Seconds(123), 0);
+        const Operations operationsToApply{BSON("ts" << ts)};
+        stdx::mutex mutex;
+        StatusWith<Timestamp> completionResult = getDetectableErrorStatus();
+        bool pauseCalled = false;
+        Applier::Operations operationsOnCompletion;
+        auto apply = [](OperationContext* txn, const BSONObj& operation) { return Status::OK(); };
+        auto pause = [&] {
+            stdx::lock_guard<stdx::mutex> lock(mutex);
+            pauseCalled = true;
+        };
+        auto callback = [&](const StatusWith<Timestamp>& theResult,
+                            const Operations& theOperations) {
+            stdx::lock_guard<stdx::mutex> lock(mutex);
+            completionResult = theResult;
+            operationsOnCompletion = theOperations;
+        };
+
+        auto result =
+            applyUntilAndPause(&getExecutor(), operationsToApply, apply, ts, pause, callback);
+        ASSERT_OK(result.getStatus());
+        _applier = std::move(result.getValue().first);
+        ASSERT_TRUE(_applier);
+
+        const Applier::Operations& operationsDiscarded = result.getValue().second;
+        ASSERT_TRUE(operationsDiscarded.empty());
+
+        _applier->start();
+        _applier->wait();
+
+        stdx::lock_guard<stdx::mutex> lock(mutex);
+        ASSERT_TRUE(pauseCalled);
+        ASSERT_OK(completionResult.getStatus());
+        ASSERT_EQUALS(ts, completionResult.getValue());
+        ASSERT_TRUE(operationsOnCompletion.empty());
+    }
+
+    TEST_F(ApplyUntilAndPauseTest, ApplyUntilAndPauseSingleOperationTimestampNotInOperations) {
+        Timestamp ts(Seconds(123), 0);
+        const Operations operationsToApply{BSON("ts" << ts)};
+        stdx::mutex mutex;
+        StatusWith<Timestamp> completionResult = getDetectableErrorStatus();
+        bool pauseCalled = false;
+        Applier::Operations operationsOnCompletion;
+        auto apply = [](OperationContext* txn, const BSONObj& operation) { return Status::OK(); };
+        auto pause = [&] {
+            stdx::lock_guard<stdx::mutex> lock(mutex);
+            pauseCalled = true;
+        };
+        auto callback = [&](const StatusWith<Timestamp>& theResult,
+                            const Operations& theOperations) {
+            stdx::lock_guard<stdx::mutex> lock(mutex);
+            completionResult = theResult;
+            operationsOnCompletion = theOperations;
+        };
+
+        Timestamp ts2(Seconds(456), 0);
+        auto result =
+            applyUntilAndPause(&getExecutor(), operationsToApply, apply, ts2, pause, callback);
+        ASSERT_OK(result.getStatus());
+        _applier = std::move(result.getValue().first);
+        ASSERT_TRUE(_applier);
+
+        const Applier::Operations& operationsDiscarded = result.getValue().second;
+        ASSERT_TRUE(operationsDiscarded.empty());
+
+        _applier->start();
+        _applier->wait();
+
+        stdx::lock_guard<stdx::mutex> lock(mutex);
+        ASSERT_FALSE(pauseCalled);
+        ASSERT_OK(completionResult.getStatus());
+        ASSERT_EQUALS(ts, completionResult.getValue());
+        ASSERT_TRUE(operationsOnCompletion.empty());
+    }
+
+    TEST_F(ApplyUntilAndPauseTest, ApplyUntilAndPauseSingleOperationAppliedFailed) {
+        Timestamp ts(Seconds(123), 0);
+        const Operations operationsToApply{BSON("ts" << ts)};
+        stdx::mutex mutex;
+        StatusWith<Timestamp> completionResult = getDetectableErrorStatus();
+        bool pauseCalled = false;
+        Applier::Operations operationsOnCompletion;
+        auto apply = [](OperationContext* txn, const BSONObj& operation) {
+            return Status(ErrorCodes::OperationFailed, "");
+        };
+        auto pause = [&] {
+            stdx::lock_guard<stdx::mutex> lock(mutex);
+            pauseCalled = true;
+        };
+        auto callback = [&](const StatusWith<Timestamp>& theResult,
+                            const Operations& theOperations) {
+            stdx::lock_guard<stdx::mutex> lock(mutex);
+            completionResult = theResult;
+            operationsOnCompletion = theOperations;
+        };
+
+        auto result =
+            applyUntilAndPause(&getExecutor(), operationsToApply, apply, ts, pause, callback);
+        ASSERT_OK(result.getStatus());
+        _applier = std::move(result.getValue().first);
+        ASSERT_TRUE(_applier);
+
+        const Applier::Operations& operationsDiscarded = result.getValue().second;
+        ASSERT_TRUE(operationsDiscarded.empty());
+
+        _applier->start();
+        _applier->wait();
+
+        stdx::lock_guard<stdx::mutex> lock(mutex);
+        ASSERT_FALSE(pauseCalled);
+        ASSERT_NOT_OK(completionResult.getStatus());
+        ASSERT_FALSE(operationsOnCompletion.empty());
+    }
+
+    void _testApplyUntilAndPauseDiscardOperations(ReplicationExecutor* executor,
+                                                  const Timestamp& ts,
+                                                  bool expectedPauseCalled) {
+
+        Applier::Operations operationsToApply{
+            BSON("op" << "a" << "ts" << Timestamp(Seconds(123), 0)),
+            BSON("op" << "b" << "ts" << Timestamp(Seconds(456), 0)),
+            BSON("op" << "c" << "ts" << Timestamp(Seconds(789), 0)),
+        };
+        stdx::mutex mutex;
+        StatusWith<Timestamp> completionResult =
+            ApplyUntilAndPauseTest::getDetectableErrorStatus();
+        bool pauseCalled = false;
+        Applier::Operations operationsApplied;
+        Applier::Operations operationsOnCompletion;
+        auto apply = [&](OperationContext* txn, const BSONObj& operation) {
+            stdx::lock_guard<stdx::mutex> lock(mutex);
+            operationsApplied.push_back(operation);
+            return Status::OK();
+        };
+        auto pause = [&] {
+            stdx::lock_guard<stdx::mutex> lock(mutex);
+            pauseCalled = true;
+        };
+        auto callback = [&](const StatusWith<Timestamp>& theResult,
+                            const Operations& theOperations) {
+            stdx::lock_guard<stdx::mutex> lock(mutex);
+            completionResult = theResult;
+            operationsOnCompletion = theOperations;
+        };
+
+        auto result =
+            applyUntilAndPause(executor, operationsToApply, apply, ts, pause, callback);
+        ASSERT_OK(result.getStatus());
+        ASSERT_TRUE(result.getValue().first);
+        Applier& applier = *result.getValue().first;
+
+        const Applier::Operations& operationsDiscarded = result.getValue().second;
+        ASSERT_EQUALS(1U, operationsDiscarded.size());
+        ASSERT_EQUALS(operationsToApply[2], operationsDiscarded[0]);
+
+        applier.start();
+        applier.wait();
+
+        stdx::lock_guard<stdx::mutex> lock(mutex);
+        ASSERT_EQUALS(2U, operationsApplied.size());
+        ASSERT_EQUALS(operationsToApply[0], operationsApplied[0]);
+        ASSERT_EQUALS(operationsToApply[1], operationsApplied[1]);
+        ASSERT_EQUALS(expectedPauseCalled, pauseCalled);
+        ASSERT_OK(completionResult.getStatus());
+        ASSERT_TRUE(operationsOnCompletion.empty());
+    }
+
+    TEST_F(ApplyUntilAndPauseTest, ApplyUntilAndPauseDiscardOperationsTimestampInOperations) {
+        _testApplyUntilAndPauseDiscardOperations(&getExecutor(),
+                                                 Timestamp(Seconds(456), 0),
+                                                 true);
+    }
+
+    TEST_F(ApplyUntilAndPauseTest, ApplyUntilAndPauseDiscardOperationsTimestampNotInOperations) {
+        _testApplyUntilAndPauseDiscardOperations(&getExecutor(),
+                                                 Timestamp(Seconds(500), 0),
+                                                 false);
     }
 
 } // namespace

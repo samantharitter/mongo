@@ -45,6 +45,7 @@ namespace mongo {
     class IndexDescriptor;
     class NamespaceString;
     class OperationContext;
+    class ServiceContext;
     class Timestamp;
     struct WriteConcernOptions;
 
@@ -87,6 +88,10 @@ namespace repl {
         MONGO_DISALLOW_COPYING(ReplicationCoordinator);
 
     public:
+        static ReplicationCoordinator* get(ServiceContext* service);
+        static ReplicationCoordinator* get(ServiceContext& service);
+        static void set(ServiceContext* service,
+                        std::unique_ptr<ReplicationCoordinator> replCoordinator);
 
         struct StatusAndDuration {
         public:
@@ -181,7 +186,7 @@ namespace repl {
          * ErrorCodes::ShutdownInProgress if we are mid-shutdown
          * ErrorCodes::Interrupted if the operation was killed with killop()
          */
-        virtual StatusAndDuration awaitReplication(const OperationContext* txn,
+        virtual StatusAndDuration awaitReplication(OperationContext* txn,
                                                    const OpTime& opTime,
                                                    const WriteConcernOptions& writeConcern) = 0;
 
@@ -190,7 +195,7 @@ namespace repl {
          * performed on the client associated with "txn".
          */
         virtual StatusAndDuration awaitReplicationOfLastOpForClient(
-                const OperationContext* txn,
+                OperationContext* txn,
                 const WriteConcernOptions& writeConcern) = 0;
 
         /**
@@ -226,6 +231,14 @@ namespace repl {
          * lock in some mode other than MODE_NONE.
          */
         virtual bool canAcceptWritesForDatabase(StringData dbName) = 0;
+
+        /**
+         * Returns true if it is valid for this node to accept writes on the given namespace.
+         *
+         * The result of this function should be consistent with canAcceptWritesForDatabase()
+         * for the database the namespace refers to, with additional checks on the collection.
+         */
+        virtual bool canAcceptWritesFor(const NamespaceString& ns) = 0;
 
         /**
          * Checks if the current replica set configuration can satisfy the given write concern.
@@ -298,7 +311,7 @@ namespace repl {
          * Note: getDuration() on the returned ReadAfterOpTimeResponse will only be valid if
          * its didWait() method returns true.
          */
-        virtual ReadAfterOpTimeResponse waitUntilOpTime(const OperationContext* txn,
+        virtual ReadAfterOpTimeResponse waitUntilOpTime(OperationContext* txn,
                                                         const ReadAfterOpTimeArgs& settings) = 0;
 
         /**
@@ -621,9 +634,17 @@ namespace repl {
         virtual void summarizeAsHtml(ReplSetHtmlSummary* output) = 0;
 
         /**
-         * Return the current term.
+         * Returns the current term.
          */
         virtual long long getTerm() = 0;
+
+        /**
+         * Attempts to update the current term for the V1 election protocol. If the term changes and
+         * this node is primary, relinquishes primary.
+         * Returns true if the term was updated (that is, when "term" was higher than the previously
+         * recorded term) and false otherwise.
+         */
+        virtual bool updateTerm(long long term) = 0;
 
     protected:
 

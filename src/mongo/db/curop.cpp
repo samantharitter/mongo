@@ -32,15 +32,12 @@
 
 #include "mongo/db/curop.h"
 
-#include "mongo/base/counter.h"
 #include "mongo/base/disallow_copying.h"
 #include "mongo/bson/mutable/document.h"
 #include "mongo/db/client.h"
 #include "mongo/db/commands.h"
 #include "mongo/db/commands/server_status_metric.h"
 #include "mongo/db/json.h"
-#include "mongo/db/service_context.h"
-#include "mongo/db/stats/top.h"
 #include "mongo/util/fail_point_service.h"
 #include "mongo/util/log.h"
 
@@ -56,10 +53,10 @@ namespace mongo {
      *
      * The stack itself is represented in the _parent pointers of the CurOp class.
      */
-    class CurOp::ClientCuropStack {
-        MONGO_DISALLOW_COPYING(ClientCuropStack);
+    class CurOp::CurOpStack {
+        MONGO_DISALLOW_COPYING(CurOpStack);
     public:
-        ClientCuropStack() : _base(nullptr, this) {}
+        CurOpStack() : _base(nullptr, this) {}
 
         /**
          * Returns the top of the CurOp stack.
@@ -69,15 +66,15 @@ namespace mongo {
         /**
          * Adds "curOp" to the top of the CurOp stack for a client. Called by CurOp's constructor.
          */
-        void push(Client* client, CurOp* curOp) {
-            invariant(client);
-            if (_client) {
-                invariant(_client == client);
+        void push(OperationContext* opCtx, CurOp* curOp) {
+            invariant(opCtx);
+            if (_opCtx) {
+                invariant(_opCtx == opCtx);
             }
             else {
-                _client = client;
+                _opCtx = opCtx;
             }
-            boost::lock_guard<Client> lk(*_client);
+            stdx::lock_guard<Client> lk(*_opCtx->getClient());
             push_nolock(curOp);
         }
 
@@ -101,20 +98,20 @@ namespace mongo {
             // the client during the final pop.
             const bool shouldLock = _top->_parent;
             if (shouldLock) {
-                invariant(_client);
-                _client->lock();
+                invariant(_opCtx);
+                _opCtx->getClient()->lock();
             }
             invariant(_top);
             CurOp* retval = _top;
             _top = _top->_parent;
             if (shouldLock) {
-                _client->unlock();
+                _opCtx->getClient()->unlock();
             }
             return retval;
         }
 
     private:
-        Client* _client = nullptr;
+        OperationContext* _opCtx = nullptr;
 
         // Top of the stack of CurOps for a Client.
         CurOp* _top = nullptr;
@@ -123,8 +120,8 @@ namespace mongo {
         const CurOp _base;
     };
 
-    const Client::Decoration<CurOp::ClientCuropStack> CurOp::_curopStack =
-        Client::declareDecoration<CurOp::ClientCuropStack>();
+    const OperationContext::Decoration<CurOp::CurOpStack> CurOp::_curopStack =
+        OperationContext::declareDecoration<CurOp::CurOpStack>();
 
     // Enabling the maxTimeAlwaysTimeOut fail point will cause any query or command run with a
     // valid non-zero max time to fail immediately.  Any getmore operation on a cursor already
@@ -146,37 +143,18 @@ namespace mongo {
 
     CurOp* CurOp::get(const OperationContext* opCtx) { return get(*opCtx); }
 
-    CurOp* CurOp::get(const OperationContext& opCtx) {
-        return getFromClient(opCtx.getClient());
-    }
+    CurOp* CurOp::get(const OperationContext& opCtx) { return _curopStack(opCtx).top(); }
 
-    CurOp* CurOp::getFromClient(const Client* client) {
-        return _curopStack(client).top();
-    }
+    CurOp::CurOp(OperationContext* opCtx) : CurOp(opCtx, &_curopStack(opCtx)) {}
 
-    CurOp::CurOp(Client* client) : CurOp(client, &_curopStack(client)) {}
-
-    CurOp::CurOp(Client* client, ClientCuropStack* stack) : _stack(stack) {
-        if (client) {
-            _stack->push(client, this);
+    CurOp::CurOp(OperationContext* opCtx, CurOpStack* stack) : _stack(stack) {
+        if (opCtx) {
+            _stack->push(opCtx, this);
         }
         else {
             _stack->push_nolock(this);
         }
         _start = 0;
-        _active = false;
-        _reset();
-        _op = 0;
-        _opNum = _nextOpNum.fetchAndAdd(1);
-        _command = NULL;
-    }
-
-    CurOp::CurOp(Client* client, int op) : CurOp(client, &_curopStack(client)) {
-        _op = op;
-        _active = true;
-    }
-
-    void CurOp::_reset() {
         _isCommand = false;
         _dbprofile = 0;
         _end = 0;
@@ -184,30 +162,20 @@ namespace mongo {
         _maxTimeTracker.reset();
         _message = "";
         _progressMeter.finished();
-        _killPending.store(0);
         _numYields = 0;
         _expectedLatencyMs = 0;
+        _op = 0;
+        _command = NULL;
     }
 
-    void CurOp::reset() {
-        _reset();
-        _start = 0;
-        _opNum = _nextOpNum.fetchAndAdd(1);
-        _ns = "";
-        _debug.reset();
-        _query.reset();
-        _active = true; // this should be last for ui clarity
-    }
-
-    void CurOp::reset(int op) {
-        reset();
+    void CurOp::setOp_inlock(int op) {
         _op = op;
     }
 
-    ProgressMeter& CurOp::setMessage(const char * msg,
-                                     std::string name,
-                                     unsigned long long progressMeterTotal,
-                                     int secondsBetween) {
+    ProgressMeter& CurOp::setMessage_inlock(const char * msg,
+                                            std::string name,
+                                            unsigned long long progressMeterTotal,
+                                            int secondsBetween) {
         if ( progressMeterTotal ) {
             if ( _progressMeter.isActive() ) {
                 error() << "old _message: " << _message << " new message:" << msg;
@@ -227,9 +195,8 @@ namespace mongo {
         invariant(this == _stack->pop());
     }
 
-    void CurOp::setNS( StringData ns ) {
-        // _ns copies the data in the null-terminated ptr it's given
-        _ns = ns;
+    void CurOp::setNS_inlock(StringData ns) {
+        _ns = ns.toString();
     }
 
     void CurOp::ensureStarted() {
@@ -245,33 +212,30 @@ namespace mongo {
         }
     }
 
-    void CurOp::enter(const char* ns, int dbProfileLevel) {
+    void CurOp::enter_inlock(const char* ns, int dbProfileLevel) {
         ensureStarted();
         _ns = ns;
+        raiseDbProfileLevel(dbProfileLevel);
+    }
+
+    void CurOp::raiseDbProfileLevel(int dbProfileLevel) {
         _dbprofile = std::max(dbProfileLevel, _dbprofile);
     }
 
-    void CurOp::recordGlobalTime(bool isWriteLocked, long long micros) const {
-        string nsStr = _ns.toString();
-        int lockType = isWriteLocked ? 1 : -1;
-        Top::get(getGlobalServiceContext()).record(nsStr, _op, lockType, micros, _isCommand);
-    }
-
     void CurOp::reportState(BSONObjBuilder* builder) {
-        builder->append("opid", _opNum);
-        bool a = _active && _start;
-        builder->append("active", a);
 
-        if( a ) {
+        if (_start) {
             builder->append("secs_running", elapsedSeconds() );
             builder->append("microsecs_running", static_cast<long long int>(elapsedMicros()) );
         }
 
-        builder->append( "op" , opToString( _op ) );
+        builder->append("op", opToString(_op));
 
         // Fill out "ns" from our namespace member (and if it's not available, fall back to the
-        // OpDebug namespace member).
-        builder->append("ns", !_ns.empty() ? _ns.toString() : _debug.ns.toString());
+        // OpDebug namespace member). We prefer our ns when set because it changes to match each
+        // accessed namespace, while _debug.ns is set once at the start of the operation. However,
+        // sometimes _ns is not yet set.
+        builder->append("ns", !_ns.empty() ? _ns : _debug.ns);
 
         if (_op == dbInsert) {
             _query.append(*builder, "insert");
@@ -287,7 +251,7 @@ namespace mongo {
         if ( ! _message.empty() ) {
             if ( _progressMeter.isActive() ) {
                 StringBuilder buf;
-                buf << _message.toString() << " " << _progressMeter.toString();
+                buf << _message << " " << _progressMeter.toString();
                 builder->append( "msg" , buf.str() );
                 BSONObjBuilder sub( builder->subobjStart( "progress" ) );
                 sub.appendNumber( "done" , (long long)_progressMeter.done() );
@@ -295,18 +259,11 @@ namespace mongo {
                 sub.done();
             }
             else {
-                builder->append( "msg" , _message.toString() );
+                builder->append("msg" , _message);
             }
         }
 
-        if( killPending() )
-            builder->append("killPending", true);
-
         builder->append( "numYields" , _numYields );
-    }
-
-    void CurOp::kill() {
-        _killPending.store(1);
     }
 
     void CurOp::setMaxTimeMicros(uint64_t maxTimeMicros) {
@@ -415,59 +372,6 @@ namespace mongo {
         return _targetEpochMicros - now;
     }
 
-
-    AtomicUInt32 CurOp::_nextOpNum;
-
-    static Counter64 returnedCounter;
-    static Counter64 insertedCounter;
-    static Counter64 updatedCounter;
-    static Counter64 deletedCounter;
-    static Counter64 scannedCounter;
-    static Counter64 scannedObjectCounter;
-
-    static ServerStatusMetricField<Counter64> displayReturned( "document.returned", &returnedCounter );
-    static ServerStatusMetricField<Counter64> displayUpdated( "document.updated", &updatedCounter );
-    static ServerStatusMetricField<Counter64> displayInserted( "document.inserted", &insertedCounter );
-    static ServerStatusMetricField<Counter64> displayDeleted( "document.deleted", &deletedCounter );
-    static ServerStatusMetricField<Counter64> displayScanned( "queryExecutor.scanned", &scannedCounter );
-    static ServerStatusMetricField<Counter64> displayScannedObjects( "queryExecutor.scannedObjects",
-                                                                     &scannedObjectCounter );
-
-    static Counter64 idhackCounter;
-    static Counter64 scanAndOrderCounter;
-    static Counter64 fastmodCounter;
-    static Counter64 writeConflictsCounter;
-
-    static ServerStatusMetricField<Counter64> displayIdhack( "operation.idhack", &idhackCounter );
-    static ServerStatusMetricField<Counter64> displayScanAndOrder( "operation.scanAndOrder", &scanAndOrderCounter );
-    static ServerStatusMetricField<Counter64> displayFastMod( "operation.fastmod", &fastmodCounter );
-    static ServerStatusMetricField<Counter64> displayWriteConflicts( "operation.writeConflicts",
-                                                                     &writeConflictsCounter );
-
-    void OpDebug::recordStats() {
-        if ( nreturned > 0 )
-            returnedCounter.increment( nreturned );
-        if ( ninserted > 0 )
-            insertedCounter.increment( ninserted );
-        if ( nMatched > 0 )
-            updatedCounter.increment( nMatched );
-        if ( ndeleted > 0 )
-            deletedCounter.increment( ndeleted );
-        if ( nscanned > 0 )
-            scannedCounter.increment( nscanned );
-        if ( nscannedObjects > 0 )
-            scannedObjectCounter.increment( nscannedObjects );
-
-        if ( idhack )
-            idhackCounter.increment();
-        if ( scanAndOrder )
-            scanAndOrderCounter.increment();
-        if ( fastmod )
-            fastmodCounter.increment();
-        if ( writeConflicts )
-            writeConflictsCounter.increment( writeConflicts );
-    }
-
     void OpDebug::reset() {
         extra.reset();
 
@@ -516,7 +420,7 @@ namespace mongo {
             s << "command ";
         else
             s << opToString( op ) << ' ';
-        s << ns.toString();
+        s << ns;
 
         if ( ! query.isEmpty() ) {
             if ( iscommand ) {
@@ -640,7 +544,7 @@ namespace mongo {
         const size_t maxElementSize = 50 * 1024;
 
         b.append( "op" , iscommand ? "command" : opToString( op ) );
-        b.append( "ns" , ns.toString() );
+        b.append( "ns" , ns );
 
         if (!query.isEmpty()) {
             appendAsObjOrString(iscommand ? "command" : "query", query, maxElementSize, &b);

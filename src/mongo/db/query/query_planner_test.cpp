@@ -1307,6 +1307,16 @@ namespace {
                              "node: {ixscan: {pattern: {a: 1}}}}}");
     }
 
+    TEST_F(QueryPlannerTest, InSparseIndex) {
+        addIndex(fromjson("{a: 1}"),
+                 false, // multikey
+                 true); // sparse
+        runQuery(fromjson("{a: {$in: [null]}}"));
+
+        assertNumSolutions(1U);
+        assertSolutionExists("{cscan: {dir: 1, filter: {a: {$in: [null]}}}}");
+    }
+
     TEST_F(QueryPlannerTest, InCompoundIndexFirst) {
         addIndex(fromjson("{a: 1, b: 1}"));
         runQuery(fromjson("{a: {$in: [1, 2]}, b: 3}"));
@@ -3419,7 +3429,7 @@ namespace {
         CanonicalQuery *cq;
         Status cqStatus = CanonicalQuery::canonicalize("ns", BSON("a" << 3), &cq);
         ASSERT_OK(cqStatus);
-        boost::scoped_ptr<CanonicalQuery> scopedCq(cq);
+        std::unique_ptr<CanonicalQuery> scopedCq(cq);
         scopedCq->root()->setTag(new IndexTag(1));
 
         s = QueryPlanner::cacheDataFromTaggedTree(scopedCq->root(), relevantIndices, &indexTree);
@@ -3431,9 +3441,9 @@ namespace {
         CanonicalQuery *cq;
         Status cqStatus = CanonicalQuery::canonicalize("ns", BSON("a" << 3), &cq);
         ASSERT_OK(cqStatus);
-        boost::scoped_ptr<CanonicalQuery> scopedCq(cq);
+        std::unique_ptr<CanonicalQuery> scopedCq(cq);
 
-        boost::scoped_ptr<PlanCacheIndexTree> indexTree(new PlanCacheIndexTree());
+        std::unique_ptr<PlanCacheIndexTree> indexTree(new PlanCacheIndexTree());
         indexTree->setIndexEntry(IndexEntry(BSON("a" << 1)));
 
         std::map<BSONObj, size_t> indexMap;

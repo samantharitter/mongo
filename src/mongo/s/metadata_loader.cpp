@@ -44,7 +44,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::make_pair;
     using std::map;
@@ -119,7 +119,7 @@ namespace mongo {
                                         << ns << " was dropped");
         }
 
-        metadata->_keyPattern = collInfo.getKeyPattern();
+        metadata->_keyPattern = collInfo.getKeyPattern().toBSON();
         metadata->fillKeyPatternFields();
         metadata->_shardVersion = ChunkVersion(0, 0, collInfo.getEpoch());
         metadata->_collVersion = ChunkVersion(0, 0, collInfo.getEpoch());

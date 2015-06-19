@@ -33,7 +33,6 @@
 #include "mongo/db/repl/replication_coordinator_impl.h"
 
 #include <algorithm>
-#include <boost/thread.hpp>
 #include <limits>
 
 #include "mongo/base/status.h"
@@ -47,9 +46,9 @@
 #include "mongo/db/repl/freshness_checker.h"
 #include "mongo/db/repl/handshake_args.h"
 #include "mongo/db/repl/is_master_response.h"
+#include "mongo/db/repl/last_vote.h"
 #include "mongo/db/repl/read_after_optime_args.h"
 #include "mongo/db/repl/read_after_optime_response.h"
-#include "mongo/db/repl/last_vote.h"
 #include "mongo/db/repl/repl_client_info.h"
 #include "mongo/db/repl/repl_set_declare_election_winner_args.h"
 #include "mongo/db/repl/repl_set_heartbeat_args.h"
@@ -67,6 +66,7 @@
 #include "mongo/db/server_options.h"
 #include "mongo/db/write_concern_options.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/log.h"
 #include "mongo/util/scopeguard.h"
@@ -77,9 +77,9 @@ namespace mongo {
 namespace repl {
 
 namespace {
-    typedef StatusWith<ReplicationExecutor::CallbackHandle> CBHStatus;
+    using executor::NetworkInterface;
 
-    void lockAndCall(boost::unique_lock<boost::mutex>* lk, const stdx::function<void ()>& fn) {
+    void lockAndCall(stdx::unique_lock<stdx::mutex>* lk, const stdx::function<void ()>& fn) {
         if (!lk->owns_lock()) {
             lk->lock();
         }
@@ -97,7 +97,7 @@ namespace {
             if (elem.fieldNameStringData() == ReplicaSetConfig::kVersionFieldName &&
                 elem.isNumber()) {
 
-                boost::scoped_ptr<SecureRandom> generator(SecureRandom::create());
+                std::unique_ptr<SecureRandom> generator(SecureRandom::create());
                 const int random = std::abs(static_cast<int>(generator->nextInt64()) % 100000);
                 builder.appendIntOrLL(ReplicaSetConfig::kVersionFieldName,
                                       elem.numberLong() + 10000 + random);
@@ -121,7 +121,7 @@ namespace {
                    unsigned int _opID,
                    const OpTime* _opTime,
                    const WriteConcernOptions* _writeConcern,
-                   boost::condition_variable* _condVar) : list(_list),
+                   stdx::condition_variable* _condVar) : list(_list),
                                                           master(true),
                                                           opID(_opID),
                                                           opTime(_opTime),
@@ -139,7 +139,7 @@ namespace {
         const unsigned int opID;
         const OpTime* opTime;
         const WriteConcernOptions* writeConcern;
-        boost::condition_variable* condVar;
+        stdx::condition_variable* condVar;
     };
 
 namespace {
@@ -159,13 +159,16 @@ namespace {
                                                 ReplicationCoordinatorExternalState* externalState,
                                                 TopologyCoordinator* topCoord,
                                                 int64_t prngSeed,
-                                                ReplicationExecutor::NetworkInterface* network,
+                                                NetworkInterface* network,
+                                                StorageInterface* storage,
                                                 ReplicationExecutor* replExec) :
                         _settings(settings),
                         _replMode(getReplicationModeFromSettings(settings)),
                         _topCoord(topCoord),
                         _replExecutorIfOwned(replExec ? nullptr :
-                                                        new ReplicationExecutor(network, prngSeed)),
+                                                        new ReplicationExecutor(network,
+                                                                                storage,
+                                                                                prngSeed)),
                         _replExecutor(replExec ? *replExec : *_replExecutorIfOwned),
                         _externalState(externalState),
                         _inShutdown(false),
@@ -182,7 +185,7 @@ namespace {
             return;
         }
 
-        boost::scoped_ptr<SecureRandom> rbidGenerator(SecureRandom::create());
+        std::unique_ptr<SecureRandom> rbidGenerator(SecureRandom::create());
         _rbid = static_cast<int>(rbidGenerator->nextInt64());
         if (_rbid < 0) {
             // Ensure _rbid is always positive
@@ -198,13 +201,15 @@ namespace {
     ReplicationCoordinatorImpl::ReplicationCoordinatorImpl(
             const ReplSettings& settings,
             ReplicationCoordinatorExternalState* externalState,
-            ReplicationExecutor::NetworkInterface* network,
+            NetworkInterface* network,
+            StorageInterface* storage,
             TopologyCoordinator* topCoord,
             int64_t prngSeed) : ReplicationCoordinatorImpl(settings,
                                                            externalState,
                                                            topCoord,
                                                            prngSeed,
                                                            network,
+                                                           storage,
                                                            nullptr) { }
 
     ReplicationCoordinatorImpl::ReplicationCoordinatorImpl(
@@ -217,19 +222,20 @@ namespace {
                                                            topCoord,
                                                            prngSeed,
                                                            nullptr,
+                                                           nullptr,
                                                            replExec) { }
 
     ReplicationCoordinatorImpl::~ReplicationCoordinatorImpl() {}
 
     void ReplicationCoordinatorImpl::waitForStartUpComplete() {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         while (_rsConfigState == kConfigPreStart || _rsConfigState == kConfigStartingUp) {
             _rsConfigStateChange.wait(lk);
         }
     }
 
     ReplicaSetConfig ReplicationCoordinatorImpl::getReplicaSetConfig_forTest() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         return _rsConfig;
     }
 
@@ -282,7 +288,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_finishLoadLocalConfig(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             const ReplicaSetConfig& localConfig,
             const StatusWith<OpTime>& lastOpTimeStatus) {
         if (!cbData.status.isOK()) {
@@ -331,7 +337,7 @@ namespace {
             }
         }
 
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         invariant(_rsConfigState == kConfigStartingUp);
         const PostMemberStateUpdateAction action =
             _setCurrentRSConfig_inlock(localConfig, myIndex.getValue());
@@ -346,7 +352,7 @@ namespace {
 
     void ReplicationCoordinatorImpl::startReplication(OperationContext* txn) {
         if (!isReplEnabled()) {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
             _setConfigState_inlock(kConfigReplicationDisabled);
             return;
         }
@@ -354,7 +360,7 @@ namespace {
         {
             OID rid = _externalState->ensureMe(txn);
 
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
             fassert(18822, !_inShutdown);
             _setConfigState_inlock(kConfigStartingUp);
             _myRID = rid;
@@ -368,14 +374,14 @@ namespace {
             return;
         }
 
-        _topCoordDriverThread.reset(new boost::thread(stdx::bind(&ReplicationExecutor::run,
+        _topCoordDriverThread.reset(new stdx::thread(stdx::bind(&ReplicationExecutor::run,
                                                                  &_replExecutor)));
 
         bool doneLoadingConfig = _startLoadLocalConfig(txn);
         if (doneLoadingConfig) {
             // If we're not done loading the config, then the config state will be set by
             // _finishLoadLocalConfig.
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
             invariant(!_rsConfig.isInitialized());
             _setConfigState_inlock(kConfigUninitialized);
         }
@@ -393,7 +399,7 @@ namespace {
         }
 
         {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
             fassert(28533, !_inShutdown);
             _inShutdown = true;
             if (_rsConfigState == kConfigPreStart) {
@@ -424,7 +430,7 @@ namespace {
     }
 
     MemberState ReplicationCoordinatorImpl::getMemberState() const {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         return _getMemberState_inlock();
     }
 
@@ -433,7 +439,7 @@ namespace {
     }
 
     Seconds ReplicationCoordinatorImpl::getSlaveDelaySecs() const {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         invariant(_rsConfig.isInitialized());
         uassert(28524,
                 "Node not a member of the current set configuration",
@@ -454,37 +460,37 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_clearSyncSourceBlacklist_finish(
-            const ReplicationExecutor::CallbackData& cbData) {
+            const ReplicationExecutor::CallbackArgs& cbData) {
         if (cbData.status == ErrorCodes::CallbackCanceled)
             return;
         _topCoord->clearSyncSourceBlacklist();
     }
 
     bool ReplicationCoordinatorImpl::setFollowerMode(const MemberState& newState) {
-        StatusWith<ReplicationExecutor::EventHandle> finishedSettingFollowerState =
+        StatusWith<ReplicationExecutor::EventHandle> finishedSettingFollowerMode =
             _replExecutor.makeEvent();
-        if (finishedSettingFollowerState.getStatus() == ErrorCodes::ShutdownInProgress) {
+        if (finishedSettingFollowerMode.getStatus() == ErrorCodes::ShutdownInProgress) {
             return false;
         }
-        fassert(18812, finishedSettingFollowerState.getStatus());
+        fassert(18812, finishedSettingFollowerMode.getStatus());
         bool success = false;
         CBHStatus cbh = _replExecutor.scheduleWork(
                 stdx::bind(&ReplicationCoordinatorImpl::_setFollowerModeFinish,
                            this,
                            stdx::placeholders::_1,
                            newState,
-                           finishedSettingFollowerState.getValue(),
+                           finishedSettingFollowerMode.getValue(),
                            &success));
         if (cbh.getStatus() == ErrorCodes::ShutdownInProgress) {
             return false;
         }
         fassert(18699, cbh.getStatus());
-        _replExecutor.waitForEvent(finishedSettingFollowerState.getValue());
+        _replExecutor.waitForEvent(finishedSettingFollowerMode.getValue());
         return success;
     }
 
     void ReplicationCoordinatorImpl::_setFollowerModeFinish(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             const MemberState& newState,
             const ReplicationExecutor::EventHandle& finishedSettingFollowerMode,
             bool* success) {
@@ -524,19 +530,19 @@ namespace {
             return;
         }
 
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         _topCoord->setFollowerMode(newState.s);
 
         const PostMemberStateUpdateAction action =
             _updateMemberStateFromTopologyCoordinator_inlock();
-        *success = true;
-        _replExecutor.signalEvent(finishedSettingFollowerMode);
         lk.unlock();
         _performPostMemberStateUpdateAction(action);
+        *success = true;
+        _replExecutor.signalEvent(finishedSettingFollowerMode);
     }
 
     bool ReplicationCoordinatorImpl::isWaitingForApplierToDrain() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         return _isWaitingForDrainToComplete;
     }
 
@@ -563,7 +569,7 @@ namespace {
         // external writes will be processed.  This is important so that a new temp collection isn't
         // introduced on the new primary before we drop all the temp collections.
 
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         if (!_isWaitingForDrainToComplete) {
             return;
         }
@@ -687,7 +693,7 @@ namespace {
 
     Status ReplicationCoordinatorImpl::setLastOptimeForSlave(const OID& rid,
                                                              const Timestamp& ts) {
-        boost::unique_lock<boost::mutex> lock(_mutex);
+        stdx::unique_lock<stdx::mutex> lock(_mutex);
         massert(28576,
                 "Received an old style replication progress update, which is only used for Master/"
                     "Slave replication now, but this node is not using Master/Slave replication. "
@@ -725,18 +731,18 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::setMyLastOptime(const OpTime& opTime) {
-        boost::unique_lock<boost::mutex> lock(_mutex);
+        stdx::unique_lock<stdx::mutex> lock(_mutex);
         _setMyLastOptime_inlock(&lock, opTime, false);
     }
 
     void ReplicationCoordinatorImpl::resetMyLastOptime() {
-        boost::unique_lock<boost::mutex> lock(_mutex);
+        stdx::unique_lock<stdx::mutex> lock(_mutex);
         // Reset to uninitialized OpTime
         _setMyLastOptime_inlock(&lock, OpTime(), true);
     }
 
     void ReplicationCoordinatorImpl::_setMyLastOptime_inlock(
-            boost::unique_lock<boost::mutex>* lock, const OpTime& opTime, bool isRollbackAllowed) {
+            stdx::unique_lock<stdx::mutex>* lock, const OpTime& opTime, bool isRollbackAllowed) {
         invariant(lock->owns_lock());
         SlaveInfo* mySlaveInfo = &_slaveInfo[_getMyIndexInSlaveInfo_inlock()];
         invariant(isRollbackAllowed || mySlaveInfo->opTime <= opTime);
@@ -762,12 +768,12 @@ namespace {
     }
 
     OpTime ReplicationCoordinatorImpl::getMyLastOptime() const {
-        boost::lock_guard<boost::mutex> lock(_mutex);
+        stdx::lock_guard<stdx::mutex> lock(_mutex);
         return _getMyLastOptime_inlock();
     }
 
     ReadAfterOpTimeResponse ReplicationCoordinatorImpl::waitUntilOpTime(
-            const OperationContext* txn,
+            OperationContext* txn,
             const ReadAfterOpTimeArgs& settings) {
         const auto& ts = settings.getOpTime();
         const auto& timeout = settings.getTimeout();
@@ -791,7 +797,7 @@ namespace {
 #endif
 
         Timer timer;
-        boost::unique_lock<boost::mutex> lock(_mutex);
+        stdx::unique_lock<stdx::mutex> lock(_mutex);
 
         while (ts > _getMyLastOptime_inlock()) {
             Status interruptedStatus = txn->checkForInterruptNoAssert();
@@ -814,7 +820,7 @@ namespace {
                         duration_cast<Milliseconds>(elapsedTime));
             }
 
-            boost::condition_variable condVar;
+            stdx::condition_variable condVar;
             WaiterInfo waitInfo(&_opTimeWaiterList,
                                 txn->getOpID(),
                                 &ts,
@@ -847,7 +853,7 @@ namespace {
     Status ReplicationCoordinatorImpl::setLastOptime_forTest(long long cfgVer,
                                                              long long memberId,
                                                              const OpTime& opTime) {
-        boost::lock_guard<boost::mutex> lock(_mutex);
+        stdx::lock_guard<stdx::mutex> lock(_mutex);
         invariant(getReplicationMode() == modeReplSet);
 
         const UpdatePositionArgs::UpdateInfo update(OID(), opTime, cfgVer, memberId);
@@ -919,7 +925,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::interrupt(unsigned opId) {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         for (std::vector<WaiterInfo*>::iterator it = _replicationWaiterList.begin();
                 it != _replicationWaiterList.end(); ++it) {
             WaiterInfo* info = *it;
@@ -943,7 +949,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::interruptAll() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         for (std::vector<WaiterInfo*>::iterator it = _replicationWaiterList.begin();
                 it != _replicationWaiterList.end(); ++it) {
             WaiterInfo* info = *it;
@@ -1035,20 +1041,20 @@ namespace {
     }
 
     ReplicationCoordinator::StatusAndDuration ReplicationCoordinatorImpl::awaitReplication(
-            const OperationContext* txn,
+            OperationContext* txn,
             const OpTime& opTime,
             const WriteConcernOptions& writeConcern) {
         Timer timer;
-        boost::unique_lock<boost::mutex> lock(_mutex);
+        stdx::unique_lock<stdx::mutex> lock(_mutex);
         return _awaitReplication_inlock(&timer, &lock, txn, opTime, writeConcern);
     }
 
     ReplicationCoordinator::StatusAndDuration
             ReplicationCoordinatorImpl::awaitReplicationOfLastOpForClient(
-                    const OperationContext* txn,
+                    OperationContext* txn,
                     const WriteConcernOptions& writeConcern) {
         Timer timer;
-        boost::unique_lock<boost::mutex> lock(_mutex);
+        stdx::unique_lock<stdx::mutex> lock(_mutex);
         return _awaitReplication_inlock(
                 &timer,
                 &lock,
@@ -1059,8 +1065,8 @@ namespace {
 
     ReplicationCoordinator::StatusAndDuration ReplicationCoordinatorImpl::_awaitReplication_inlock(
             const Timer* timer,
-            boost::unique_lock<boost::mutex>* lock,
-            const OperationContext* txn,
+            stdx::unique_lock<stdx::mutex>* lock,
+            OperationContext* txn,
             const OpTime& opTime,
             const WriteConcernOptions& writeConcern) {
 
@@ -1096,7 +1102,7 @@ namespace {
         }
 
         // Must hold _mutex before constructing waitInfo as it will modify _replicationWaiterList
-        boost::condition_variable condVar;
+        stdx::condition_variable condVar;
         WaiterInfo waitInfo(
                 &_replicationWaiterList, txn->getOpID(), &opTime, &writeConcern, &condVar);
         while (!_doneWaitingForReplication_inlock(opTime, writeConcern)) {
@@ -1138,14 +1144,12 @@ namespace {
                                                   waitTime);
             }
 
-            try {
-                if (waitTime == Microseconds::max()) {
-                    condVar.wait(*lock);
-                }
-                else {
-                    condVar.wait_for(*lock, waitTime);
-                }
-            } catch (const boost::thread_interrupted&) {}
+            if (waitTime == Microseconds::max()) {
+                condVar.wait(*lock);
+            }
+            else {
+                condVar.wait_for(*lock, waitTime);
+            }
         }
 
         Status status = _checkIfWriteConcernCanBeSatisfied_inlock(writeConcern);
@@ -1224,7 +1228,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_signalStepDownWaitersFromCallback(
-            const ReplicationExecutor::CallbackData& cbData) {
+            const ReplicationExecutor::CallbackArgs& cbData) {
         if (!cbData.status.isOK()) {
             return;
         }
@@ -1242,7 +1246,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_stepDownContinue(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             const ReplicationExecutor::EventHandle finishedEvent,
             OperationContext* txn,
             const Date_t waitUntil,
@@ -1289,7 +1293,7 @@ namespace {
                                                     this,
                                                     stdx::placeholders::_1));
 
-            boost::unique_lock<boost::mutex> lk(_mutex);
+            stdx::unique_lock<stdx::mutex> lk(_mutex);
             const PostMemberStateUpdateAction action =
                 _updateMemberStateFromTopologyCoordinator_inlock();
             lk.unlock();
@@ -1335,7 +1339,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_handleTimePassing(
-            const ReplicationExecutor::CallbackData& cbData) {
+            const ReplicationExecutor::CallbackArgs& cbData) {
         if (!cbData.status.isOK()) {
             return;
         }
@@ -1347,7 +1351,7 @@ namespace {
 
     bool ReplicationCoordinatorImpl::isMasterForReportingPurposes() {
         if (_settings.usingReplSets()) {
-            boost::lock_guard<boost::mutex> lock(_mutex);
+            stdx::lock_guard<stdx::mutex> lock(_mutex);
             if (getReplicationMode() == modeReplSet && _getMemberState_inlock().primary()) {
                 return true;
             }
@@ -1388,13 +1392,25 @@ namespace {
         return !replAllDead && _settings.master;
     }
 
+    bool ReplicationCoordinatorImpl::canAcceptWritesFor(const NamespaceString& ns) {
+        if (_memberState.rollback() && ns.isOplog()) {
+            return false;
+        }
+        StringData dbName = ns.db();
+        return canAcceptWritesForDatabase(dbName);
+    }
+
     Status ReplicationCoordinatorImpl::checkCanServeReadsFor(OperationContext* txn,
                                                              const NamespaceString& ns,
                                                              bool slaveOk) {
+        if (_memberState.rollback() && ns.isOplog()) {
+            return Status(ErrorCodes::NotMasterOrSecondaryCode,
+                          "cannot read from oplog collection while in rollback");
+        }
         if (txn->getClient()->isInDirectClient()) {
             return Status::OK();
         }
-        if (canAcceptWritesForDatabase(ns.db())) {
+        if (canAcceptWritesFor(ns)) {
             return Status::OK();
         }
         if (_settings.slave || _settings.master) {
@@ -1427,7 +1443,7 @@ namespace {
             // always enforce on local
             return false;
         }
-        boost::lock_guard<boost::mutex> lock(_mutex);
+        stdx::lock_guard<stdx::mutex> lock(_mutex);
         if (getReplicationMode() != modeReplSet) {
             return false;
         }
@@ -1445,12 +1461,12 @@ namespace {
     }
 
     OID ReplicationCoordinatorImpl::getElectionId() {
-        boost::lock_guard<boost::mutex> lock(_mutex);
+        stdx::lock_guard<stdx::mutex> lock(_mutex);
         return _electionId;
     }
 
     OID ReplicationCoordinatorImpl::getMyRID() const {
-        boost::lock_guard<boost::mutex> lock(_mutex);
+        stdx::lock_guard<stdx::mutex> lock(_mutex);
         return _getMyRID_inlock();
     }
 
@@ -1459,7 +1475,7 @@ namespace {
     }
 
     int ReplicationCoordinatorImpl::getMyId() const {
-        boost::lock_guard<boost::mutex> lock(_mutex);
+        stdx::lock_guard<stdx::mutex> lock(_mutex);
         return _getMyId_inlock();
     }
 
@@ -1470,7 +1486,7 @@ namespace {
 
     bool ReplicationCoordinatorImpl::prepareReplSetUpdatePositionCommand(
             BSONObjBuilder* cmdBuilder) {
-        boost::lock_guard<boost::mutex> lock(_mutex);
+        stdx::lock_guard<stdx::mutex> lock(_mutex);
         invariant(_rsConfig.isInitialized());
         // do not send updates if we have been removed from the config
         if (_selfIndex == -1) {
@@ -1545,7 +1561,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_fillIsMasterForReplSet_finish(
-            const ReplicationExecutor::CallbackData& cbData, IsMasterResponse* response) {
+            const ReplicationExecutor::CallbackArgs& cbData, IsMasterResponse* response) {
         if (cbData.status == ErrorCodes::CallbackCanceled) {
             response->markAsShutdownInProgress();
             return;
@@ -1554,7 +1570,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::appendSlaveInfoData(BSONObjBuilder* result) {
-        boost::lock_guard<boost::mutex> lock(_mutex);
+        stdx::lock_guard<stdx::mutex> lock(_mutex);
         BSONArrayBuilder replicationProgress(result->subarrayStart("replicationProgress"));
         {
             for (SlaveInfoVector::const_iterator itr = _slaveInfo.begin();
@@ -1576,12 +1592,12 @@ namespace {
     }
 
     ReplicaSetConfig ReplicationCoordinatorImpl::getConfig() const {
-        boost::lock_guard<boost::mutex> lock(_mutex);
+        stdx::lock_guard<stdx::mutex> lock(_mutex);
         return _rsConfig;
     }
 
     void ReplicationCoordinatorImpl::processReplSetGetConfig(BSONObjBuilder* result) {
-        boost::lock_guard<boost::mutex> lock(_mutex);
+        stdx::lock_guard<stdx::mutex> lock(_mutex);
         result->append("config", _rsConfig.toBSON());
     }
 
@@ -1601,7 +1617,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_getMaintenanceMode_helper(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             bool* maintenanceMode) {
         if (cbData.status == ErrorCodes::CallbackCanceled) {
             return;
@@ -1631,7 +1647,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_setMaintenanceMode_helper(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             bool activate,
             Status* result) {
         if (cbData.status == ErrorCodes::CallbackCanceled) {
@@ -1639,7 +1655,7 @@ namespace {
             return;
         }
 
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         if (_getMemberState_inlock().primary()) {
             *result = Status(ErrorCodes::NotSecondary, "primaries can't modify maintenance mode");
             return;
@@ -1708,7 +1724,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_processReplSetFreeze_finish(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             int secs,
             BSONObjBuilder* response,
             Status* result) {
@@ -1731,7 +1747,7 @@ namespace {
     Status ReplicationCoordinatorImpl::processHeartbeat(const ReplSetHeartbeatArgs& args,
                                                         ReplSetHeartbeatResponse* response) {
         {
-            boost::lock_guard<boost::mutex> lock(_mutex);
+            stdx::lock_guard<stdx::mutex> lock(_mutex);
             if (_rsConfigState == kConfigPreStart || _rsConfigState == kConfigStartingUp) {
                 return Status(ErrorCodes::NotYetInitialized,
                               "Received heartbeat while still initializing replication system");
@@ -1755,7 +1771,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_processHeartbeatFinish(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             const ReplSetHeartbeatArgs& args,
             ReplSetHeartbeatResponse* response,
             Status* outStatus) {
@@ -1790,7 +1806,7 @@ namespace {
 
         log() << "replSetReconfig admin command received from client";
 
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
 
         while (_rsConfigState == kConfigPreStart || _rsConfigState == kConfigStartingUp) {
             _rsConfigStateChange.wait(lk);
@@ -1885,7 +1901,7 @@ namespace {
             return status;
         }
 
-        const stdx::function<void (const ReplicationExecutor::CallbackData&)> reconfigFinishFn(
+        const stdx::function<void (const ReplicationExecutor::CallbackArgs&)> reconfigFinishFn(
                 stdx::bind(&ReplicationCoordinatorImpl::_finishReplSetReconfig,
                            this,
                            stdx::placeholders::_1,
@@ -1909,11 +1925,11 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_finishReplSetReconfig(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             const ReplicaSetConfig& newConfig,
             int myIndex) {
 
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         invariant(_rsConfigState == kConfigReconfiguring);
         invariant(_rsConfig.isInitialized());
         const PostMemberStateUpdateAction action = _setCurrentRSConfig_inlock(newConfig, myIndex);
@@ -1926,7 +1942,7 @@ namespace {
                                                               BSONObjBuilder* resultObj) {
         log() << "replSetInitiate admin command received from client";
 
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         if (!_settings.usingReplSets()) {
             return Status(ErrorCodes::NoReplicationEnabled, "server is not running with --replSet");
         }
@@ -2013,11 +2029,11 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_finishReplSetInitiate(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             const ReplicaSetConfig& newConfig,
             int myIndex) {
 
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         invariant(_rsConfigState == kConfigInitiating);
         invariant(!_rsConfig.isInitialized());
         const PostMemberStateUpdateAction action = _setCurrentRSConfig_inlock(newConfig, myIndex);
@@ -2044,8 +2060,9 @@ namespace {
             }
             return kActionNone;
         }
+
         PostMemberStateUpdateAction result;
-        if (_memberState.primary() || newState.removed()) {
+        if (_memberState.primary() || newState.removed() || newState.rollback()) {
             // Wake up any threads blocked in awaitReplication, close connections, etc.
             for (std::vector<WaiterInfo*>::iterator it = _replicationWaiterList.begin();
                  it != _replicationWaiterList.end(); ++it) {
@@ -2058,16 +2075,18 @@ namespace {
             result = kActionCloseAllConnections;
         }
         else {
-            if (_memberState.secondary() && !newState.primary()) {
-                // Switching out of SECONDARY, but not to PRIMARY.
-                _canServeNonLocalReads.store(0U);
-            }
-            else if (newState.secondary()) {
-                // Switching into SECONDARY, but not from PRIMARY.
-                _canServeNonLocalReads.store(1U);
-            }
             result = kActionFollowerModeStateChange;
         }
+
+        if (_memberState.secondary() && !newState.primary()) {
+            // Switching out of SECONDARY, but not to PRIMARY.
+            _canServeNonLocalReads.store(0U);
+        }
+        else if (!_memberState.primary() && newState.secondary()) {
+            // Switching into SECONDARY, but not from PRIMARY.
+            _canServeNonLocalReads.store(1U);
+        }
+
         if (newState.secondary() && _topCoord->getRole() == TopologyCoordinator::Role::candidate) {
             // When transitioning to SECONDARY, the only way for _topCoord to report the candidate
             // role is if the configuration represents a single-node replica set.  In that case, the
@@ -2099,7 +2118,7 @@ namespace {
             _externalState->clearShardingState();
             break;
         case kActionWinElection: {
-            boost::unique_lock<boost::mutex> lk(_mutex);
+            stdx::unique_lock<stdx::mutex> lk(_mutex);
             _electionId = OID::gen();
             _topCoord->processWinElection(_electionId, getNextGlobalTimestamp());
             _isWaitingForDrainToComplete = true;
@@ -2117,13 +2136,13 @@ namespace {
     }
 
     Status ReplicationCoordinatorImpl::processReplSetGetRBID(BSONObjBuilder* resultObj) {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         resultObj->append("rbid", _rbid);
         return Status::OK();
     }
 
     void ReplicationCoordinatorImpl::incrementRollbackID() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         ++_rbid;
     }
 
@@ -2147,7 +2166,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_processReplSetFresh_finish(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             const ReplSetFreshArgs& args,
             BSONObjBuilder* response,
             Status* result) {
@@ -2179,7 +2198,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_processReplSetElect_finish(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             const ReplSetElectArgs& args,
             BSONObjBuilder* response,
             Status* result) {
@@ -2242,7 +2261,7 @@ namespace {
     Status ReplicationCoordinatorImpl::processReplSetUpdatePosition(
             const UpdatePositionArgs& updates, long long* configVersion) {
 
-        boost::unique_lock<boost::mutex> lock(_mutex);
+        stdx::unique_lock<stdx::mutex> lock(_mutex);
         Status status = Status::OK();
         bool somethingChanged = false;
         for (UpdatePositionArgs::UpdateIterator update = updates.updatesBegin();
@@ -2269,7 +2288,7 @@ namespace {
                                                         const HandshakeArgs& handshake) {
         LOG(2) << "Received handshake " << handshake.toBSON();
 
-        boost::unique_lock<boost::mutex> lock(_mutex);
+        stdx::unique_lock<stdx::mutex> lock(_mutex);
 
         if (getReplicationMode() != modeMasterSlave) {
             return Status(ErrorCodes::IllegalOperation,
@@ -2292,7 +2311,7 @@ namespace {
     }
 
     bool ReplicationCoordinatorImpl::buildsIndexes() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         if (_selfIndex == -1) {
             return true;
         }
@@ -2302,7 +2321,7 @@ namespace {
 
     std::vector<HostAndPort> ReplicationCoordinatorImpl::getHostsWrittenTo(const OpTime& op) {
         std::vector<HostAndPort> hosts;
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         for (size_t i = 0; i < _slaveInfo.size(); ++i) {
             const SlaveInfo& slaveInfo = _slaveInfo[i];
             if (slaveInfo.opTime < op) {
@@ -2319,7 +2338,7 @@ namespace {
     }
 
     std::vector<HostAndPort> ReplicationCoordinatorImpl::getOtherNodesInReplSet() const {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         invariant(_settings.usingReplSets());
 
         std::vector<HostAndPort> nodes;
@@ -2338,7 +2357,7 @@ namespace {
 
     Status ReplicationCoordinatorImpl::checkIfWriteConcernCanBeSatisfied(
             const WriteConcernOptions& writeConcern) const {
-        boost::lock_guard<boost::mutex> lock(_mutex);
+        stdx::lock_guard<stdx::mutex> lock(_mutex);
         return _checkIfWriteConcernCanBeSatisfied_inlock(writeConcern);
     }
 
@@ -2363,7 +2382,7 @@ namespace {
     }
 
     WriteConcernOptions ReplicationCoordinatorImpl::getGetLastErrorDefault() {
-        boost::lock_guard<boost::mutex> lock(_mutex);
+        stdx::lock_guard<stdx::mutex> lock(_mutex);
         if (_rsConfig.isInitialized()) {
             return _rsConfig.getDefaultWriteConcern();
         }
@@ -2391,7 +2410,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_chooseNewSyncSource(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             HostAndPort* newSyncSource) {
         if (cbData.status == ErrorCodes::CallbackCanceled) {
             return;
@@ -2416,7 +2435,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_blacklistSyncSource(
-        const ReplicationExecutor::CallbackData& cbData,
+        const ReplicationExecutor::CallbackArgs& cbData,
         const HostAndPort& host,
         Date_t until) {
         if (cbData.status == ErrorCodes::CallbackCanceled) {
@@ -2437,7 +2456,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_unblacklistSyncSource(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             const HostAndPort& host) {
         if (cbData.status == ErrorCodes::CallbackCanceled)
             return;
@@ -2468,13 +2487,13 @@ namespace {
         else {
             lastOpTime = lastOpTimeStatus.getValue();
         }
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         _setMyLastOptime_inlock(&lk, lastOpTime, true);
         _externalState->setGlobalTimestamp(lastOpTime.getTimestamp());
     }
 
     void ReplicationCoordinatorImpl::_shouldChangeSyncSource(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             const HostAndPort& currentSource,
             bool* shouldChange) {
         if (cbData.status == ErrorCodes::CallbackCanceled) {
@@ -2530,7 +2549,7 @@ namespace {
     }
 
     OpTime ReplicationCoordinatorImpl::getLastCommittedOpTime() const {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         return _lastCommittedOpTime;
     }
 
@@ -2541,6 +2560,9 @@ namespace {
         if (!isV1ElectionProtocol()) {
             return {ErrorCodes::BadValue, "not using election protocol v1"};
         }
+
+        updateTerm(args.getTerm());
+
         Status result{ErrorCodes::InternalError, "didn't set status in processReplSetRequestVotes"};
         CBHStatus cbh = _replExecutor.scheduleWork(
             stdx::bind(&ReplicationCoordinatorImpl::_processReplSetRequestVotes_finish,
@@ -2558,9 +2580,9 @@ namespace {
             lastVote.setTerm(args.getTerm());
             lastVote.setCandidateId(args.getCandidateId());
 
-            Status status = _externalState->storeLocalConfigDocument(txn, lastVote.toBSON());
+            Status status = _externalState->storeLocalLastVoteDocument(txn, lastVote);
             if (!status.isOK()) {
-                error() << "replSetReconfig failed to store config document; " << status;
+                error() << "replSetRequestVotes failed to store LastVote document; " << status;
                 return status;
             }
 
@@ -2569,7 +2591,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_processReplSetRequestVotes_finish(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             const ReplSetRequestVotesArgs& args,
             ReplSetRequestVotesResponse* response,
             Status* result) {
@@ -2578,7 +2600,7 @@ namespace {
             return;
         }
 
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         _topCoord->processReplSetRequestVotes(args, response, getMyLastOptime());
         *result = Status::OK();
     }
@@ -2589,6 +2611,9 @@ namespace {
         if (!isV1ElectionProtocol()) {
             return {ErrorCodes::BadValue, "not using election protocol v1"};
         }
+
+        updateTerm(args.getTerm());
+
         Status result{ErrorCodes::InternalError,
                       "didn't set status in processReplSetDeclareElectionWinner"};
         CBHStatus cbh = _replExecutor.scheduleWork(
@@ -2606,7 +2631,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_processReplSetDeclareElectionWinner_finish(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             const ReplSetDeclareElectionWinnerArgs& args,
             long long* responseTerm,
             Status* result) {
@@ -2632,7 +2657,7 @@ namespace {
     Status ReplicationCoordinatorImpl::processHeartbeatV1(const ReplSetHeartbeatArgsV1& args,
                                                           ReplSetHeartbeatResponse* response) {
         {
-            boost::lock_guard<boost::mutex> lock(_mutex);
+            stdx::lock_guard<stdx::mutex> lock(_mutex);
             if (_rsConfigState == kConfigPreStart || _rsConfigState == kConfigStartingUp) {
                 return Status(ErrorCodes::NotYetInitialized,
                               "Received heartbeat while still initializing replication system");
@@ -2656,7 +2681,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_processHeartbeatFinishV1(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             const ReplSetHeartbeatArgsV1& args,
             ReplSetHeartbeatResponse* response,
             Status* outStatus) {
@@ -2698,7 +2723,7 @@ namespace {
         _replExecutor.wait(cbh.getValue());
     }
 
-    void ReplicationCoordinatorImpl::_summarizeAsHtml_finish(const CallbackData& cbData,
+    void ReplicationCoordinatorImpl::_summarizeAsHtml_finish(const CallbackArgs& cbData,
                                                              ReplSetHtmlSummary* output) {
         if (cbData.status == ErrorCodes::CallbackCanceled) {
             return;
@@ -2727,12 +2752,81 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_getTerm_helper(
-            const ReplicationExecutor::CallbackData& cbData,
+            const ReplicationExecutor::CallbackArgs& cbData,
             long long* term) {
         if (cbData.status == ErrorCodes::CallbackCanceled) {
             return;
         }
         *term = _topCoord->getTerm();
+    }
+
+    bool ReplicationCoordinatorImpl::updateTerm(long long term) {
+        bool updated = false;
+        CBHStatus cbh = _replExecutor.scheduleWork(
+            stdx::bind(&ReplicationCoordinatorImpl::_updateTerm_helper,
+                       this,
+                       stdx::placeholders::_1,
+                       term,
+                       &updated,
+                       nullptr));
+        if (cbh.getStatus() == ErrorCodes::ShutdownInProgress) {
+            return false;
+        }
+        fassert(28670, cbh.getStatus());
+        _replExecutor.wait(cbh.getValue());
+        return updated;
+    }
+
+    bool ReplicationCoordinatorImpl::updateTerm_forTest(long long term) {
+        bool updated = false;
+        Handle cbHandle;
+        CBHStatus cbh = _replExecutor.scheduleWork(
+            stdx::bind(&ReplicationCoordinatorImpl::_updateTerm_helper,
+                       this,
+                       stdx::placeholders::_1,
+                       term,
+                       &updated,
+                       &cbHandle));
+        if (cbh.getStatus() == ErrorCodes::ShutdownInProgress) {
+            return false;
+        }
+        fassert(28673, cbh.getStatus());
+        _replExecutor.wait(cbh.getValue());
+        _replExecutor.wait(cbHandle);
+        return updated;
+    }
+
+    void ReplicationCoordinatorImpl::_updateTerm_helper(
+            const ReplicationExecutor::CallbackArgs& cbData,
+            long long term,
+            bool* updated,
+            Handle* cbHandle) {
+        if (cbData.status == ErrorCodes::CallbackCanceled) {
+            return;
+        }
+
+        *updated = _updateTerm_incallback(term, cbHandle);
+    }
+
+    bool ReplicationCoordinatorImpl::_updateTerm_incallback(long long term, Handle* cbHandle) {
+        bool updated = _topCoord->updateTerm(term);
+
+        if (updated && getMemberState().primary()) {
+            log() << "stepping down from primary, because a new term has begun";
+            _topCoord->prepareForStepDown();
+            CBHStatus cbh = _replExecutor.scheduleWorkWithGlobalExclusiveLock(
+                    stdx::bind(&ReplicationCoordinatorImpl::_stepDownFinish,
+                               this,
+                               stdx::placeholders::_1));
+            if (cbh.getStatus() == ErrorCodes::ShutdownInProgress) {
+                return true;
+            }
+            fassert(28672, cbh.getStatus());
+            if (cbHandle) {
+                *cbHandle = cbh.getValue();
+            }
+        }
+        return updated;
     }
 
 } // namespace repl

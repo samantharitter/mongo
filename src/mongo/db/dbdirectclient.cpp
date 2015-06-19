@@ -39,7 +39,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::string;
 
@@ -126,6 +126,7 @@ namespace mongo {
         LastError::get(_txn->getClient()).startRequest();
 
         DbResponse dbResponse;
+        CurOp curOp(_txn);
         assembleResponse(_txn, toSend, dbResponse, dummyHost);
         verify(dbResponse.response);
 
@@ -141,10 +142,11 @@ namespace mongo {
         LastError::get(_txn->getClient()).startRequest();
 
         DbResponse dbResponse;
+        CurOp curOp(_txn);
         assembleResponse(_txn, toSend, dbResponse, dummyHost);
     }
 
-    auto_ptr<DBClientCursor> DBDirectClient::query(const string& ns,
+    unique_ptr<DBClientCursor> DBDirectClient::query(const string& ns,
                                                    Query query,
                                                    int nToReturn,
                                                    int nToSkip,

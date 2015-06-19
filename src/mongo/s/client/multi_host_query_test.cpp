@@ -28,8 +28,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/base/status_with.h"
 #include "mongo/s/client/multi_host_query.h"
@@ -39,8 +37,8 @@
 namespace {
 
     using namespace mongo;
-    using boost::scoped_ptr;
-    using boost::shared_ptr;
+    using std::unique_ptr;
+    using std::shared_ptr;
     using std::make_pair;
     using std::map;
     using std::string;
@@ -399,12 +397,12 @@ namespace {
             Notification* nextHostActiveNotify;
 
             ConnectionString prevHost;
-            scoped_ptr<Notification> prevHostActiveNotify;
+            unique_ptr<Notification> prevHostActiveNotify;
             bool waitForPrevHostIdle;
 
             int queryTimeMillis;
 
-            scoped_ptr<DBClientConnection> conn;
+            unique_ptr<DBClientConnection> conn;
             Notification* hangUntilNotify;
             Status error;
         };
@@ -627,7 +625,6 @@ namespace {
     }
 
     TEST(MultiHostQueryOp, ThreeHostsOneHang) {
-
         // Initialize notifier before the thread pool
         Notification unhangNotify;
 
@@ -637,26 +634,31 @@ namespace {
         ConnectionString hostA = uassertStatusOK(ConnectionString::parse("$hostA:1000"));
         ConnectionString hostB = uassertStatusOK(ConnectionString::parse("$hostB:1000"));
         ConnectionString hostC = uassertStatusOK(ConnectionString::parse("$hostC:1000"));
+
         vector<ConnectionString> hosts;
         hosts.push_back(hostA);
         hosts.push_back(hostB);
         hosts.push_back(hostC);
 
-        // One host hangs, last host is fastest with result
+        // Host A hangs
         mockSystem.addMockHungHostAt(hostA, 1000, &unhangNotify);
-        mockSystem.addMockHostResultAt(hostB, 3000);
-        mockSystem.addMockHostResultAt(hostC, 2000);
+        mockSystem.addMockHostResultAt(hostB, 2000);
+        mockSystem.addMockHostResultAt(hostC, 3000);
 
         MultiHostQueryOp queryOp(&mockSystem, &threadPool);
 
         QuerySpec query;
         StatusWith<DBClientCursor*> result = queryOp.queryAny(hosts, query, 4000);
+
         // Unhang before checking status, in case it throws
         unhangNotify.notifyOne();
 
         ASSERT_OK(result.getStatus());
         ASSERT(NULL != result.getValue());
-        ASSERT_EQUALS(result.getValue()->originalHost(), hostC.toString());
+
+        // We should never have results from hostA
+        ASSERT_NOT_EQUALS(result.getValue()->originalHost(), hostA.toString());
+
         delete result.getValue();
     }
 
@@ -734,7 +736,7 @@ namespace {
         Notification unhangNotify;
 
         // Create a thread pool which detaches itself from outstanding work on cleanup
-        scoped_ptr<HostThreadPools> threadPool(new HostThreadPools(1, false));
+        unique_ptr<HostThreadPools> threadPool(new HostThreadPools(1, false));
         MockSystemEnv mockSystem(threadPool.get());
 
         ConnectionString hostA = uassertStatusOK(ConnectionString::parse("$hostA:1000"));

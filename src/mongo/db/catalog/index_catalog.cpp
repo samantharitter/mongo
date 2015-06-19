@@ -65,7 +65,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::string;
     using std::vector;
@@ -164,9 +164,9 @@ namespace {
     IndexCatalogEntry* IndexCatalog::_setupInMemoryStructures(OperationContext* txn,
                                                               IndexDescriptor* descriptor,
                                                               bool initFromDisk) {
-        auto_ptr<IndexDescriptor> descriptorCleanup( descriptor );
+        unique_ptr<IndexDescriptor> descriptorCleanup( descriptor );
 
-        auto_ptr<IndexCatalogEntry> entry( new IndexCatalogEntry( _collection->ns().ns(),
+        unique_ptr<IndexCatalogEntry> entry( new IndexCatalogEntry( _collection->ns().ns(),
                                                                   _collection->getCatalogEntry(),
                                                                   descriptorCleanup.release(),
                                                                   _collection->infoCache() ) );
@@ -277,9 +277,9 @@ namespace {
         // which allows creation of indexes using new plugins.
 
         RecordStore* indexes = dbce->getRecordStore(dbce->name() + ".system.indexes");
-        boost::scoped_ptr<RecordIterator> it(indexes->getIterator(txn));
-        while (!it->isEOF()) {
-            const BSONObj index = it->dataFor(it->getNext()).toBson();
+        auto cursor = indexes->getCursor(txn);
+        while (auto record = cursor->next()) {
+            const BSONObj index = record->data.releaseToBson();
             const BSONObj key = index.getObjectField("key");
             const string plugin = IndexNames::findPluginName(key);
             if ( IndexNames::existedBefore24(plugin) )
@@ -317,16 +317,6 @@ namespace {
             return StatusWith<BSONObj>( status );
 
         return StatusWith<BSONObj>( fixed );
-    }
-
-    void IndexCatalog::registerIndexBuild(IndexDescriptor* descriptor, unsigned int opNum) {
-        _inProgressIndexes[descriptor] = opNum;
-    }
-
-    void IndexCatalog::unregisterIndexBuild(IndexDescriptor* descriptor) {
-        InProgressIndexesMap::iterator it = _inProgressIndexes.find(descriptor);
-        invariant(it != _inProgressIndexes.end());
-        _inProgressIndexes.erase(it);
     }
 
     Status IndexCatalog::createIndexOnEmptyCollection(OperationContext* txn, BSONObj spec) {
@@ -395,7 +385,7 @@ namespace {
         IndexDescriptor* descriptor = new IndexDescriptor( _collection,
                                                            IndexNames::findPluginName(keyPattern),
                                                            _spec );
-        auto_ptr<IndexDescriptor> descriptorCleaner( descriptor );
+        unique_ptr<IndexDescriptor> descriptorCleaner( descriptor );
 
         _indexName = descriptor->indexName();
         _indexNamespace = descriptor->indexNamespace();
@@ -460,7 +450,7 @@ namespace {
             case MatchExpression::AND:
                 if (level > 0)
                     return Status(ErrorCodes::CannotCreateIndex,
-                                  "$and only supported in filter at top level");
+                                  "$and only supported in partialFilterExpression at top level");
                 for (size_t i = 0; i < expression->numChildren(); i++) {
                     Status status = _checkValidFilterExpressions(expression->getChild(i),
                                                                  level + 1 );
@@ -478,7 +468,7 @@ namespace {
                 return Status::OK();
             default:
                 return Status(ErrorCodes::CannotCreateIndex,
-                              str::stream() << "unsupported expression in filtered index: "
+                              str::stream() << "unsupported expression in partial index: "
                               << expression->toString());
             }
         }
@@ -564,16 +554,16 @@ namespace {
         const bool isSparse = spec["sparse"].trueValue();
 
         // Ensure if there is a filter, its valid.
-        BSONElement filterElement = spec.getField("filter");
+        BSONElement filterElement = spec.getField("partialFilterExpression");
         if ( filterElement ) {
             if ( isSparse ) {
                 return Status( ErrorCodes::CannotCreateIndex,
-                               "cannot mix \"filter\" and \"sparse\" options" );
+                               "cannot mix \"partialFilterExpression\" and \"sparse\" options" );
             }
 
             if ( filterElement.type() != Object ) {
                 return Status(ErrorCodes::CannotCreateIndex,
-                              "'filter' for an index has to be a document");
+                              "'partialFilterExpression' for an index has to be a document");
             }
             StatusWithMatchExpression res = MatchExpressionParser::parse( filterElement.Obj() );
             if ( !res.isOK() ) {
@@ -872,10 +862,6 @@ namespace {
                                                                             << indexName 
                                                                             << "' dropped");
 
-        // wipe out stats
-        _collection->infoCache()->reset(txn);
-
-
         // --------- START REAL WORK ----------
 
         audit::logDropIndex( &cc(), indexName, _collection->ns().ns() );
@@ -888,6 +874,10 @@ namespace {
         _deleteIndexFromDisk(txn, indexName, indexNamespace);
 
         _checkMagic();
+
+        // Now that we've dropped the index, ask the info cache to rebuild its cached view of
+        // collection state.
+        _collection->infoCache()->reset(txn);
 
         return Status::OK();
     }
@@ -1286,38 +1276,4 @@ namespace {
         return b.obj();
     }
 
-    std::vector<BSONObj>
-    IndexCatalog::killMatchingIndexBuilds(const IndexCatalog::IndexKillCriteria& criteria) {
-        std::vector<BSONObj> indexes;
-        for (InProgressIndexesMap::iterator it = _inProgressIndexes.begin();
-             it != _inProgressIndexes.end();
-             it++) {
-            // check criteria
-            IndexDescriptor* desc = it->first;
-            unsigned int opNum = it->second;
-            if (!criteria.ns.empty() && (desc->parentNS() != criteria.ns)) {
-                continue;
-            }
-            if (!criteria.name.empty() && (desc->indexName() != criteria.name)) {
-                continue;
-            }
-            if (!criteria.key.isEmpty() && (desc->keyPattern() != criteria.key)) {
-                continue;
-            }
-            indexes.push_back(desc->keyPattern().getOwned());
-            log() << "halting index build: " << desc->keyPattern();
-            // Note that we can only be here if the background index build in question is
-            // yielding. The bg index code is set up specially to check for interrupt
-            // immediately after it recovers from yield, such that no further work is done
-            // on the index build. Thus this thread does not have to synchronize with the
-            // bg index operation; we can just assume that it is safe to proceed.
-            getGlobalServiceContext()->killOperation(opNum);
-        }
-
-        if (indexes.size() > 0) {
-            log() << "halted " << indexes.size() << " index build(s)" << endl;
-        }
-
-        return indexes;
-    }
 }

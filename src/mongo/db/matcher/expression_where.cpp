@@ -42,7 +42,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::string;
     using std::stringstream;
@@ -91,7 +91,7 @@ namespace mongo {
         string _code;
         BSONObj _userScope;
 
-        auto_ptr<Scope> _scope;
+        unique_ptr<Scope> _scope;
         ScriptingFunction _func;
 
         // Not owned. See comments insde WhereCallbackReal for the lifetime of this pointer.
@@ -117,9 +117,12 @@ namespace mongo {
         const string userToken = AuthorizationSession::get(ClientBasic::getCurrent())
                                                           ->getAuthenticatedUserNamesToken();
 
-        _scope = globalScriptEngine->getPooledScope(_txn, _dbName, "where" + userToken);
-
-        _func = _scope->createFunction( _code.c_str() );
+        try {
+            _scope = globalScriptEngine->getPooledScope(_txn, _dbName, "where" + userToken);
+            _func = _scope->createFunction(_code.c_str());
+        } catch (...) {
+            return exceptionToStatus();
+        }
 
         if ( !_func )
             return Status( ErrorCodes::BadValue, "$where compile error" );
@@ -128,7 +131,7 @@ namespace mongo {
     }
 
     bool WhereMatchExpression::matches( const MatchableDocument* doc, MatchDetails* details ) const {
-        verify( _func );
+        uassert(28692, "$where compile error", _func);
         BSONObj obj = doc->toBSON();
 
         if ( ! _userScope.isEmpty() ) {
@@ -191,7 +194,7 @@ namespace mongo {
             return StatusWithMatchExpression(ErrorCodes::BadValue,
                                              "no globalScriptEngine in $where parsing");
 
-        auto_ptr<WhereMatchExpression> exp(new WhereMatchExpression(_txn));
+        unique_ptr<WhereMatchExpression> exp(new WhereMatchExpression(_txn));
         if (where.type() == String || where.type() == Code) {
             Status s = exp->init(_dbName, where.valuestr(), BSONObj());
             if (!s.isOK())

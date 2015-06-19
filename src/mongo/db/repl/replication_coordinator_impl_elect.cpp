@@ -48,8 +48,8 @@ namespace {
         LoseElectionGuard(
                 TopologyCoordinator* topCoord,
                 ReplicationExecutor* executor,
-                boost::scoped_ptr<FreshnessChecker>* freshnessChecker,
-                boost::scoped_ptr<ElectCmdRunner>* electCmdRunner,
+                std::unique_ptr<FreshnessChecker>* freshnessChecker,
+                std::unique_ptr<ElectCmdRunner>* electCmdRunner,
                 ReplicationExecutor::EventHandle* electionFinishedEvent)
             : _topCoord(topCoord),
               _executor(executor),
@@ -76,8 +76,8 @@ namespace {
     private:
         TopologyCoordinator* const _topCoord;
         ReplicationExecutor* const _executor;
-        boost::scoped_ptr<FreshnessChecker>* const _freshnessChecker;
-        boost::scoped_ptr<ElectCmdRunner>* const _electCmdRunner;
+        std::unique_ptr<FreshnessChecker>* const _freshnessChecker;
+        std::unique_ptr<ElectCmdRunner>* const _electCmdRunner;
         const ReplicationExecutor::EventHandle* _electionFinishedEvent;
         bool _dismissed;
     };
@@ -88,7 +88,7 @@ namespace {
         invariant(!_freshnessChecker);
         invariant(!_electCmdRunner);
 
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         switch (_rsConfigState) {
         case kConfigSteady:
             break;
@@ -269,7 +269,7 @@ namespace {
     }
 
     void ReplicationCoordinatorImpl::_recoverFromElectionTie(
-            const ReplicationExecutor::CallbackData& cbData) {
+            const ReplicationExecutor::CallbackArgs& cbData) {
         if (!cbData.status.isOK()) {
             return;
         }

@@ -46,7 +46,7 @@
 
 namespace QueryStageSortTests {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::set;
 
     class QueryStageSortTestBase {
@@ -70,12 +70,10 @@ namespace QueryStageSortTests {
         }
 
         void getLocs(set<RecordId>* out, Collection* coll) {
-            RecordIterator* it = coll->getIterator(&_txn);
-            while (!it->isEOF()) {
-                RecordId nextLoc = it->getNext();
-                out->insert(nextLoc);
+            auto cursor = coll->getCursor(&_txn);
+            while (auto record = cursor->next()) {
+                out->insert(record->id);
             }
-            delete it;
         }
 
         /**
@@ -106,15 +104,15 @@ namespace QueryStageSortTests {
         PlanExecutor* makePlanExecutorWithSortStage(Collection* coll) {
             PlanExecutor* exec;
             // Build the mock scan stage which feeds the data.
-            std::auto_ptr<WorkingSet> ws(new WorkingSet());
-            auto_ptr<QueuedDataStage> ms(new QueuedDataStage(ws.get()));
+            std::unique_ptr<WorkingSet> ws(new WorkingSet());
+            unique_ptr<QueuedDataStage> ms(new QueuedDataStage(ws.get()));
             insertVarietyOfObjects(ms.get(), coll);
 
             SortStageParams params;
             params.collection = coll;
             params.pattern = BSON("foo" << 1);
             params.limit = limit();
-            auto_ptr<SortStage> ss(new SortStage(params, ws.get(), ms.release()));
+            unique_ptr<SortStage> ss(new SortStage(params, ws.get(), ms.release()));
 
             // The PlanExecutor will be automatically registered on construction due to the auto
             // yield policy, so it can receive invalidations when we remove documents later.
@@ -163,7 +161,7 @@ namespace QueryStageSortTests {
                                                   new SortStage(params, ws, ms), NULL, coll),
                                    coll, PlanExecutor::YIELD_MANUAL, &rawExec);
             ASSERT_OK(status);
-            boost::scoped_ptr<PlanExecutor> exec(rawExec);
+            std::unique_ptr<PlanExecutor> exec(rawExec);
 
             // Look at pairs of objects to make sure that the sort order is pairwise (and therefore
             // totally) correct.
@@ -310,7 +308,7 @@ namespace QueryStageSortTests {
             set<RecordId> locs;
             getLocs(&locs, coll);
 
-            std::auto_ptr<PlanExecutor> exec(makePlanExecutorWithSortStage(coll));
+            std::unique_ptr<PlanExecutor> exec(makePlanExecutorWithSortStage(coll));
             SortStage * ss = static_cast<SortStage*>(exec->getRootStage());
             QueuedDataStage* ms = static_cast<QueuedDataStage*>(ss->getChildren()[0]);
 
@@ -417,7 +415,7 @@ namespace QueryStageSortTests {
             set<RecordId> locs;
             getLocs(&locs, coll);
 
-            std::auto_ptr<PlanExecutor> exec(makePlanExecutorWithSortStage(coll));
+            std::unique_ptr<PlanExecutor> exec(makePlanExecutorWithSortStage(coll));
             SortStage * ss = static_cast<SortStage*>(exec->getRootStage());
             QueuedDataStage* ms = static_cast<QueuedDataStage*>(ss->getChildren()[0]);
 
@@ -535,7 +533,7 @@ namespace QueryStageSortTests {
                                                   ws,
                                                   new SortStage(params, ws, ms), NULL, coll),
                                    coll, PlanExecutor::YIELD_MANUAL, &rawExec);
-            boost::scoped_ptr<PlanExecutor> exec(rawExec);
+            std::unique_ptr<PlanExecutor> exec(rawExec);
 
             PlanExecutor::ExecState runnerState = exec->getNext(NULL, NULL);
             ASSERT_EQUALS(PlanExecutor::FAILURE, runnerState);

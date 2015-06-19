@@ -30,10 +30,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/shared_ptr.hpp>
-#include <boost/thread/thread.hpp>
-#include <boost/thread/condition.hpp>
-
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/database.h"
 #include "mongo/db/db_raii.h"
@@ -45,11 +41,13 @@
 #include "mongo/db/query/get_executor.h"
 #include "mongo/db/storage_options.h"
 #include "mongo/dbtests/dbtests.h"
+#include "mongo/stdx/condition_variable.h"
+#include "mongo/stdx/thread.h"
 
 namespace DocumentSourceTests {
 
     using boost::intrusive_ptr;
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::map;
     using std::set;
     using std::string;
@@ -204,7 +202,7 @@ namespace DocumentSourceTests {
 
         private:
             // It is important that these are ordered to ensure correct destruction order.
-            boost::shared_ptr<PlanExecutor> _exec;
+            std::shared_ptr<PlanExecutor> _exec;
             intrusive_ptr<ExpressionContext> _ctx;
             intrusive_ptr<DocumentSourceCursor> _source;
         };
@@ -288,12 +286,12 @@ namespace DocumentSourceTests {
         public:
             PendingValue( int initialValue ) : _value( initialValue ) {}
             void set( int newValue ) {
-                boost::lock_guard<boost::mutex> lk( _mutex );
+                stdx::lock_guard<stdx::mutex> lk( _mutex );
                 _value = newValue;
                 _condition.notify_all();
             }
             void await( int expectedValue ) const {
-                boost::unique_lock<boost::mutex> lk( _mutex );
+                stdx::unique_lock<stdx::mutex> lk( _mutex );
                 while( _value != expectedValue ) {
                     _condition.wait( lk );
                 }
@@ -301,7 +299,7 @@ namespace DocumentSourceTests {
         private:
             int _value;
             mutable mongo::mutex _mutex;
-            mutable boost::condition _condition;
+            mutable stdx::condition_variable _condition;
         };
 
 

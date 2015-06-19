@@ -28,13 +28,13 @@
 
 #pragma once
 
-#include <boost/next_prior.hpp>
-#include <boost/shared_ptr.hpp>
 #include <map>
 #include <string>
 #include <vector>
 
+#include "mongo/util/concurrency/ticketholder.h"
 #include "mongo/s/chunk.h"
+#include "mongo/s/shard_key_pattern.h"
 
 namespace mongo {
 
@@ -43,11 +43,10 @@ namespace mongo {
     class CollectionType;
     struct QuerySolutionNode;
 
-    typedef boost::shared_ptr<ChunkManager> ChunkManagerPtr;
+    typedef std::shared_ptr<ChunkManager> ChunkManagerPtr;
 
     // The key for the map is max for each Chunk or ChunkRange
-    typedef std::map<BSONObj, boost::shared_ptr<const Chunk>, BSONObjCmp> ChunkMap;
-
+    typedef std::map<BSONObj, std::shared_ptr<Chunk>, BSONObjCmp> ChunkMap;
 
     class ChunkRange {
     public:
@@ -57,7 +56,7 @@ namespace mongo {
         ChunkRange(const ChunkRange& min, const ChunkRange& max);
 
         const ChunkManager* getManager() const { return _manager; }
-        Shard getShard() const { return _shard; }
+        ShardId getShardId() const { return _shardId; }
 
         const BSONObj& getMin() const { return _min; }
         const BSONObj& getMax() const { return _max; }
@@ -74,12 +73,12 @@ namespace mongo {
 
     private:
         const ChunkManager* _manager;
-        const Shard _shard;
+        const ShardId _shardId;
         const BSONObj _min;
         const BSONObj _max;
     };
 
-    typedef std::map<BSONObj, boost::shared_ptr<ChunkRange>, BSONObjCmp> ChunkRangeMap;
+    typedef std::map<BSONObj, std::shared_ptr<ChunkRange>, BSONObjCmp> ChunkRangeMap;
 
 
     class ChunkRangeManager {
@@ -120,10 +119,8 @@ namespace mongo {
         // Creates an empty chunk manager for the namespace
         ChunkManager( const std::string& ns, const ShardKeyPattern& pattern, bool unique );
 
-        std::string getns() const { return _ns; }
-
+        const std::string& getns() const { return _ns; }
         const ShardKeyPattern& getShardKeyPattern() const { return _keyPattern; }
-
         bool isUnique() const { return _unique; }
 
         /**
@@ -137,20 +134,20 @@ namespace mongo {
         //
 
         // Creates new chunks based on info in chunk manager
-        void createFirstChunks(const Shard& primary,
+        void createFirstChunks(const ShardId& primaryShardId,
                                const std::vector<BSONObj>* initPoints,
-                               const std::vector<Shard>* initShards);
+                               const std::set<ShardId>* initShardIds);
 
         // Loads existing ranges based on info in chunk manager
         void loadExistingRanges(const ChunkManager* oldManager);
 
 
         // Helpers for load
-        void calcInitSplitsAndShards( const Shard& primary,
-                                      const std::vector<BSONObj>* initPoints,
-                                      const std::vector<Shard>* initShards,
-                                      std::vector<BSONObj>* splitPoints,
-                                      std::vector<Shard>* shards ) const;
+        void calcInitSplitsAndShards(const ShardId& primaryShardId,
+                                     const std::vector<BSONObj>* initPoints,
+                                     const std::set<ShardId>* initShardIds,
+                                     std::vector<BSONObj>* splitPoints,
+                                     std::vector<ShardId>* shardIds) const;
 
         //
         // Methods to use once loaded / created
@@ -168,10 +165,12 @@ namespace mongo {
          */
         ChunkPtr findIntersectingChunk( const BSONObj& shardKey ) const;
 
-        void getShardsForQuery( std::set<Shard>& shards , const BSONObj& query ) const;
-        void getAllShards( std::set<Shard>& all ) const;
-        /** @param shards set to the shards covered by the interval [min, max], see SERVER-4791 */
-        void getShardsForRange( std::set<Shard>& shards, const BSONObj& min, const BSONObj& max ) const;
+        void getShardIdsForQuery(std::set<ShardId>& shardIds, const BSONObj& query) const;
+        void getAllShardIds(std::set<ShardId>* all) const;
+        /** @param shardIds set to the shard ids for shards
+         *         covered by the interval [min, max], see SERVER-4791
+         */
+        void getShardIdsForRange(std::set<ShardId>& shardIds, const BSONObj& min, const BSONObj& max) const;
 
         // Transforms query into bounds for each field in the shard key
         // for example :
@@ -207,53 +206,43 @@ namespace mongo {
 
         int getCurrentDesiredChunkSize() const;
 
-        ChunkManagerPtr reload(bool force=true) const; // doesn't modify self!
-
-        void markMinorForReload( ChunkVersion majorVersion ) const;
-        void getMarkedMinorVersions( std::set<ChunkVersion>& minorVersions ) const;
+        std::shared_ptr<ChunkManager> reload(bool force = true) const; // doesn't modify self!
 
     private:
-
-        // helpers for loading
-
         // returns true if load was consistent
         bool _load(ChunkMap& chunks,
-                   std::set<Shard>& shards,
+                   std::set<ShardId>& shardIds,
                    ShardVersionMap* shardVersions,
                    const ChunkManager* oldManager);
-        static bool _isValid(const ChunkMap& chunks);
 
-        // end helpers
 
         // All members should be const for thread-safety
         const std::string _ns;
         const ShardKeyPattern _keyPattern;
         const bool _unique;
 
-        const ChunkMap _chunkMap;
-        const ChunkRangeManager _chunkRanges;
-
-        const std::set<Shard> _shards;
-
-        const ShardVersionMap _shardVersions; // max version per shard
-
-        // max version of any chunk
-        ChunkVersion _version;
-
-        mutable mutex _mutex; // only used with _nsLock
-
+        // The shard versioning mechanism hinges on keeping track of the number of times we reload
+        // ChunkManagers. Increasing this number here will prompt checkShardVersion to refresh the
+        // connection-level versions to the most up to date value.
         const unsigned long long _sequenceNumber;
+
+        ChunkMap _chunkMap;
+        ChunkRangeManager _chunkRanges;
+
+        std::set<ShardId> _shardIds;
+
+        // Max known version per shard
+        ShardVersionMap _shardVersions;
+
+        // Max version across all chunks
+        ChunkVersion _version;
 
         //
         // Split Heuristic info
         //
-
-
         class SplitHeuristics {
         public:
-
-            SplitHeuristics()
-                : _splitTickets(maxParallelSplits) {
+            SplitHeuristics() : _splitTickets(maxParallelSplits) {
             }
 
             TicketHolder _splitTickets;

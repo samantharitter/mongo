@@ -9,7 +9,6 @@ env.SConscript(
     dirs=[
         'cmdline_utils',
         'concurrency',
-        'mongoutils',
         'net',
         'options_parser',
     ],
@@ -106,6 +105,7 @@ env.Library(
         'file.cpp',
         'log.cpp',
         'platform_init.cpp',
+        'system_tick_source.cpp',
         'text.cpp',
         'thread_safe_string.cpp',
         'time_support.cpp',
@@ -123,6 +123,13 @@ env.Library(
         '$BUILD_DIR/third_party/shim_allocator',
         '$BUILD_DIR/third_party/shim_boost',
         '$BUILD_DIR/third_party/shim_tz',
+    ],
+)
+
+env.Library(
+    target='tick_source_mock',
+    source=[
+        'tick_source_mock.cpp',
     ],
 )
 

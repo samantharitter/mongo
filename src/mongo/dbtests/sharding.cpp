@@ -30,8 +30,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/shared_ptr.hpp>
-
 #include "mongo/client/parallel.h"
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/operation_context_impl.h"
@@ -45,10 +43,10 @@
 #include "mongo/s/chunk_version.h"
 #include "mongo/s/config.h"
 
-namespace ShardingTests {
+namespace {
 
-    using boost::shared_ptr;
-    using std::auto_ptr;
+    using std::shared_ptr;
+    using std::unique_ptr;
     using std::make_pair;
     using std::map;
     using std::pair;
@@ -105,18 +103,14 @@ namespace ShardingTests {
             _client.insert( collName(), BSON( "hello" << "world" ) );
             _client.dropCollection( collName() );
 
-            // Since we've redirected the conns, the host doesn't matter here so long as it's
-            // prefixed with a "$"
-            _shard = Shard("shard0000",
-                           ConnectionString(HostAndPort("$hostFooBar:27017")),
-                           0 /* maxSize */,
-                           false /* draining */);
-            // Need to run this to ensure the shard is in the global lookup table
-            Shard::installShard(_shard.getName(), _shard);
+            _shardId = "shard0000";
+
             // Add dummy shard to config DB
             _client.insert(ShardType::ConfigNS,
-                           BSON(ShardType::name() << _shard.getName() <<
-                                ShardType::host() << _shard.getConnString().toString()));
+                           BSON(ShardType::name() << _shardId <<
+                                ShardType::host() <<
+                                    ConnectionString(
+                                        HostAndPort("$hostFooBar:27017")).toString()));
 
             // Create an index so that diffing works correctly, otherwise no cursors from S&O
             ASSERT_OK(dbtests::createIndex(
@@ -133,8 +127,6 @@ namespace ShardingTests {
 
         string collName(){ return "foo.bar"; }
 
-        Shard& shard(){ return _shard; }
-
         virtual DBClientBase* connect( const ConnectionString& connStr,
                                        string& errmsg,
                                        double socketTimeout )
@@ -147,7 +139,7 @@ namespace ShardingTests {
     protected:
         OperationContextImpl _txn;
         CustomDirectClient _client;
-        Shard _shard;
+        ShardId _shardId;
     };
 
     //
@@ -160,7 +152,7 @@ namespace ShardingTests {
 
             ShardKeyPattern shardKeyPattern(BSON("_id" << 1));
             ChunkManager manager(collName(), shardKeyPattern, false);
-            manager.createFirstChunks(shard(), NULL, NULL );
+            manager.createFirstChunks(_shardId, NULL, NULL );
 
             BSONObj firstChunk = _client.findOne(ChunkType::ConfigNS, BSONObj()).getOwned();
 
@@ -212,7 +204,7 @@ namespace ShardingTests {
             ShardKeyPattern shardKeyPattern(BSON(keyName << 1));
             ChunkManager manager(collName(), shardKeyPattern, false);
 
-            manager.createFirstChunks(shard(), &splitKeys, NULL );
+            manager.createFirstChunks(_shardId, &splitKeys, NULL );
         }
 
         void run(){
@@ -220,7 +212,7 @@ namespace ShardingTests {
             string keyName = "_id";
             createChunks( keyName );
 
-            auto_ptr<DBClientCursor> cursor =
+            unique_ptr<DBClientCursor> cursor =
                 _client.query(ChunkType::ConfigNS, QUERY(ChunkType::ns(collName())));
 
             set<int> minorVersions;
@@ -243,7 +235,7 @@ namespace ShardingTests {
                 ASSERT( minorVersions.find( version.minorVersion() ) == minorVersions.end() );
                 minorVersions.insert( version.minorVersion() );
 
-                ASSERT(chunk[ChunkType::shard()].String() == shard().getName());
+                ASSERT(chunk[ChunkType::shard()].String() == _shardId);
             }
         }
 
@@ -480,7 +472,7 @@ namespace ShardingTests {
             VersionMap maxShardVersions;
 
             // Create a differ which will track our progress
-            boost::shared_ptr< DefaultDiffAdapter > differ( _inverse ? new InverseDiffAdapter() : new DefaultDiffAdapter() );
+            std::shared_ptr< DefaultDiffAdapter > differ( _inverse ? new InverseDiffAdapter() : new DefaultDiffAdapter() );
             differ->attach( "test", ranges, maxVersion, maxShardVersions );
 
             std::vector<ChunkType> chunksVector;
@@ -685,18 +677,17 @@ namespace ShardingTests {
 
     class All : public Suite {
     public:
-        All() : Suite( "sharding" ) {
-        }
+        All() : Suite("sharding") { }
 
         void setupTests() {
-            add< ChunkManagerCreateBasicTest >();
-            add< ChunkManagerCreateFullTest >();
-            add< ChunkManagerLoadBasicTest >();
-            add< ChunkDiffUnitTestNormal >();
-            add< ChunkDiffUnitTestInverse >();
+            add<ChunkManagerCreateBasicTest>();
+            add<ChunkManagerCreateFullTest>();
+            add<ChunkManagerLoadBasicTest>();
+            add<ChunkDiffUnitTestNormal>();
+            add<ChunkDiffUnitTestInverse>();
         }
     };
 
     SuiteInstance<All> myall;
 
-}
+} // namespace

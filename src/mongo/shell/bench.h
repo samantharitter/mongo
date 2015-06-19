@@ -30,15 +30,11 @@
 
 #include <string>
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/shared_ptr.hpp>
-#include <boost/thread/condition.hpp>
-#include <boost/noncopyable.hpp>
-#include <boost/thread/mutex.hpp>
-
 #include "mongo/client/dbclientinterface.h"
 #include "mongo/db/jsobj.h"
 #include "mongo/platform/atomic_word.h"
+#include "mongo/stdx/condition_variable.h"
+#include "mongo/stdx/mutex.h"
 #include "mongo/util/timer.h"
 
 namespace pcrecpp {
@@ -50,7 +46,8 @@ namespace mongo {
     /**
      * Configuration object describing a bench run activity.
      */
-    class BenchRunConfig : private boost::noncopyable {
+    class BenchRunConfig {
+        MONGO_DISALLOW_COPYING(BenchRunConfig);
     public:
 
         /**
@@ -102,14 +99,17 @@ namespace mongo {
          */
         double seconds;
 
+        /// Base random seed for threads
+        int64_t randomSeed;
+
         bool hideResults;
         bool handleErrors;
         bool hideErrors;
 
-        boost::shared_ptr< pcrecpp::RE > trapPattern;
-        boost::shared_ptr< pcrecpp::RE > noTrapPattern;
-        boost::shared_ptr< pcrecpp::RE > watchPattern;
-        boost::shared_ptr< pcrecpp::RE > noWatchPattern;
+        std::shared_ptr< pcrecpp::RE > trapPattern;
+        std::shared_ptr< pcrecpp::RE > noTrapPattern;
+        std::shared_ptr< pcrecpp::RE > watchPattern;
+        std::shared_ptr< pcrecpp::RE > noWatchPattern;
 
         /**
          * Operation description.  A BSON array of objects, each describing a single
@@ -137,7 +137,8 @@ namespace mongo {
      *
      * Not thread safe.  Expected use is one instance per thread during parallel execution.
      */
-    class BenchRunEventCounter : private boost::noncopyable {
+    class BenchRunEventCounter {
+        MONGO_DISALLOW_COPYING(BenchRunEventCounter);
     public:
         /// Constructs a zeroed out counter.
         BenchRunEventCounter();
@@ -189,7 +190,8 @@ namespace mongo {
      *
      * In all cases, the counter objects must outlive the trace object.
      */
-    class BenchRunEventTrace : private boost::noncopyable {
+    class BenchRunEventTrace {
+        MONGO_DISALLOW_COPYING(BenchRunEventTrace);
     public:
         explicit BenchRunEventTrace(BenchRunEventCounter *eventCounter) {
             initialize(eventCounter, eventCounter, false);
@@ -226,7 +228,8 @@ namespace mongo {
     /**
      * Statistics object representing the result of a bench run activity.
      */
-    class BenchRunStats : private boost::noncopyable {
+    class BenchRunStats {
+        MONGO_DISALLOW_COPYING(BenchRunStats);
     public:
         BenchRunStats();
         ~BenchRunStats();
@@ -237,12 +240,14 @@ namespace mongo {
 
         bool error;
         unsigned long long errCount;
+        unsigned long long opCount;
 
         BenchRunEventCounter findOneCounter;
         BenchRunEventCounter updateCounter;
         BenchRunEventCounter insertCounter;
         BenchRunEventCounter deleteCounter;
         BenchRunEventCounter queryCounter;
+        BenchRunEventCounter commandCounter;
 
         std::map<std::string, long long> opcounters;
         std::vector<BSONObj> trappedErrors;
@@ -253,7 +258,8 @@ namespace mongo {
      *
      * Logically, the states are "starting up", "running" and "finished."
      */
-    class BenchRunState : private boost::noncopyable {
+    class BenchRunState {
+        MONGO_DISALLOW_COPYING(BenchRunState);
     public:
         enum State { BRS_STARTING_UP, BRS_RUNNING, BRS_FINISHED };
 
@@ -277,6 +283,11 @@ namespace mongo {
          */
         void tellWorkersToFinish();
 
+        /**
+         * Notify the worker threads to collect statistics.  Does not block.
+         */
+        void tellWorkersToCollectStats();
+
         /// Check that the current state is BRS_FINISHED.
         void assertFinished();
 
@@ -289,6 +300,12 @@ namespace mongo {
          * to tellWorkersToFinish()).
          */
         bool shouldWorkerFinish();
+
+         /**
+         * Predicate that workers call to see if they should start collecting stats (as a result
+         * of a call to tellWorkersToCollectStats()).
+         */
+        bool shouldWorkerCollectStats();
 
         /**
          * Called by each BenchRunWorker from within its thread context, immediately before it
@@ -303,11 +320,12 @@ namespace mongo {
         void onWorkerFinished();
 
     private:
-        boost::mutex _mutex;
-        boost::condition _stateChangeCondition;
+        stdx::mutex _mutex;
+        stdx::condition_variable _stateChangeCondition;
         unsigned _numUnstartedWorkers;
         unsigned _numActiveWorkers;
         AtomicUInt32 _isShuttingDown;
+        AtomicUInt32 _isCollectingStats;
     };
 
     /**
@@ -315,7 +333,8 @@ namespace mongo {
      *
      * Represents the behavior of one thread working in a bench run activity.
      */
-    class BenchRunWorker : private boost::noncopyable {
+    class BenchRunWorker {
+        MONGO_DISALLOW_COPYING(BenchRunWorker);
     public:
 
         /**
@@ -325,7 +344,8 @@ namespace mongo {
          *
          * "id" is a positive integer which should uniquely identify the worker.
          */
-        BenchRunWorker(size_t id, const BenchRunConfig *config, BenchRunState *brState);
+        BenchRunWorker(size_t id, const BenchRunConfig *config,
+                       BenchRunState *brState, int64_t randomSeed);
         ~BenchRunWorker();
 
         /**
@@ -350,17 +370,23 @@ namespace mongo {
 
         /// Predicate, used to decide whether or not it's time to terminate the worker.
         bool shouldStop() const;
+        /// Predicate, used to decide whether or not it's time to collect statistics
+        bool shouldCollectStats() const;
 
         size_t _id;
         const BenchRunConfig *_config;
         BenchRunState *_brState;
         BenchRunStats _stats;
+        /// Dummy stats to use before observation period.
+        BenchRunStats _statsBlackHole;
+        int64_t _randomSeed;
     };
 
     /**
      * Object representing a "bench run" activity.
      */
-    class BenchRunner : private boost::noncopyable {
+    class BenchRunner {
+        MONGO_DISALLOW_COPYING(BenchRunner);
     public:
         /**
          * Utility method to create a new bench runner from a BSONObj representation
@@ -422,18 +448,15 @@ namespace mongo {
 
     private:
         // TODO: Same as for createWithConfig.
-        static boost::mutex _staticMutex;
+        static stdx::mutex _staticMutex;
         static std::map< OID, BenchRunner* > _activeRuns;
 
         OID _oid;
         BenchRunState _brState;
         Timer *_brTimer;
         unsigned long long _microsElapsed;
-        boost::scoped_ptr<BenchRunConfig> _config;
+        std::unique_ptr<BenchRunConfig> _config;
         std::vector<BenchRunWorker *> _workers;
-
-        BSONObj before;
-        BSONObj after;
     };
 
 }  // namespace mongo

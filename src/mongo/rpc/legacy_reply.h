@@ -32,6 +32,7 @@
 #include "mongo/db/jsobj.h"
 #include "mongo/rpc/document_range.h"
 #include "mongo/rpc/reply_interface.h"
+#include "mongo/rpc/protocol.h"
 
 namespace mongo {
     class Message;
@@ -75,11 +76,13 @@ namespace rpc {
          */
         DocumentRange getOutputDocs() const final;
 
+        Protocol getProtocol() const final;
+
     private:
         const Message* _message;
 
         // TODO: SERVER-18236
-        BSONObj _metadataPlaceholder{};
+        BSONObj _metadata{};
         BSONObj _commandReply{}; // will hold unowned
     };
 

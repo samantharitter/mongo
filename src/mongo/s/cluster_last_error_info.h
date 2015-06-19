@@ -30,7 +30,6 @@
 #include <set>
 
 #include "mongo/db/client_basic.h"
-#include "mongo/s/chunk.h"
 #include "mongo/s/write_ops/batch_write_exec.h"
 
 namespace mongo {
@@ -77,11 +76,6 @@ namespace mongo {
 
         void disableForCommand();
 
-        /** @return if its ok to auto split from this client */
-        bool autoSplitOk() const { return _autoSplitOk && Chunk::ShouldAutoSplit; }
-
-        void noAutoSplit() { _autoSplitOk = false; }
-
     private:
         struct RequestInfo {
 
@@ -98,14 +92,11 @@ namespace mongo {
         RequestInfo _infos[2];
         RequestInfo* _cur = &_infos[0];
         RequestInfo* _prev = &_infos[1];
-
-        bool _autoSplitOk = true;
-
     };
 
     /**
-     * Looks for $gleStats in a command response, and fills in the ClusterLastErrorInfo for this
-     * thread's associated Client with the data, if found.
+     * Looks for $gleStats in a command's reply metadata, and fills in the ClusterLastErrorInfo
+     * for this thread's associated Client with the data, if found.
      *
      * This data will be used by subsequent GLE calls, to ensure we look for the correct
      * write on the correct PRIMARY.
@@ -113,6 +104,6 @@ namespace mongo {
      * conn: the std::string name of the hostAndPort where the command ran. This can be a replica
      *       set seed list.
      */
-    void saveGLEStats(const BSONObj& result, const std::string& conn);
+    void saveGLEStats(const BSONObj& metadataObj, StringData conn);
 
 }  // namespace mongo

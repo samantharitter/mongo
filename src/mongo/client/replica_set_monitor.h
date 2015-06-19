@@ -27,9 +27,8 @@
 
 #pragma once
 
-#include <boost/shared_ptr.hpp>
-#include <string>
 #include <set>
+#include <string>
 
 #include "mongo/base/disallow_copying.h"
 #include "mongo/base/string_data.h"
@@ -37,11 +36,11 @@
 #include "mongo/util/net/hostandport.h"
 
 namespace mongo {
+
     class BSONObj;
     class ReplicaSetMonitor;
-    class TagSet;
     struct ReadPreferenceSetting;
-    typedef boost::shared_ptr<ReplicaSetMonitor> ReplicaSetMonitorPtr;
+    typedef std::shared_ptr<ReplicaSetMonitor> ReplicaSetMonitorPtr;
 
     /**
      * Holds state about a replica set and provides a means to refresh the local view.
@@ -145,19 +144,14 @@ namespace mongo {
          * it will return none. If createFromSeed is true, it will try to look up the last known
          * servers list for this set and will create a new monitor using that as the seed list.
          */
-        static ReplicaSetMonitorPtr get(const std::string& name, bool createFromSeed = false);
-
-        /**
-         * Returns all the currently tracked replica set names.
-         */
-        static std::set<std::string> getAllTrackedSets();
+        static std::shared_ptr<ReplicaSetMonitor> get(const std::string& name);
 
         /**
          * Removes the ReplicaSetMonitor for the given set name from _sets, which will delete it.
          * If clearSeedCache is true, then the cached seed std::string for this Replica Set will be
          * removed from _seedServers.
          */
-        static void remove(const std::string& name, bool clearSeedCache = false);
+        static void remove(const std::string& name);
 
         /**
          * Sets the hook to be called whenever the config of any replica set changes.
@@ -191,8 +185,8 @@ namespace mongo {
         struct IsMasterReply;
         struct ScanState;
         struct SetState;
-        typedef boost::shared_ptr<ScanState> ScanStatePtr;
-        typedef boost::shared_ptr<SetState> SetStatePtr;
+        typedef std::shared_ptr<ScanState> ScanStatePtr;
+        typedef std::shared_ptr<SetState> SetStatePtr;
 
         //
         // FOR TESTING ONLY
@@ -215,6 +209,7 @@ namespace mongo {
     private:
         const SetStatePtr _state; // never NULL
     };
+
 
     /**
      * Refreshes the local view of a replica set.
@@ -305,12 +300,17 @@ namespace mongo {
         static ScanStatePtr startNewScan(const SetState* set);
 
     private:
+
         /**
+         * First, checks that the "reply" is not from a stale primary by
+         * comparing the electionId of "reply" to the maxElectionId recorded by the SetState.
+         * Returns true if "reply" belongs to a non-stale primary.
+         *
          * Updates _set and _scan based on set-membership information from a master.
          * Applies _scan->unconfirmedReplies to confirmed nodes.
          * Does not update this host's node in _set->nodes.
          */
-        void receivedIsMasterFromMaster(const IsMasterReply& reply);
+        bool receivedIsMasterFromMaster(const IsMasterReply& reply);
 
         /**
          * Adjusts the _scan work queue based on information from this host.
@@ -331,4 +331,5 @@ namespace mongo {
         ScanStatePtr _scan; // May differ from _set->currentScan if a new scan has started.
         bool _startedNewScan;
     };
-}
+
+} // namespace mongo

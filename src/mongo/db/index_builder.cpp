@@ -56,11 +56,11 @@ namespace {
     // The bool is 'true' when a new background index has started in a new thread but the
     // parent thread has not yet synchronized with it.
     bool _bgIndexStarting(false);
-    boost::mutex _bgIndexStartingMutex;
-    boost::condition_variable _bgIndexStartingCondVar;
+    stdx::mutex _bgIndexStartingMutex;
+    stdx::condition_variable _bgIndexStartingCondVar;
 
     void _setBgIndexStarting() {
-        boost::lock_guard<boost::mutex> lk(_bgIndexStartingMutex);
+        stdx::lock_guard<stdx::mutex> lk(_bgIndexStartingMutex);
         invariant(_bgIndexStarting == false);
         _bgIndexStarting = true;
         _bgIndexStartingCondVar.notify_one();
@@ -87,7 +87,10 @@ namespace {
 
         AuthorizationSession::get(txn.getClient())->grantInternalAuthorization();
 
-        CurOp::get(txn)->reset(dbInsert);
+        {
+            stdx::lock_guard<Client> lk(*txn.getClient());
+            CurOp::get(txn)->setOp_inlock(dbInsert);
+        }
         NamespaceString ns(_index["ns"].String());
 
         ScopedTransaction transaction(&txn, MODE_IX);
@@ -108,7 +111,7 @@ namespace {
     }
 
     void IndexBuilder::waitForBgIndexStarting() {
-        boost::unique_lock<boost::mutex> lk(_bgIndexStartingMutex);
+        stdx::unique_lock<stdx::mutex> lk(_bgIndexStartingMutex);
         while (_bgIndexStarting == false) {
             _bgIndexStartingCondVar.wait(lk);
         }
@@ -141,8 +144,11 @@ namespace {
             }
         }
 
-        // Show which index we're building in the curop display.
-        CurOp::get(txn)->setQuery(_index);
+        {
+            stdx::lock_guard<Client> lk(*txn->getClient());
+            // Show which index we're building in the curop display.
+            CurOp::get(txn)->setQuery_inlock(_index);
+        }
 
         bool haveSetBgIndexStarting = false;
         while (true) {
@@ -155,7 +161,6 @@ namespace {
                     indexer.allowBackgroundBuilding();
 
 
-                IndexDescriptor* descriptor(NULL);
                 try {
                     status = indexer.init(_index);
                     if ( status.code() == ErrorCodes::IndexAlreadyExists ) {
@@ -168,7 +173,6 @@ namespace {
 
                     if (status.isOK()) {
                         if (allowBackgroundBuilding) {
-                            descriptor = indexer.registerIndexBuild();
                             if (!haveSetBgIndexStarting) {
                                 _setBgIndexStarting();
                                 haveSetBgIndexStarting = true;
@@ -199,7 +203,6 @@ namespace {
                     Database* reloadDb = dbHolder().get(txn, ns.db());
                     fassert(28553, reloadDb);
                     fassert(28554, reloadDb->getCollection(ns.ns()));
-                    indexer.unregisterIndexBuild(descriptor);
                 }
 
                 if (status.code() == ErrorCodes::InterruptedAtShutdown) {
@@ -217,24 +220,6 @@ namespace {
 
             LOG(2) << "WriteConflictException while creating index in IndexBuilder, retrying.";
             txn->recoveryUnit()->abandonSnapshot();
-        }
-    }
-
-    std::vector<BSONObj>
-    IndexBuilder::killMatchingIndexBuilds(Collection* collection,
-                                          const IndexCatalog::IndexKillCriteria& criteria) {
-        invariant(collection);
-        return collection->getIndexCatalog()->killMatchingIndexBuilds(criteria);
-    }
-
-    void IndexBuilder::restoreIndexes(OperationContext* txn, const std::vector<BSONObj>& indexes) {
-        log() << "restarting " << indexes.size() << " background index build(s)" << endl;
-        for (int i = 0; i < static_cast<int>(indexes.size()); i++) {
-            IndexBuilder* indexBuilder = new IndexBuilder(indexes[i]);
-            // This looks like a memory leak, but indexBuilder deletes itself when it finishes
-            indexBuilder->go();
-            Lock::TempRelease release(txn->lockState());
-            IndexBuilder::waitForBgIndexStarting();
         }
     }
 }

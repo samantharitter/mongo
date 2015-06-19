@@ -54,6 +54,7 @@
 #include "mongo/db/repl/replication_executor.h"
 #include "mongo/db/repl/update_position_args.h"
 #include "mongo/db/storage/storage_engine.h"
+#include "mongo/executor/network_interface.h"
 #include "mongo/util/fail_point_service.h"
 #include "mongo/util/log.h"
 
@@ -709,7 +710,7 @@ namespace {
             {
                 AbstractMessagingPort *mp = txn->getClient()->port();
                 if( mp )
-                    mp->tag |= ReplicationExecutor::NetworkInterface::kMessagingPortKeepOpen;
+                    mp->tag |= executor::NetworkInterface::kMessagingPortKeepOpen;
             }
 
             if (getGlobalReplicationCoordinator()->isV1ElectionProtocol()) {
@@ -719,7 +720,7 @@ namespace {
                     ReplSetHeartbeatResponse response;
                     status = getGlobalReplicationCoordinator()->processHeartbeatV1(args, &response);
                     if (status.isOK())
-                        response.addToBSON(&result);
+                        response.addToBSON(&result, true);
                     return appendCommandStatus(result, status);
                 }
                 // else: fall through to old heartbeat protocol as it is likely that
@@ -740,7 +741,7 @@ namespace {
             ReplSetHeartbeatResponse response;
             status = getGlobalReplicationCoordinator()->processHeartbeat(args, &response);
             if (status.isOK())
-                response.addToBSON(&result);
+                response.addToBSON(&result, false);
             return appendCommandStatus(result, status);
         }
     } cmdReplSetHeartbeat;

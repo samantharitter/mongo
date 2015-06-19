@@ -33,7 +33,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
 #include <iostream>
 #include <limits>
 
@@ -47,8 +46,8 @@
 #include "mongo/util/log.h"
 #include "mongo/util/timer.h"
 
-using boost::scoped_ptr;
-using std::auto_ptr;
+using std::unique_ptr;
+using std::unique_ptr;
 using std::cout;
 using std::endl;
 using std::string;
@@ -68,7 +67,7 @@ namespace JSTests {
     class BasicScope {
     public:
         void run() {
-            scoped_ptr<Scope> s;
+            unique_ptr<Scope> s;
             s.reset( globalScriptEngine->newScope() );
 
             s->setNumber( "x" , 5 );
@@ -92,7 +91,7 @@ namespace JSTests {
     public:
         void run() {
             /* Currently reset does not clear data in v8 or spidermonkey scopes.  See SECURITY-10
-            auto_ptr<Scope> s;
+            unique_ptr<Scope> s;
             s.reset( globalScriptEngine->newScope() );
 
             s->setBoolean( "x" , true );
@@ -108,7 +107,7 @@ namespace JSTests {
     public:
         void run() {
             // Test falsy javascript values
-            scoped_ptr<Scope> s;
+            unique_ptr<Scope> s;
             s.reset( globalScriptEngine->newScope() );
 
             ASSERT( ! s->getBoolean( "notSet" ) );
@@ -655,7 +654,7 @@ namespace JSTests {
     class NumberLong {
     public:
         void run() {
-            auto_ptr<Scope> s( globalScriptEngine->newScope() );
+            unique_ptr<Scope> s( globalScriptEngine->newScope() );
             BSONObjBuilder b;
             long long val = (long long)( 0xbabadeadbeefbaddULL );
             b.append( "a", val );
@@ -715,7 +714,7 @@ namespace JSTests {
     class NumberLong2 {
     public:
         void run() {
-            auto_ptr<Scope> s( globalScriptEngine->newScope() );
+            unique_ptr<Scope> s( globalScriptEngine->newScope() );
 
             BSONObj in;
             {
@@ -742,7 +741,7 @@ namespace JSTests {
     class NumberLongUnderLimit {
     public:
         void run() {
-            auto_ptr<Scope> s( globalScriptEngine->newScope() );
+            unique_ptr<Scope> s( globalScriptEngine->newScope() );
 
             BSONObjBuilder b;
             // limit is 2^53
@@ -788,7 +787,7 @@ namespace JSTests {
     class InvalidTimestamp {
     public:
         void run() {
-            auto_ptr<Scope> s( globalScriptEngine->newScope() );
+            unique_ptr<Scope> s( globalScriptEngine->newScope() );
 
             // Timestamp 't' component cannot exceed max for int32_t.
             BSONObj in;
@@ -838,7 +837,7 @@ namespace JSTests {
     class ExecTimeout {
     public:
         void run() {
-            scoped_ptr<Scope> scope(globalScriptEngine->newScope());
+            unique_ptr<Scope> scope(globalScriptEngine->newScope());
 
             // assert timeout occurred
             ASSERT(!scope->exec("var a = 1; while (true) { ; }",
@@ -852,7 +851,7 @@ namespace JSTests {
     class ExecNoTimeout {
     public:
         void run() {
-            scoped_ptr<Scope> scope(globalScriptEngine->newScope());
+            unique_ptr<Scope> scope(globalScriptEngine->newScope());
 
             // assert no timeout occurred
             ASSERT(scope->exec("var a = function() { return 1; }",
@@ -866,7 +865,7 @@ namespace JSTests {
     class InvokeTimeout {
     public:
         void run() {
-            scoped_ptr<Scope> scope(globalScriptEngine->newScope());
+            unique_ptr<Scope> scope(globalScriptEngine->newScope());
 
             // scope timeout after 500ms
             bool caught = false;
@@ -888,7 +887,7 @@ namespace JSTests {
     class InvokeNoTimeout {
     public:
         void run() {
-            scoped_ptr<Scope> scope(globalScriptEngine->newScope());
+            unique_ptr<Scope> scope(globalScriptEngine->newScope());
 
             // invoke completes before timeout
             scope->invokeSafe("function() { "
@@ -966,7 +965,7 @@ namespace JSTests {
             if( !globalScriptEngine->utf8Ok() )
                 return;
 
-            auto_ptr<Scope> s;
+            unique_ptr<Scope> s;
             s.reset( globalScriptEngine->newScope() );
 
             BSONObj b;
@@ -1928,7 +1927,7 @@ namespace JSTests {
             BSONObj start = BSON( "x" << 5.0 );
             BSONObj empty;
 
-            auto_ptr<Scope> s;
+            unique_ptr<Scope> s;
             s.reset( globalScriptEngine->newScope() );
 
             ScriptingFunction f = s->createFunction( "return this.x + 6;" );
@@ -1946,7 +1945,7 @@ namespace JSTests {
     class ScopeOut {
     public:
         void run() {
-            auto_ptr<Scope> s;
+            unique_ptr<Scope> s;
             s.reset( globalScriptEngine->newScope() );
 
             s->invokeSafe( "x = 5;" , 0, 0 );
@@ -1972,7 +1971,7 @@ namespace JSTests {
     class RenameTest {
     public:
         void run() {
-            auto_ptr<Scope> s;
+            unique_ptr<Scope> s;
             s.reset( globalScriptEngine->newScope() );
 
             s->setNumber( "x" , 5 );
@@ -2004,7 +2003,7 @@ namespace JSTests {
             DBDirectClient client(&txn);
             client.update( "test.system.js" , query.obj() , update.obj() , true /* upsert */ );
 
-            scoped_ptr<Scope> s( globalScriptEngine->newScope() );
+            unique_ptr<Scope> s( globalScriptEngine->newScope() );
             client.eval( "test" , "invalidstoredjs1()" );
             
             BSONObj info;

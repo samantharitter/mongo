@@ -46,10 +46,9 @@
 #include <map>
 #include <string>
 
-#include <boost/noncopyable.hpp>
-
 #include "mongo/db/jsobj.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/platform/random.h"
 
 namespace mongo {
 
@@ -73,7 +72,8 @@ namespace mongo {
      * method.
      *
      */
-    class BsonTemplateEvaluator : private boost::noncopyable {
+    class BsonTemplateEvaluator {
+        MONGO_DISALLOW_COPYING(BsonTemplateEvaluator);
     public:
         /* Status of template evaluation. Logically the  the status are "success", "bad operator"
          * and "operation evaluation error." */
@@ -97,7 +97,10 @@ namespace mongo {
         typedef stdx::function< Status (BsonTemplateEvaluator* btl, const char* fieldName,
                                          const BSONObj& in, BSONObjBuilder& builder) > OperatorFn;
 
-        BsonTemplateEvaluator();
+        /*
+         * @params seed : Random seed to be used when generating random data
+         */
+        BsonTemplateEvaluator(int64_t seed);
         ~BsonTemplateEvaluator();
 
         /**
@@ -234,6 +237,9 @@ namespace mongo {
          */
         static Status evalVariable(BsonTemplateEvaluator* btl, const char* fieldName,
                                    const BSONObj& in, BSONObjBuilder& out);
+
+        // Per object pseudo random number generator
+        PseudoRandom rng;
 
     };
 

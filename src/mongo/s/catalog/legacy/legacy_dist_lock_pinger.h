@@ -28,7 +28,6 @@
 
 #pragma once
 
-#include <boost/thread/thread.hpp>
 #include <list>
 #include <set>
 #include <string>
@@ -36,7 +35,9 @@
 #include "mongo/base/status.h"
 #include "mongo/client/dbclientinterface.h"
 #include "mongo/s/catalog/dist_lock_manager.h"
+#include "mongo/stdx/condition_variable.h"
 #include "mongo/stdx/memory.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/concurrency/mutex.h"
 #include "mongo/util/time_support.h"
 
@@ -116,13 +117,13 @@ namespace mongo {
         mongo::mutex _mutex;
 
         // Triggered everytime a pinger thread is stopped.
-        boost::condition_variable _pingStoppedCV;                                        // (M)
+        stdx::condition_variable _pingStoppedCV;                                        // (M)
 
         // pingID -> thread
         // This can contain multiple elements in tests, but in tne normal case, this will
         // contain only a single element.
         // Note: can be safely read when _inShutdown is true.
-        std::map<std::string, boost::thread> _pingThreads;                               // (M*)
+        std::map<std::string, stdx::thread> _pingThreads;                               // (M*)
 
         // Contains the list of process id to stopPing.
         std::set<std::string> _kill;                                                     // (M)

@@ -34,7 +34,6 @@
 
 #include "mongo/db/cloner.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/base/status.h"
 #include "mongo/bson/util/builder.h"
@@ -67,8 +66,8 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::unique_ptr;
     using std::list;
     using std::set;
     using std::endl;
@@ -127,13 +126,13 @@ namespace mongo {
             invariant(from_collection.coll() != "system.indexes");
 
             // XXX: can probably take dblock instead
-            scoped_ptr<ScopedTransaction> scopedXact(new ScopedTransaction(txn, MODE_X));
-            scoped_ptr<Lock::GlobalWrite> globalWriteLock(new Lock::GlobalWrite(txn->lockState()));
+            unique_ptr<ScopedTransaction> scopedXact(new ScopedTransaction(txn, MODE_X));
+            unique_ptr<Lock::GlobalWrite> globalWriteLock(new Lock::GlobalWrite(txn->lockState()));
             uassert(ErrorCodes::NotMaster,
                     str::stream() << "Not primary while cloning collection " << from_collection.ns()
                                   << " to " << to_collection.ns(),
                     !txn->writesAreReplicated() ||
-                    repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(_dbName));
+                    repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(to_collection));
 
             // Make sure database still exists after we resume from the temp release
             Database* db = dbHolder().openDb(txn, _dbName);
@@ -182,10 +181,10 @@ namespace mongo {
                         // Check if everything is still all right.
                         if (txn->writesAreReplicated()) {
                             uassert(28592,
-                                    str::stream() << "Cannot write to db: " << _dbName
+                                    str::stream() << "Cannot write to ns: " << to_collection.ns()
                                                   << " after yielding",
                                     repl::getGlobalReplicationCoordinator()->
-                                        canAcceptWritesForDatabase(_dbName));
+                                        canAcceptWritesFor(to_collection));
                         }
 
                         // TODO: SERVER-16598 abort if original db or collection is gone.
@@ -283,7 +282,7 @@ namespace mongo {
                               << " to " << to_collection.ns() << " with filter "
                               << query.toString(),
                 !txn->writesAreReplicated() ||
-                repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(toDBName));
+                repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(to_collection));
     }
 
     void Cloner::copyIndexes(OperationContext* txn,
@@ -314,7 +313,7 @@ namespace mongo {
                 str::stream() << "Not primary while copying indexes from " << from_collection.ns()
                               << " to " << to_collection.ns() << " (Cloner)",
                 !txn->writesAreReplicated() ||
-                repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(toDBName));
+                repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(to_collection));
 
 
         if (indexesToBuild.empty())
@@ -381,7 +380,7 @@ namespace mongo {
         uassert(ErrorCodes::NotMaster,
                 str::stream() << "Not primary while copying collection " << ns << " (Cloner)",
                 !txn->writesAreReplicated() ||
-                repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(dbname));
+                repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nss));
 
         Database* db = dbHolder().openDb(txn, dbname);
 
@@ -467,7 +466,7 @@ namespace mongo {
             }
             else if ( !masterSameProcess ) {
                 std::string errmsg;
-                auto_ptr<DBClientBase> con( cs.connect( errmsg ));
+                unique_ptr<DBClientBase> con( cs.connect( errmsg ));
                 if (!con.get()) {
                     return Status(ErrorCodes::HostUnreachable, errmsg);
                 }
@@ -479,7 +478,7 @@ namespace mongo {
                                   "Unable to authenticate as internal user");
                 }
 
-                _conn = con;
+                _conn = std::move(con);
             }
             else {
                 _conn.reset(new DBDirectClient(txn));

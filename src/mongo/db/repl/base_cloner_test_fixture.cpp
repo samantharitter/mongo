@@ -30,9 +30,9 @@
 
 #include "mongo/db/repl/base_cloner_test_fixture.h"
 
-#include <boost/thread.hpp>
 #include <memory>
 
+#include "mongo/stdx/thread.h"
 #include "mongo/db/jsobj.h"
 
 namespace mongo {
@@ -106,10 +106,12 @@ namespace repl {
         ReplicationExecutorTest::setUp();
         clear();
         launchExecutorThread();
+        storageInterface.reset(new ClonerStorageInterfaceMock());
     }
 
     void BaseClonerTest::tearDown() {
         ReplicationExecutorTest::tearDown();
+        storageInterface.reset();
     }
 
     void BaseClonerTest::clear() {
@@ -117,26 +119,14 @@ namespace repl {
     }
 
     void BaseClonerTest::setStatus(const Status& status) {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         _status = status;
         _setStatusCondition.notify_all();
     }
 
     const Status& BaseClonerTest::getStatus() const {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
         return _status;
-    }
-
-    void BaseClonerTest::waitForStatus() {
-        boost::unique_lock<boost::mutex> lk(_mutex);
-        if (_status == getDetectableErrorStatus()) {
-            try {
-                _setStatusCondition.wait_for(lk, Milliseconds(1000));
-            }
-            catch (const boost::thread_interrupted&) {
-            }
-
-        }
     }
 
     void BaseClonerTest::scheduleNetworkResponse(NetworkOperationIterator noi,
@@ -243,17 +233,32 @@ namespace repl {
         ASSERT_FALSE(getCloner()->isActive());
     }
 
-    Status StorageInterfaceMock::beginCollection(OperationContext* txn,
-                                                 const NamespaceString& nss,
-                                                 const CollectionOptions& options,
-                                                 const std::vector<BSONObj>& specs) {
+    Status ClonerStorageInterfaceMock::beginCollection(OperationContext* txn,
+                                                       const NamespaceString& nss,
+                                                       const CollectionOptions& options,
+                                                       const std::vector<BSONObj>& specs) {
         return beginCollectionFn ? beginCollectionFn(txn, nss, options, specs) : Status::OK();
     }
 
-    Status StorageInterfaceMock::insertDocuments(OperationContext* txn,
-                                                 const NamespaceString& nss,
-                                                 const std::vector<BSONObj>& docs) {
+    Status ClonerStorageInterfaceMock::insertDocuments(OperationContext* txn,
+                                                       const NamespaceString& nss,
+                                                       const std::vector<BSONObj>& docs) {
         return insertDocumentsFn ? insertDocumentsFn(txn, nss, docs) : Status::OK();
+    }
+
+    Status ClonerStorageInterfaceMock::commitCollection(OperationContext* txn,
+                                                        const NamespaceString& nss) {
+        return Status::OK();
+    }
+
+    Status ClonerStorageInterfaceMock::insertMissingDoc(OperationContext* txn,
+                                                  const NamespaceString& nss,
+                                                  const BSONObj& doc) {
+        return Status::OK();
+    }
+
+    Status ClonerStorageInterfaceMock::dropUserDatabases(OperationContext* txn) {
+        return dropUserDatabasesFn ? dropUserDatabasesFn(txn) : Status::OK();
     }
 
 } // namespace repl

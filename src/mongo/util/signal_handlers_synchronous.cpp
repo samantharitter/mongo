@@ -34,7 +34,6 @@
 
 #include <boost/exception/diagnostic_information.hpp>
 #include <boost/exception/exception.hpp>
-#include <boost/thread.hpp>
 #include <csignal>
 #include <exception>
 #include <iostream>
@@ -46,6 +45,7 @@
 #include "mongo/base/string_data.h"
 #include "mongo/logger/log_domain.h"
 #include "mongo/logger/logger.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/concurrency/thread_name.h"
 #include "mongo/util/debug_util.h"
 #include "mongo/util/debugger.h"
@@ -109,7 +109,7 @@ namespace {
     // If in the future, we decide to be more strict about posix signal safety, we could switch to
     // an atomic test-and-set loop, possibly with a mechanism for detecting signals raised while
     // handling other signals.
-    boost::mutex streamMutex;
+    stdx::mutex streamMutex;
 
     // must hold streamMutex to call
     void writeMallocFreeStreamToLog() {
@@ -131,7 +131,7 @@ namespace {
     // this will be called in certain c++ error cases, for example if there are two active
     // exceptions
     void myTerminate() {
-        boost::lock_guard<boost::mutex> lk(streamMutex);
+        stdx::lock_guard<stdx::mutex> lk(streamMutex);
 
         // In c++11 we can recover the current exception to print it.
         if (std::exception_ptr eptr = std::current_exception()) {
@@ -191,7 +191,7 @@ namespace {
     }
 
     void abruptQuit(int signalNum) {
-        boost::lock_guard<boost::mutex> lk(streamMutex);
+        stdx::lock_guard<stdx::mutex> lk(streamMutex);
         printSignalAndBacktrace(signalNum);
 
         // Don't go through normal shutdown procedure. It may make things worse.
@@ -230,7 +230,7 @@ namespace {
 #else
 
     void abruptQuitWithAddrSignal( int signalNum, siginfo_t *siginfo, void * ) {
-        boost::lock_guard<boost::mutex> lk(streamMutex);
+        stdx::lock_guard<stdx::mutex> lk(streamMutex);
 
         const char* action = (signalNum == SIGSEGV || signalNum == SIGBUS) ? "access" : "operation";
         mallocFreeOStream << "Invalid " << action << " at address: " << siginfo->si_addr;
@@ -284,7 +284,7 @@ namespace {
     }
 
     void reportOutOfMemoryErrorAndExit() {
-        boost::lock_guard<boost::mutex> lk(streamMutex);
+        stdx::lock_guard<stdx::mutex> lk(streamMutex);
         printStackTrace(mallocFreeOStream << "out of memory.\n");
         writeMallocFreeStreamToLog();
         quickExit(EXIT_ABRUPT);

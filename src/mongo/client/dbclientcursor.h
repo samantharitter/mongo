@@ -29,7 +29,6 @@
 
 #pragma once
 
-#include <boost/noncopyable.hpp>
 #include <stack>
 
 #include "mongo/client/dbclientinterface.h"
@@ -44,7 +43,8 @@ namespace mongo {
     /** for mock purposes only -- do not create variants of DBClientCursor, nor hang code here
         @see DBClientMockCursor
      */
-    class DBClientCursorInterface : boost::noncopyable {
+    class DBClientCursorInterface {
+        MONGO_DISALLOW_COPYING(DBClientCursorInterface);
     public:
         virtual ~DBClientCursorInterface() {}
         virtual bool more() = 0;
@@ -204,9 +204,10 @@ namespace mongo {
         void initLazy( bool isRetry = false );
         bool initLazyFinish( bool& retry );
 
-        class Batch : boost::noncopyable {
+        class Batch {
+            MONGO_DISALLOW_COPYING(Batch);
             friend class DBClientCursor;
-            std::auto_ptr<Message> m;
+            std::unique_ptr<Message> m;
             int nReturned;
             int pos;
             const char *data;
@@ -242,6 +243,14 @@ namespace mongo {
 
         void dataReceived() { bool retry; std::string lazyHost; dataReceived( retry, lazyHost ); }
         void dataReceived( bool& retry, std::string& lazyHost );
+
+        /**
+         * Called by dataReceived when the query was actually a command. Parses the command reply
+         * according to the RPC protocol used to send it, and then fills in the internal field
+         * of this cursor with the received data.
+         */
+        void commandDataReceived();
+
         void requestMore();
         void exhaustReceiveMore(); // for exhaust
 

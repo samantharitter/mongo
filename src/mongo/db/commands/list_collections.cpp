@@ -30,28 +30,25 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/db/auth/authorization_session.h"
 #include "mongo/db/catalog/collection_catalog_entry.h"
 #include "mongo/db/catalog/cursor_manager.h"
 #include "mongo/db/catalog/database.h"
 #include "mongo/db/catalog/database_catalog_entry.h"
-#include "mongo/db/catalog/database_holder.h"
-#include "mongo/db/client.h"
 #include "mongo/db/clientcursor.h"
 #include "mongo/db/commands.h"
-#include "mongo/db/commands/cursor_responses.h"
 #include "mongo/db/db_raii.h"
 #include "mongo/db/exec/queued_data_stage.h"
 #include "mongo/db/exec/working_set.h"
+#include "mongo/db/query/cursor_responses.h"
 #include "mongo/db/query/find_constants.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/storage/storage_engine.h"
 
 namespace mongo {
 
-    using boost::scoped_ptr;
+    using std::unique_ptr;
     using std::list;
     using std::string;
     using std::stringstream;
@@ -95,7 +92,7 @@ namespace mongo {
                  int,
                  string& errmsg,
                  BSONObjBuilder& result) {
-            boost::scoped_ptr<MatchExpression> matcher;
+            std::unique_ptr<MatchExpression> matcher;
             BSONElement filterElt = jsobj["filter"];
             if (!filterElt.eoo()) {
                 if (filterElt.type() != mongo::Object) {
@@ -132,8 +129,8 @@ namespace mongo {
                 names.sort();
             }
 
-            std::auto_ptr<WorkingSet> ws(new WorkingSet());
-            std::auto_ptr<QueuedDataStage> root(new QueuedDataStage(ws.get()));
+            std::unique_ptr<WorkingSet> ws(new WorkingSet());
+            std::unique_ptr<QueuedDataStage> root(new QueuedDataStage(ws.get()));
 
             for (std::list<std::string>::const_iterator i = names.begin();
                  i != names.end();
@@ -176,7 +173,7 @@ namespace mongo {
                                                    cursorNamespace,
                                                    PlanExecutor::YIELD_MANUAL,
                                                    &rawExec);
-            std::auto_ptr<PlanExecutor> exec(rawExec);
+            std::unique_ptr<PlanExecutor> exec(rawExec);
             if (!makeStatus.isOK()) {
                 return appendCommandStatus( result, makeStatus );
             }

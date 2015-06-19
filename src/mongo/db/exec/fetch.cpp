@@ -41,7 +41,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::vector;
 
     // static
@@ -104,24 +104,22 @@ namespace mongo {
                 verify(WorkingSetMember::LOC_AND_IDX == member->state);
                 verify(member->hasLoc());
 
-                // We might need to retrieve 'nextLoc' from secondary storage, in which case we send
-                // a NEED_YIELD request up to the PlanExecutor.
-                std::auto_ptr<RecordFetcher> fetcher(_collection->documentNeedsFetch(_txn,
-                                                                                     member->loc));
-                if (NULL != fetcher.get()) {
-                    // There's something to fetch. Hand the fetcher off to the WSM, and pass up
-                    // a fetch request.
-                    _idRetrying = id;
-                    member->setFetcher(fetcher.release());
-                    *out = id;
-                    _commonStats.needYield++;
-                    return NEED_YIELD;
-                }
-
-                // The doc is already in memory, so go ahead and grab it. Now we have a RecordId
-                // as well as an unowned object
                 try {
-                    if (!WorkingSetCommon::fetch(_txn, member, _collection)) {
+                    if (!_cursor) _cursor = _collection->getCursor(_txn);
+
+                    if (auto fetcher = _cursor->fetcherForId(member->loc)) {
+                        // There's something to fetch. Hand the fetcher off to the WSM, and pass up
+                        // a fetch request.
+                        _idRetrying = id;
+                        member->setFetcher(fetcher.release());
+                        *out = id;
+                        _commonStats.needYield++;
+                        return NEED_YIELD;
+                    }
+
+                    // The doc is already in memory, so go ahead and grab it. Now we have a RecordId
+                    // as well as an unowned object
+                    if (!WorkingSetCommon::fetch(_txn, member, _cursor)) {
                         _ws->free(id);
                         _commonStats.needTime++;
                         return NEED_TIME;
@@ -137,7 +135,7 @@ namespace mongo {
 
             return returnIfMatches(member, id, out);
         }
-        else if (PlanStage::FAILURE == status) {
+        else if (PlanStage::FAILURE == status || PlanStage::DEAD == status) {
             *out = id;
             // If a stage fails, it may create a status WSM to indicate why it
             // failed, in which case 'id' is valid.  If ID is invalid, we
@@ -164,6 +162,7 @@ namespace mongo {
     void FetchStage::saveState() {
         _txn = NULL;
         ++_commonStats.yields;
+        if (_cursor) _cursor->saveUnpositioned();
         _child->saveState();
     }
 
@@ -171,6 +170,7 @@ namespace mongo {
         invariant(_txn == NULL);
         _txn = opCtx;
         ++_commonStats.unyields;
+        if (_cursor) _cursor->restore(opCtx);
         _child->restoreState(opCtx);
     }
 
@@ -210,10 +210,6 @@ namespace mongo {
         ++_specificStats.docsExamined;
 
         if (Filter::passes(member, _filter)) {
-            if (NULL != _filter) {
-                ++_specificStats.matchTested;
-            }
-
             *out = memberID;
 
             ++_commonStats.advanced;
@@ -243,7 +239,7 @@ namespace mongo {
             _commonStats.filter = bob.obj();
         }
 
-        auto_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_FETCH));
+        unique_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_FETCH));
         ret->specific.reset(new FetchStats(_specificStats));
         ret->children.push_back(_child->getStats());
         return ret.release();

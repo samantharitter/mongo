@@ -45,7 +45,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::vector;
 
     // static
@@ -136,8 +136,10 @@ namespace mongo {
             try {
                 // If the snapshot changed, then we have to make sure we have the latest copy of the
                 // doc and that it still matches.
+                std::unique_ptr<RecordCursor> cursor;
                 if (_txn->recoveryUnit()->getSnapshotId() != member->obj.snapshotId()) {
-                    if (!WorkingSetCommon::fetch(_txn, member, _collection)) {
+                    cursor = _collection->getCursor(_txn);
+                    if (!WorkingSetCommon::fetch(_txn, member, cursor)) {
                         // Doc is already deleted. Nothing more to do.
                         ++_commonStats.needTime;
                         return PlanStage::NEED_TIME;
@@ -235,7 +237,7 @@ namespace mongo {
             ++_commonStats.needTime;
             return PlanStage::NEED_TIME;
         }
-        else if (PlanStage::FAILURE == status) {
+        else if (PlanStage::FAILURE == status || PlanStage::DEAD == status) {
             *out = id;
             // If a stage fails, it may create a status WSM to indicate why it failed, in which case
             // 'id' is valid.  If ID is invalid, we create our own error message.
@@ -243,7 +245,6 @@ namespace mongo {
                 const std::string errmsg = "delete stage failed to read in results from child";
                 *out = WorkingSetCommon::allocateStatusMember(_ws, Status(ErrorCodes::InternalError,
                                                                           errmsg));
-                return PlanStage::FAILURE;
             }
             return status;
         }
@@ -274,7 +275,7 @@ namespace mongo {
         massert(28537,
                 str::stream() << "Demoted from primary while removing from " << ns.ns(),
                 !_params.shouldCallLogOp ||
-                repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(ns.db()));
+                repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(ns));
     }
 
     void DeleteStage::invalidate(OperationContext* txn, const RecordId& dl, InvalidationType type) {
@@ -290,7 +291,7 @@ namespace mongo {
 
     PlanStageStats* DeleteStage::getStats() {
         _commonStats.isEOF = isEOF();
-        auto_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_DELETE));
+        unique_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_DELETE));
         ret->specific.reset(new DeleteStats(_specificStats));
         ret->children.push_back(_child->getStats());
         return ret.release();

@@ -35,7 +35,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::vector;
 
     // static
@@ -62,10 +62,6 @@ namespace mongo {
 
         if (isEOF()) { return PlanStage::IS_EOF; }
 
-        if (0 == _specificStats.matchTested.size()) {
-            _specificStats.matchTested = vector<size_t>(_children.size(), 0);
-        }
-
         WorkingSetID id = WorkingSet::INVALID_ID;
         StageState childStatus = _children[_currentChild]->work(&id);
 
@@ -91,9 +87,6 @@ namespace mongo {
             }
 
             if (Filter::passes(member, _filter)) {
-                if (NULL != _filter) {
-                    ++_specificStats.matchTested[_currentChild];
-                }
                 // Match!  return it.
                 *out = id;
                 ++_commonStats.advanced;
@@ -119,7 +112,7 @@ namespace mongo {
                 return PlanStage::NEED_TIME;
             }
         }
-        else if (PlanStage::FAILURE == childStatus) {
+        else if (PlanStage::FAILURE == childStatus || PlanStage::DEAD == childStatus) {
             *out = id;
             // If a stage fails, it may create a status WSM to indicate why it
             // failed, in which case 'id' is valid.  If ID is invalid, we
@@ -192,7 +185,7 @@ namespace mongo {
             _commonStats.filter = bob.obj();
         }
 
-        auto_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_OR));
+        unique_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_OR));
         ret->specific.reset(new OrStats(_specificStats));
         for (size_t i = 0; i < _children.size(); ++i) {
             ret->children.push_back(_children[i]->getStats());

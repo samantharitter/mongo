@@ -36,6 +36,7 @@
 #include "mongo/platform/unordered_set.h"
 #include "mongo/stdx/functional.h"
 #include "mongo/util/decorable.h"
+#include "mongo/util/tick_source.h"
 
 namespace mongo {
 
@@ -94,28 +95,46 @@ namespace mongo {
         };
 
         /**
-         * Observer interface implemented to hook client creation and destruction.
+         * Observer interface implemented to hook client and operation context creation and
+         * destruction.
          */
         class ClientObserver {
         public:
             virtual ~ClientObserver() = default;
 
             /**
-             * Hook called after a new client "client" is created on "service" by
+             * Hook called after a new client "client" is created on a service by
              * service->makeClient().
              *
              * For a given client and registered instance of ClientObserver, if onCreateClient
              * returns without throwing an exception, onDestroyClient will be called when "client"
              * is deleted.
              */
-            virtual void onCreateClient(ServiceContext* service, Client* client) = 0;
+            virtual void onCreateClient(Client* client) = 0;
 
             /**
-             * Hook called on a "client" created by "service" before deleting "client".
+             * Hook called on a "client" created by a service before deleting "client".
              *
              * Like a destructor, must not throw exceptions.
              */
-            virtual void onDestroyClient(ServiceContext* service, Client* client) = 0;
+            virtual void onDestroyClient(Client* client) = 0;
+
+            /**
+             * Hook called after a new operation context is created on a client by
+             * service->makeOperationContext(client)  or client->makeOperationContext().
+             *
+             * For a given operation context and registered instance of ClientObserver, if
+             * onCreateOperationContext returns without throwing an exception,
+             * onDestroyOperationContext will be called when "opCtx" is deleted.
+             */
+            virtual void onCreateOperationContext(OperationContext* opCtx) = 0;
+
+            /**
+             * Hook called on a "opCtx" created by a service before deleting "opCtx".
+             *
+             * Like a destructor, must not throw exceptions.
+             */
+            virtual void onDestroyOperationContext(OperationContext* opCtx) = 0;
         };
 
         using ClientSet = unordered_set<Client*>;
@@ -139,15 +158,29 @@ namespace mongo {
             Client* next();
 
         private:
-            boost::unique_lock<boost::mutex> _lock;
+            stdx::unique_lock<stdx::mutex> _lock;
             ClientSet::const_iterator _curr;
             ClientSet::const_iterator _end;
+        };
+
+        /**
+         * Special deleter used for cleaning up OperationContext objects owned by a ServiceContext.
+         * See UniqueOperationContext, below.
+         */
+        class OperationContextDeleter {
+        public:
+            void operator()(OperationContext* opCtx) const;
         };
 
         /**
          * This is the unique handle type for Clients created by a ServiceContext.
          */
         using UniqueClient = std::unique_ptr<Client, ClientDeleter>;
+
+        /**
+         * This is the unique handle type for OperationContexts created by a ServiceContext.
+         */
+        using UniqueOperationContext = std::unique_ptr<OperationContext, OperationContextDeleter>;
 
         virtual ~ServiceContext();
 
@@ -171,6 +204,13 @@ namespace mongo {
          * If supplied, "p" is the communication channel used for communicating with the client.
          */
         UniqueClient makeClient(std::string desc, AbstractMessagingPort* p = nullptr);
+
+        /**
+         * Creates a new OperationContext on "client".
+         *
+         * "client" must not have an active operation context.
+         */
+        UniqueOperationContext makeOperationContext(Client* client);
 
         //
         // Storage
@@ -197,10 +237,7 @@ namespace mongo {
          */
         virtual StorageFactoriesIterator* makeStorageFactoriesIterator() = 0;
 
-        /**
-         * Set the storage engine.  The engine must have been registered via registerStorageEngine.
-         */
-        virtual void setGlobalStorageEngine(const std::string& name) = 0;
+        virtual void initializeGlobalStorageEngine() = 0;
 
         /**
          * Shuts down storage engine cleanly and releases any locks on mongod.lock.
@@ -253,11 +290,6 @@ namespace mongo {
          */
         virtual void registerKillOpListener(KillOpListenerInterface* listener) = 0;
 
-        /**
-         * Returns a new OperationContext.  Caller owns pointer.
-         */
-        virtual OperationContext* newOpCtx() = 0;
-
         //
         // Global OpObserver.
         //
@@ -272,6 +304,18 @@ namespace mongo {
          */
         virtual OpObserver* getOpObserver() = 0;
 
+        /**
+         * Returns the tick source set in this context.
+         */
+        TickSource* getTickSource() const;
+
+        /**
+         * Replaces the current tick source with a new one. In other words, the old tick source
+         * will be destroyed. So make sure that no one is using the old tick source when
+         * calling this.
+         */
+        void setTickSource(std::unique_ptr<TickSource> newSource);
+
     protected:
         ServiceContext() = default;
 
@@ -279,14 +323,21 @@ namespace mongo {
          * Mutex used to synchronize access to mutable state of this ServiceContext instance,
          * including possibly by its subclasses.
          */
-        boost::mutex _mutex;
+        stdx::mutex _mutex;
 
     private:
+        /**
+         * Returns a new OperationContext. Private, for use by makeOperationContext.
+         */
+        virtual std::unique_ptr<OperationContext> _newOpCtx(Client* client) = 0;
+
         /**
          * Vector of registered observers.
          */
         std::vector<std::unique_ptr<ClientObserver>> _clientObservers;
         ClientSet _clients;
+
+        std::unique_ptr<TickSource> _tickSource;
     };
 
     /**

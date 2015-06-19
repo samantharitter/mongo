@@ -30,18 +30,19 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/thread/thread.hpp>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/log.h"
 #include "mongo/util/time_support.h"
 
 using mongo::FailPoint;
+namespace stdx = mongo::stdx;
 
 namespace mongo_test {
     TEST(FailPoint, InitialState) {
@@ -176,7 +177,7 @@ namespace mongo_test {
 
         void stopTest() {
             {
-                boost::lock_guard<boost::mutex> lk(_mutex);
+                stdx::lock_guard<stdx::mutex> lk(_mutex);
                 _inShutdown = true;
             }
             for (auto& t : _tasks) {
@@ -200,7 +201,7 @@ namespace mongo_test {
                     }
                 }
 
-                boost::lock_guard<boost::mutex> lk(_mutex);
+                stdx::lock_guard<stdx::mutex> lk(_mutex);
                 if (_inShutdown)
                     break;
             }
@@ -224,7 +225,7 @@ namespace mongo_test {
                 catch (const std::logic_error&) {
                 }
 
-                boost::lock_guard<boost::mutex> lk(_mutex);
+                stdx::lock_guard<stdx::mutex> lk(_mutex);
                 if (_inShutdown)
                     break;
            }
@@ -233,7 +234,7 @@ namespace mongo_test {
         void simpleTask() {
             while (true) {
                 static_cast<void>(MONGO_FAIL_POINT(_fp));
-                boost::lock_guard<boost::mutex> lk(_mutex);
+                stdx::lock_guard<stdx::mutex> lk(_mutex);
                 if (_inShutdown)
                     break;
             }
@@ -248,15 +249,15 @@ namespace mongo_test {
                     _fp.setMode(FailPoint::alwaysOn, 0, BSON("a" << 44));
                 }
 
-                boost::lock_guard<boost::mutex> lk(_mutex);
+                stdx::lock_guard<stdx::mutex> lk(_mutex);
                 if (_inShutdown)
                     break;
             }
         }
 
         FailPoint _fp;
-        std::vector<boost::thread> _tasks;
-        boost::mutex _mutex;
+        std::vector<stdx::thread> _tasks;
+        stdx::mutex _mutex;
         bool _inShutdown = false;
     };
 
@@ -294,11 +295,11 @@ namespace mongo_test {
         ASSERT_GT(numEncountersPerThread, 0);
         FailPoint failPoint;
         failPoint.setMode(fpMode, fpVal);
-        std::vector<boost::thread*> tasks;
+        std::vector<stdx::thread*> tasks;
         std::vector<int64_t> counts(numThreads, 0);
         ASSERT_EQUALS(static_cast<uint32_t>(numThreads), counts.size());
         for (int32_t i = 0; i < numThreads; ++i) {
-            tasks.push_back(new boost::thread(parallelFailPointTestThread,
+            tasks.push_back(new stdx::thread(parallelFailPointTestThread,
                                               &failPoint,
                                               numEncountersPerThread,
                                               i, // hardcoded seed, different for each thread.

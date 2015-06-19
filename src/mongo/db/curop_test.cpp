@@ -28,14 +28,14 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/thread/thread.hpp>
-
 #include "mongo/base/init.h"
 #include "mongo/db/client.h"
 #include "mongo/db/curop.h"
+#include "mongo/db/operation_context_noop.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/service_context_noop.h"
 #include "mongo/stdx/memory.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/unittest/unittest.h"
 
 namespace mongo {
@@ -64,7 +64,7 @@ namespace mongo {
         }
 
         MONGO_INITIALIZER(CurOpTest)(InitializerContext* context) {
-            boost::thread t(timeTrackerSetup);
+            stdx::thread t(timeTrackerSetup);
 
             // Wait for listener thread to start tracking time.
             while (Listener::getElapsedTimeMillis() == 0) {
@@ -77,7 +77,8 @@ namespace mongo {
         TEST(TimeHasExpired, PosSimple) {
             auto service = stdx::make_unique<ServiceContextNoop>();
             auto client = service->makeClient("CurOpTest");
-            CurOp curOp(client.get());
+            OperationContextNoop txn(client.get(), 100);
+            CurOp curOp(&txn);
             curOp.setMaxTimeMicros(intervalShort);
             curOp.ensureStarted();
             sleepmicros(intervalLong);
@@ -88,7 +89,8 @@ namespace mongo {
         TEST(TimeHasExpired, NegSimple) {
             auto service = stdx::make_unique<ServiceContextNoop>();
             auto client = service->makeClient("CurOpTest");
-            CurOp curOp(client.get());
+            OperationContextNoop txn(client.get(), 100);
+            CurOp curOp(&txn);
             curOp.setMaxTimeMicros(intervalLong);
             curOp.ensureStarted();
             sleepmicros(intervalShort);

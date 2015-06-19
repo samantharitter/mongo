@@ -31,8 +31,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread/thread.hpp>
 #include <memory>
 
 #include "mongo/base/disallow_copying.h"
@@ -41,6 +39,7 @@
 #include "mongo/db/server_options.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/concurrency/synchronization.h"
 #include "mongo/util/concurrency/thread_name.h"
 #include "mongo/util/concurrency/ticketholder.h"
@@ -65,7 +64,7 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
+    using std::unique_ptr;
     using std::endl;
 
 namespace {
@@ -74,7 +73,7 @@ namespace {
         MONGO_DISALLOW_COPYING(MessagingPortWithHandler);
 
     public:
-        MessagingPortWithHandler(const boost::shared_ptr<Socket>& socket,
+        MessagingPortWithHandler(const std::shared_ptr<Socket>& socket,
                                  MessageHandler* handler,
                                  long long connectionId)
             : MessagingPort(socket), _handler(handler) {
@@ -103,9 +102,9 @@ namespace {
             Listener( "" , opts.ipList, opts.port ), _handler(handler) {
         }
 
-        virtual void accepted(boost::shared_ptr<Socket> psocket, long long connectionId ) {
+        virtual void accepted(std::shared_ptr<Socket> psocket, long long connectionId ) {
             ScopeGuard sleepAfterClosingPort = MakeGuard(sleepmillis, 2);
-            std::auto_ptr<MessagingPortWithHandler> portWithHandler(
+            std::unique_ptr<MessagingPortWithHandler> portWithHandler(
                 new MessagingPortWithHandler(psocket, _handler, connectionId));
 
             if ( ! Listener::globalTicketHolder.tryAcquire() ) {
@@ -116,7 +115,7 @@ namespace {
             try {
 #ifndef __linux__  // TODO: consider making this ifdef _WIN32
                 {
-                    boost::thread thr(stdx::bind(&handleIncomingMsg, portWithHandler.get()));
+                    stdx::thread thr(stdx::bind(&handleIncomingMsg, portWithHandler.get()));
                 }
 #else
                 pthread_attr_t attrs;
@@ -197,7 +196,7 @@ namespace {
             TicketHolderReleaser connTicketReleaser( &Listener::globalTicketHolder );
 
             invariant(arg);
-            scoped_ptr<MessagingPortWithHandler> portWithHandler(
+            unique_ptr<MessagingPortWithHandler> portWithHandler(
                 static_cast<MessagingPortWithHandler*>(arg));
             MessageHandler* const handler = portWithHandler->getHandler();
 

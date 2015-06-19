@@ -32,33 +32,32 @@
 
 #include "mongo/scripting/v8_deadline_monitor.h"
 
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/unittest/unittest.h"
 
 namespace mongo {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::vector;
 
     class TaskGroup {
     public:
         TaskGroup() : _c(), _killCount(0), _targetKillCount(0) { }
         void noteKill() {
-            boost::lock_guard<boost::mutex> lk(_m);
+            stdx::lock_guard<stdx::mutex> lk(_m);
             ++_killCount;
             if (_killCount >= _targetKillCount)
                 _c.notify_one();
         }
         void waitForKillCount(uint64_t target) {
-            boost::unique_lock<boost::mutex> lk(_m);
+            stdx::unique_lock<stdx::mutex> lk(_m);
             _targetKillCount = target;
             while (_killCount < _targetKillCount)
                 _c.wait(lk);
         }
     private:
         mongo::mutex _m;
-        boost::condition _c;
+        stdx::condition_variable _c;
         uint64_t _killCount;
         uint64_t _targetKillCount;
     };

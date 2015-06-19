@@ -28,7 +28,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
 #include <vector>
 
 #include "mongo/base/status.h"
@@ -50,8 +49,8 @@ namespace {
 
     using namespace mongo;
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::unique_ptr;
     using std::string;
     using std::vector;
 
@@ -215,7 +214,7 @@ namespace {
         }
 
     private:
-        scoped_ptr<MockRemoteDBServer> _dummyConfig;
+        unique_ptr<MockRemoteDBServer> _dummyConfig;
     };
 
     TEST_F(NoChunkFixture, NoChunksIsDropped) {
@@ -277,7 +276,7 @@ namespace {
         }
 
     private:
-        scoped_ptr<MockRemoteDBServer> _dummyConfig;
+        unique_ptr<MockRemoteDBServer> _dummyConfig;
     };
 
     TEST_F(NoChunkHereFixture, CheckNumChunk) {
@@ -347,7 +346,7 @@ namespace {
         }
 
     private:
-        scoped_ptr<MockRemoteDBServer> _dummyConfig;
+        unique_ptr<MockRemoteDBServer> _dummyConfig;
         ChunkVersion _maxCollVersion;
     };
 
@@ -499,12 +498,12 @@ namespace {
         }
 
     private:
-        scoped_ptr<MockRemoteDBServer> _dummyConfig;
-        scoped_ptr<MetadataLoader> _loader;
+        unique_ptr<MockRemoteDBServer> _dummyConfig;
+        unique_ptr<MetadataLoader> _loader;
     };
 
     TEST_F(MultipleMetadataFixture, PromotePendingNA) {
-        auto_ptr<ChunkType> chunk( new ChunkType() );
+        unique_ptr<ChunkType> chunk( new ChunkType() );
         chunk->setNS("foo.bar");
         chunk->setShard("shard0000");
         chunk->setMin( BSON( "x" << MINKEY ) );
@@ -531,7 +530,7 @@ namespace {
         pending.setMin( BSON( "x" << 0 ) );
         pending.setMax( BSON( "x" << 10 ) );
 
-        scoped_ptr<CollectionMetadata> cloned( afterMetadata.clonePlusPending( pending, &errMsg ) );
+        unique_ptr<CollectionMetadata> cloned( afterMetadata.clonePlusPending( pending, &errMsg ) );
         ASSERT( cloned != NULL );
 
         status = loader().promotePendingChunks( cloned.get(), &remoteMetadata );
@@ -542,7 +541,7 @@ namespace {
     TEST_F(MultipleMetadataFixture, PromotePendingNAVersion) {
         OID epoch = OID::gen();
 
-        auto_ptr<ChunkType> chunk( new ChunkType() );
+        unique_ptr<ChunkType> chunk( new ChunkType() );
         chunk->setNS("foo.bar");
         chunk->setShard("shard0000");
         chunk->setMin( BSON( "x" << MINKEY ) );
@@ -569,7 +568,7 @@ namespace {
         pending.setMin( BSON( "x" << 0 ) );
         pending.setMax( BSON( "x" << 10 ) );
 
-        scoped_ptr<CollectionMetadata> cloned( afterMetadata.clonePlusPending( pending, &errMsg ) );
+        unique_ptr<CollectionMetadata> cloned( afterMetadata.clonePlusPending( pending, &errMsg ) );
         ASSERT( cloned != NULL );
 
         status = loader().promotePendingChunks( cloned.get(), &remoteMetadata );
@@ -587,7 +586,7 @@ namespace {
 
         OwnedPointerVector<ChunkType> chunks;
 
-        auto_ptr<ChunkType> chunk( new ChunkType() );
+        unique_ptr<ChunkType> chunk( new ChunkType() );
         chunk->setNS("foo.bar");
         chunk->setShard("shard0000");
         chunk->setMin( BSON( "x" << MINKEY ) );
@@ -635,7 +634,7 @@ namespace {
         pending.setMin( BSON( "x" << MINKEY ) );
         pending.setMax( BSON( "x" << 0 ) );
 
-        scoped_ptr<CollectionMetadata> cloned( afterMetadata.clonePlusPending( pending, &errMsg ) );
+        unique_ptr<CollectionMetadata> cloned( afterMetadata.clonePlusPending( pending, &errMsg ) );
         ASSERT( cloned != NULL );
 
         pending.setMin( BSON( "x" << 10 ) );
@@ -672,7 +671,7 @@ namespace {
 
         OwnedPointerVector<ChunkType> chunks;
 
-        auto_ptr<ChunkType> chunk( new ChunkType() );
+        unique_ptr<ChunkType> chunk( new ChunkType() );
         chunk->setNS("foo.bar");
         chunk->setShard("shard0000");
         chunk->setMin( BSON( "x" << MINKEY ) );
@@ -707,7 +706,7 @@ namespace {
         pending.setMin( BSON( "x" << MINKEY ) );
         pending.setMax( BSON( "x" << 1 ) );
 
-        scoped_ptr<CollectionMetadata> cloned( afterMetadata.clonePlusPending( pending, &errMsg ) );
+        unique_ptr<CollectionMetadata> cloned( afterMetadata.clonePlusPending( pending, &errMsg ) );
         ASSERT( cloned != NULL );
 
         cloned.reset( cloned->clonePlusPending( pending, &errMsg ) );
@@ -817,7 +816,7 @@ namespace {
         }
 
     private:
-        scoped_ptr<MockRemoteDBServer> _dummyConfig;
+        unique_ptr<MockRemoteDBServer> _dummyConfig;
         CollectionMetadata _oldMetadata;
 
         ChunkVersion _maxCollVersion;
@@ -922,7 +921,7 @@ namespace {
         }
 
     private:
-        scoped_ptr<MockRemoteDBServer> _dummyConfig;
+        unique_ptr<MockRemoteDBServer> _dummyConfig;
         CollectionMetadata _oldMetadata;
 
         ChunkVersion _maxCollVersion;

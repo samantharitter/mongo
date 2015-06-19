@@ -34,14 +34,19 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::vector;
 
     // static
     const char* LimitStage::kStageType = "LIMIT";
 
     LimitStage::LimitStage(int limit, WorkingSet* ws, PlanStage* child)
-        : _ws(ws), _child(child), _numToReturn(limit), _commonStats(kStageType) { }
+        : _ws(ws),
+          _child(child),
+          _numToReturn(limit),
+          _commonStats(kStageType) {
+        _specificStats.limit = _numToReturn;
+    }
 
     LimitStage::~LimitStage() { }
 
@@ -67,7 +72,7 @@ namespace mongo {
             ++_commonStats.advanced;
             return PlanStage::ADVANCED;
         }
-        else if (PlanStage::FAILURE == status) {
+        else if (PlanStage::FAILURE == status || PlanStage::DEAD == status) {
             *out = id;
             // If a stage fails, it may create a status WSM to indicate why it
             // failed, in which case 'id' is valid.  If ID is invalid, we
@@ -114,8 +119,7 @@ namespace mongo {
 
     PlanStageStats* LimitStage::getStats() {
         _commonStats.isEOF = isEOF();
-        _specificStats.limit = _numToReturn;
-        auto_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_LIMIT));
+        unique_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_LIMIT));
         ret->specific.reset(new LimitStats(_specificStats));
         ret->children.push_back(_child->getStats());
         return ret.release();

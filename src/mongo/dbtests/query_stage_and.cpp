@@ -31,8 +31,6 @@
  * so we cannot test it outside of a dbtest.
  */
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/client/dbclientcursor.h"
 #include "mongo/db/catalog/collection.h"
@@ -44,22 +42,24 @@
 #include "mongo/db/exec/fetch.h"
 #include "mongo/db/exec/index_scan.h"
 #include "mongo/db/exec/plan_stage.h"
+#include "mongo/db/exec/queued_data_stage.h"
 #include "mongo/db/json.h"
 #include "mongo/db/matcher/expression_parser.h"
 #include "mongo/db/operation_context_impl.h"
 #include "mongo/dbtests/dbtests.h"
+#include "mongo/stdx/memory.h"
 #include "mongo/util/mongoutils/str.h"
 
 namespace QueryStageAnd {
 
-    using boost::scoped_ptr;
-    using boost::shared_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::shared_ptr;
+    using std::unique_ptr;
     using std::set;
 
     class QueryStageAndBase {
     public:
-        QueryStageAndBase() : _client(&_txn) { 
+        QueryStageAndBase() : _client(&_txn) {
 
         }
 
@@ -80,13 +80,10 @@ namespace QueryStageAnd {
         }
 
         void getLocs(set<RecordId>* out, Collection* coll) {
-            RecordIterator* it = coll->getIterator(&_txn, RecordId(),
-                                                   CollectionScanParams::FORWARD);
-            while (!it->isEOF()) {
-                RecordId nextLoc = it->getNext();
-                out->insert(nextLoc);
+            auto cursor = coll->getCursor(&_txn);
+            while (auto record = cursor->next()) {
+                out->insert(record->id);
             }
-            delete it;
         }
 
         void insert(const BSONObj& obj) {
@@ -180,7 +177,7 @@ namespace QueryStageAnd {
             addIndex(BSON("bar" << 1));
 
             WorkingSet ws;
-            scoped_ptr<AndHashStage> ah(new AndHashStage(&ws, NULL, coll));
+            unique_ptr<AndHashStage> ah(new AndHashStage(&ws, coll));
 
             // Foo <= 20
             IndexScanParams params;
@@ -284,7 +281,7 @@ namespace QueryStageAnd {
             addIndex(BSON("baz" << 1));
 
             WorkingSet ws;
-            scoped_ptr<AndHashStage> ah(new AndHashStage(&ws, NULL, coll));
+            unique_ptr<AndHashStage> ah(new AndHashStage(&ws, coll));
 
             // Foo <= 20 (descending)
             IndexScanParams params;
@@ -371,7 +368,7 @@ namespace QueryStageAnd {
             addIndex(BSON("bar" << 1));
 
             WorkingSet ws;
-            scoped_ptr<AndHashStage> ah(new AndHashStage(&ws, NULL, coll));
+            unique_ptr<AndHashStage> ah(new AndHashStage(&ws, coll));
 
             // Foo <= 20
             IndexScanParams params;
@@ -426,7 +423,7 @@ namespace QueryStageAnd {
             // before hashed AND is done reading the first child (stage has to
             // hold 21 keys in buffer for Foo <= 20).
             WorkingSet ws;
-            scoped_ptr<AndHashStage> ah(new AndHashStage(&ws, NULL, coll, 20 * big.size()));
+            unique_ptr<AndHashStage> ah(new AndHashStage(&ws, coll, 20 * big.size()));
 
             // Foo <= 20
             IndexScanParams params;
@@ -479,7 +476,7 @@ namespace QueryStageAnd {
             // keys in last child's index are not buffered. There are 6 keys
             // that satisfy the criteria Foo <= 20 and Bar >= 10 and 5 <= baz <= 15.
             WorkingSet ws;
-            scoped_ptr<AndHashStage> ah(new AndHashStage(&ws, NULL, coll, 5 * big.size()));
+            unique_ptr<AndHashStage> ah(new AndHashStage(&ws, coll, 5 * big.size()));
 
             // Foo <= 20
             IndexScanParams params;
@@ -527,7 +524,7 @@ namespace QueryStageAnd {
             addIndex(BSON("baz" << 1));
 
             WorkingSet ws;
-            scoped_ptr<AndHashStage> ah(new AndHashStage(&ws, NULL, coll));
+            unique_ptr<AndHashStage> ah(new AndHashStage(&ws, coll));
 
             // Foo <= 20
             IndexScanParams params;
@@ -594,7 +591,7 @@ namespace QueryStageAnd {
             // before hashed AND is done reading the second child (stage has to
             // hold 11 keys in buffer for Foo <= 20 and Bar >= 10).
             WorkingSet ws;
-            scoped_ptr<AndHashStage> ah(new AndHashStage(&ws, NULL, coll, 10 * big.size()));
+            unique_ptr<AndHashStage> ah(new AndHashStage(&ws, coll, 10 * big.size()));
 
             // Foo <= 20
             IndexScanParams params;
@@ -648,7 +645,7 @@ namespace QueryStageAnd {
             addIndex(BSON("bar" << 1));
 
             WorkingSet ws;
-            scoped_ptr<AndHashStage> ah(new AndHashStage(&ws, NULL, coll));
+            unique_ptr<AndHashStage> ah(new AndHashStage(&ws, coll));
 
             // Foo <= 20
             IndexScanParams params;
@@ -709,7 +706,7 @@ namespace QueryStageAnd {
             addIndex(BSON("bar" << 1));
 
             WorkingSet ws;
-            scoped_ptr<AndHashStage> ah(new AndHashStage(&ws, NULL, coll));
+            unique_ptr<AndHashStage> ah(new AndHashStage(&ws, coll));
 
             // Foo >= 100
             IndexScanParams params;
@@ -733,56 +730,6 @@ namespace QueryStageAnd {
             ah->addChild(new IndexScan(&_txn, params, &ws, NULL));
 
             ASSERT_EQUALS(0, countResults(ah.get()));
-        }
-    };
-
-    // An AND that would return more data but the matcher filters it.
-    class QueryStageAndHashWithMatcher : public QueryStageAndBase {
-    public:
-        void run() {
-            OldClientWriteContext ctx(&_txn, ns());
-            Database* db = ctx.db();
-            Collection* coll = ctx.getCollection();
-            if (!coll) {
-                WriteUnitOfWork wuow(&_txn);
-                coll = db->createCollection(&_txn, ns());
-                wuow.commit();
-            }
-
-            for (int i = 0; i < 50; ++i) {
-                insert(BSON("foo" << i << "bar" << (100 - i)));
-            }
-
-            addIndex(BSON("foo" << 1));
-            addIndex(BSON("bar" << 1));
-
-            WorkingSet ws;
-            BSONObj filter = BSON("bar" << 97);
-            StatusWithMatchExpression swme = MatchExpressionParser::parse(filter);
-            verify(swme.isOK());
-            auto_ptr<MatchExpression> filterExpr(swme.getValue());
-            scoped_ptr<AndHashStage> ah(new AndHashStage(&ws, filterExpr.get(), coll));
-
-            // Foo <= 20
-            IndexScanParams params;
-            params.descriptor = getIndex(BSON("foo" << 1), coll);
-            params.bounds.isSimpleRange = true;
-            params.bounds.startKey = BSON("" << 20);
-            params.bounds.endKey = BSONObj();
-            params.bounds.endKeyInclusive = true;
-            params.direction = -1;
-            ah->addChild(new IndexScan(&_txn, params, &ws, NULL));
-
-            // Bar >= 95
-            params.descriptor = getIndex(BSON("bar" << 1), coll);
-            params.bounds.startKey = BSON("" << 10);
-            params.bounds.endKey = BSONObj();
-            params.bounds.endKeyInclusive = true;
-            params.direction = 1;
-            ah->addChild(new IndexScan(&_txn, params, &ws, NULL));
-
-            // Bar == 97
-            ASSERT_EQUALS(1, countResults(ah.get()));
         }
     };
 
@@ -810,7 +757,7 @@ namespace QueryStageAnd {
             addIndex(BSON("bar" << 1));
 
             WorkingSet ws;
-            scoped_ptr<AndHashStage> ah(new AndHashStage(&ws, NULL, coll));
+            unique_ptr<AndHashStage> ah(new AndHashStage(&ws, coll));
 
             // Foo <= 20
             IndexScanParams params;
@@ -869,7 +816,7 @@ namespace QueryStageAnd {
             addIndex(BSON("bar" << 1));
 
             WorkingSet ws;
-            scoped_ptr<AndHashStage> ah(new AndHashStage(&ws, NULL, coll));
+            unique_ptr<AndHashStage> ah(new AndHashStage(&ws, coll));
 
             // Foo <= 20
             IndexScanParams params;
@@ -905,6 +852,140 @@ namespace QueryStageAnd {
     };
 
 
+    class QueryStageAndHashDeadChild : public QueryStageAndBase {
+    public:
+        void run() {
+            OldClientWriteContext ctx(&_txn, ns());
+            Database* db = ctx.db();
+            Collection* coll = ctx.getCollection();
+            if (!coll) {
+                WriteUnitOfWork wuow(&_txn);
+                coll = db->createCollection(&_txn, ns());
+                wuow.commit();
+            }
+
+            const BSONObj dataObj = fromjson("{'foo': 'bar'}");
+
+            // Confirm PlanStage::DEAD when children contain the following WorkingSetMembers:
+            //     Child1:  Data
+            //     Child2:  NEED_TIME, DEAD
+            {
+                WorkingSet ws;
+                const std::unique_ptr<AndHashStage> andHashStage =
+                    stdx::make_unique<AndHashStage>(&ws, coll);
+
+                std::unique_ptr<QueuedDataStage> childStage1 =
+                    stdx::make_unique<QueuedDataStage>(&ws);
+                {
+                    WorkingSetMember wsm;
+                    wsm.state = WorkingSetMember::LOC_AND_UNOWNED_OBJ;
+                    wsm.loc = RecordId(1);
+                    wsm.obj = Snapshotted<BSONObj>(SnapshotId(), dataObj);
+                    childStage1->pushBack(wsm);
+                }
+
+                std::unique_ptr<QueuedDataStage> childStage2 =
+                    stdx::make_unique<QueuedDataStage>(&ws);
+                childStage2->pushBack(PlanStage::NEED_TIME);
+                childStage2->pushBack(PlanStage::DEAD);
+
+                andHashStage->addChild(childStage1.release());
+                andHashStage->addChild(childStage2.release());
+
+                WorkingSetID id = WorkingSet::INVALID_ID;
+                PlanStage::StageState state = PlanStage::NEED_TIME;
+                while (PlanStage::NEED_TIME == state) {
+                    state = andHashStage->work(&id);
+                }
+
+                ASSERT_EQ(PlanStage::DEAD, state);
+            }
+
+            // Confirm PlanStage::DEAD when children contain the following WorkingSetMembers:
+            //     Child1:  Data, DEAD
+            //     Child2:  Data
+            {
+                WorkingSet ws;
+                const std::unique_ptr<AndHashStage> andHashStage =
+                    stdx::make_unique<AndHashStage>(&ws, coll);
+
+                std::unique_ptr<QueuedDataStage> childStage1 =
+                    stdx::make_unique<QueuedDataStage>(&ws);
+
+                {
+                    WorkingSetMember wsm;
+                    wsm.state = WorkingSetMember::LOC_AND_UNOWNED_OBJ;
+                    wsm.loc = RecordId(1);
+                    wsm.obj = Snapshotted<BSONObj>(SnapshotId(), dataObj);
+                    childStage1->pushBack(wsm);
+                }
+                childStage1->pushBack(PlanStage::DEAD);
+
+                std::unique_ptr<QueuedDataStage> childStage2 =
+                    stdx::make_unique<QueuedDataStage>(&ws);
+                {
+                    WorkingSetMember wsm;
+                    wsm.state = WorkingSetMember::LOC_AND_UNOWNED_OBJ;
+                    wsm.loc = RecordId(2);
+                    wsm.obj = Snapshotted<BSONObj>(SnapshotId(), dataObj);
+                    childStage2->pushBack(wsm);
+                }
+
+                andHashStage->addChild(childStage1.release());
+                andHashStage->addChild(childStage2.release());
+
+                WorkingSetID id = WorkingSet::INVALID_ID;
+                PlanStage::StageState state = PlanStage::NEED_TIME;
+                while (PlanStage::NEED_TIME == state) {
+                    state = andHashStage->work(&id);
+                }
+
+                ASSERT_EQ(PlanStage::DEAD, state);
+            }
+
+            // Confirm PlanStage::DEAD when children contain the following WorkingSetMembers:
+            //     Child1:  Data
+            //     Child2:  Data, DEAD
+            {
+                WorkingSet ws;
+                const std::unique_ptr<AndHashStage> andHashStage =
+                    stdx::make_unique<AndHashStage>(&ws, coll);
+
+                std::unique_ptr<QueuedDataStage> childStage1 =
+                    stdx::make_unique<QueuedDataStage>(&ws);
+                {
+                    WorkingSetMember wsm;
+                    wsm.state = WorkingSetMember::LOC_AND_UNOWNED_OBJ;
+                    wsm.loc = RecordId(1);
+                    wsm.obj = Snapshotted<BSONObj>(SnapshotId(), dataObj);
+                    childStage1->pushBack(wsm);
+                }
+
+                std::unique_ptr<QueuedDataStage> childStage2 =
+                    stdx::make_unique<QueuedDataStage>(&ws);
+                {
+                    WorkingSetMember wsm;
+                    wsm.state = WorkingSetMember::LOC_AND_UNOWNED_OBJ;
+                    wsm.loc = RecordId(2);
+                    wsm.obj = Snapshotted<BSONObj>(SnapshotId(), dataObj);
+                    childStage2->pushBack(wsm);
+                }
+                childStage2->pushBack(PlanStage::DEAD);
+
+                andHashStage->addChild(childStage1.release());
+                andHashStage->addChild(childStage2.release());
+
+                WorkingSetID id = WorkingSet::INVALID_ID;
+                PlanStage::StageState state = PlanStage::NEED_TIME;
+                while (PlanStage::NEED_TIME == state) {
+                    state = andHashStage->work(&id);
+                }
+
+                ASSERT_EQ(PlanStage::DEAD, state);
+            }
+        }
+    };
+
     //
     // Sorted AND tests
     //
@@ -933,7 +1014,7 @@ namespace QueryStageAnd {
             addIndex(BSON("bar" << 1));
 
             WorkingSet ws;
-            scoped_ptr<AndSortedStage> ah(new AndSortedStage(&ws, NULL, coll));
+            unique_ptr<AndSortedStage> ah(new AndSortedStage(&ws, coll));
 
             // Scan over foo == 1
             IndexScanParams params;
@@ -1060,7 +1141,7 @@ namespace QueryStageAnd {
             addIndex(BSON("baz" << 1));
 
             WorkingSet ws;
-            scoped_ptr<AndSortedStage> ah(new AndSortedStage(&ws, NULL, coll));
+            unique_ptr<AndSortedStage> ah(new AndSortedStage(&ws, coll));
 
             // Scan over foo == 1
             IndexScanParams params;
@@ -1105,7 +1186,7 @@ namespace QueryStageAnd {
             addIndex(BSON("bar" << 1));
 
             WorkingSet ws;
-            scoped_ptr<AndSortedStage> ah(new AndSortedStage(&ws, NULL, coll));
+            unique_ptr<AndSortedStage> ah(new AndSortedStage(&ws, coll));
 
             // Foo == 7.  Should be EOF.
             IndexScanParams params;
@@ -1154,7 +1235,7 @@ namespace QueryStageAnd {
             addIndex(BSON("bar" << 1));
 
             WorkingSet ws;
-            scoped_ptr<AndSortedStage> ah(new AndSortedStage(&ws, NULL, coll));
+            unique_ptr<AndSortedStage> ah(new AndSortedStage(&ws, coll));
 
             // foo == 7.
             IndexScanParams params;
@@ -1174,52 +1255,6 @@ namespace QueryStageAnd {
             params.direction = 1;
             ah->addChild(new IndexScan(&_txn, params, &ws, NULL));
 
-            ASSERT_EQUALS(0, countResults(ah.get()));
-        }
-    };
-
-    // An AND that would return data but the matcher prevents it.
-    class QueryStageAndSortedWithMatcher : public QueryStageAndBase {
-    public:
-        void run() {
-            OldClientWriteContext ctx(&_txn, ns());
-            Database* db = ctx.db();
-            Collection* coll = ctx.getCollection();
-            if (!coll) {
-                WriteUnitOfWork wuow(&_txn);
-                coll = db->createCollection(&_txn, ns());
-                wuow.commit();
-            }
-
-            for (int i = 0; i < 50; ++i) {
-                insert(BSON("foo" << 1 << "bar" << 1));
-            }
-
-            addIndex(BSON("foo" << 1));
-            addIndex(BSON("bar" << 1));
-
-            WorkingSet ws;
-            BSONObj filterObj = BSON("foo" << BSON("$ne" << 1));
-            StatusWithMatchExpression swme = MatchExpressionParser::parse(filterObj);
-            verify(swme.isOK());
-            auto_ptr<MatchExpression> filterExpr(swme.getValue());
-            scoped_ptr<AndSortedStage> ah(new AndSortedStage(&ws, filterExpr.get(), coll));
-
-            // Scan over foo == 1
-            IndexScanParams params;
-            params.descriptor = getIndex(BSON("foo" << 1), coll);
-            params.bounds.isSimpleRange = true;
-            params.bounds.startKey = BSON("" << 1);
-            params.bounds.endKey = BSON("" << 1);
-            params.bounds.endKeyInclusive = true;
-            params.direction = 1;
-            ah->addChild(new IndexScan(&_txn, params, &ws, NULL));
-
-            // bar == 1
-            params.descriptor = getIndex(BSON("bar" << 1), coll);
-            ah->addChild(new IndexScan(&_txn, params, &ws, NULL));
-
-            // Filter drops everything.
             ASSERT_EQUALS(0, countResults(ah.get()));
         }
     };
@@ -1245,7 +1280,7 @@ namespace QueryStageAnd {
             addIndex(BSON("bar" << 1));
 
             WorkingSet ws;
-            scoped_ptr<AndHashStage> ah(new AndHashStage(&ws, NULL, coll));
+            unique_ptr<AndHashStage> ah(new AndHashStage(&ws, coll));
 
             // Scan over foo == 1
             IndexScanParams params;
@@ -1309,7 +1344,7 @@ namespace QueryStageAnd {
             addIndex(BSON("bar" << 1));
 
             WorkingSet ws;
-            scoped_ptr<AndSortedStage> as(new AndSortedStage(&ws, NULL, coll));
+            unique_ptr<AndSortedStage> as(new AndSortedStage(&ws, coll));
 
             // Scan over foo == 1
             IndexScanParams params;
@@ -1363,7 +1398,7 @@ namespace QueryStageAnd {
             addIndex(BSON("bar" << 1));
 
             WorkingSet ws;
-            scoped_ptr<AndSortedStage> as(new AndSortedStage(&ws, NULL, coll));
+            unique_ptr<AndSortedStage> as(new AndSortedStage(&ws, coll));
 
             // Scan over foo == 1
             IndexScanParams params;
@@ -1406,15 +1441,14 @@ namespace QueryStageAnd {
             add<QueryStageAndHashThreeLeafMiddleChildLargeKeys>();
             add<QueryStageAndHashWithNothing>();
             add<QueryStageAndHashProducesNothing>();
-            add<QueryStageAndHashWithMatcher>();
             add<QueryStageAndHashInvalidateLookahead>();
             add<QueryStageAndHashFirstChildFetched>();
             add<QueryStageAndHashSecondChildFetched>();
+            add<QueryStageAndHashDeadChild>();
             add<QueryStageAndSortedInvalidation>();
             add<QueryStageAndSortedThreeLeaf>();
             add<QueryStageAndSortedWithNothing>();
             add<QueryStageAndSortedProducesNothing>();
-            add<QueryStageAndSortedWithMatcher>();
             add<QueryStageAndSortedByLastChild>();
             add<QueryStageAndSortedFirstChildFetched>();
             add<QueryStageAndSortedSecondChildFetched>();

@@ -30,7 +30,6 @@
 
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -82,10 +81,10 @@ namespace mongo {
 
         virtual BSONObj findOne(const std::string &ns, const Query& query, const BSONObj *fieldsToReturn, int queryOptions);
 
-        virtual std::auto_ptr<DBClientCursor> query(const std::string &ns, Query query, int nToReturn, int nToSkip,
+        virtual std::unique_ptr<DBClientCursor> query(const std::string &ns, Query query, int nToReturn, int nToSkip,
                                                const BSONObj *fieldsToReturn, int queryOptions, int batchSize );
 
-        virtual std::auto_ptr<DBClientCursor> getMore( const std::string &ns, long long cursorId, int nToReturn, int options );
+        virtual std::unique_ptr<DBClientCursor> getMore( const std::string &ns, long long cursorId, int nToReturn, int options );
 
         virtual void insert( const std::string &ns, BSONObj obj, int flags=0);
 
@@ -127,13 +126,13 @@ namespace mongo {
         // OP_QUERY command. The reason for this is that delicate logic for targeting/locking
         // config servers is in SyncClusterConnection::findOne, and refactoring that logic
         // is both risky and of dubious value as we move to config server replica sets (CSRS).
-        virtual bool runCommand(const std::string& dbname,
-                                const BSONObj& cmd,
-                                BSONObj& info,
-                                int options) final;
+        bool runCommand(const std::string& dbname,
+                        const BSONObj& cmd,
+                        BSONObj& info,
+                        int options) final;
 
-        virtual void setRunCommandHook(DBClientWithCommands::RunCommandHookFunc func);
-        virtual void setPostRunCommandHook(DBClientWithCommands::PostRunCommandHookFunc func);
+        void setRequestMetadataWriter(rpc::RequestMetadataWriter writer) final;
+        void setReplyMetadataReader(rpc::ReplyMetadataReader reader) final;
 
         /**
          * Allow custom query processing through an external (e.g. mongos-only) service.
@@ -149,7 +148,7 @@ namespace mongo {
         SyncClusterConnection( SyncClusterConnection& prev, double socketTimeout = 0 );
         std::string _toString() const;
         bool _commandOnActive(const std::string &dbname, const BSONObj& cmd, BSONObj &info, int options=0);
-        std::auto_ptr<DBClientCursor> _queryOnActive(const std::string &ns, Query query, int nToReturn, int nToSkip,
+        std::unique_ptr<DBClientCursor> _queryOnActive(const std::string &ns, Query query, int nToReturn, int nToSkip,
                                                 const BSONObj *fieldsToReturn, int queryOptions, int batchSize );
         int _lockType( const std::string& name );
         void _checkLast();
@@ -162,7 +161,7 @@ namespace mongo {
         std::vector<BSONObj> _lastErrors;
 
         // Optionally attached by user
-        boost::scoped_ptr<QueryHandler> _customQueryHandler;
+        std::unique_ptr<QueryHandler> _customQueryHandler;
 
         mongo::mutex _mutex;
         std::map<std::string,int> _lockTypes;
@@ -187,9 +186,9 @@ namespace mongo {
 
         /**
          * Returns a cursor on one of the hosts with the desired results for the query.
-         * May throw or return an empty auto_ptr on failure.
+         * May throw or return an empty unique_ptr on failure.
          */
-        virtual std::auto_ptr<DBClientCursor> handleQuery( const std::vector<std::string>& hosts,
+        virtual std::unique_ptr<DBClientCursor> handleQuery( const std::vector<std::string>& hosts,
                                                            const std::string &ns,
                                                            Query query,
                                                            int nToReturn,

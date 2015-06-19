@@ -32,7 +32,6 @@
 
 #include "mongo/db/jsobj.h"
 #include "mongo/db/operation_context_noop.h"
-#include "mongo/db/repl/network_interface_mock.h"
 #include "mongo/db/repl/repl_set_heartbeat_args.h"
 #include "mongo/db/repl/repl_set_heartbeat_args_v1.h"
 #include "mongo/db/repl/replica_set_config.h"
@@ -40,12 +39,15 @@
 #include "mongo/db/repl/replication_coordinator_impl.h"
 #include "mongo/db/repl/replication_coordinator_test_fixture.h"
 #include "mongo/db/repl/topology_coordinator_impl.h"
+#include "mongo/executor/network_interface_mock.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/log.h"
 
 namespace mongo {
 namespace repl {
 namespace {
+
+    using executor::NetworkInterfaceMock;
 
     class ReplCoordHBV1Test : public ReplCoordTest {
     protected:
@@ -114,7 +116,7 @@ namespace {
         hbResp.setConfig(rsConfig);
         BSONObjBuilder responseBuilder;
         responseBuilder << "ok" << 1;
-        hbResp.addToBSON(&responseBuilder);
+        hbResp.addToBSON(&responseBuilder, true);
         net->scheduleResponse(noi,
                               startDate + Milliseconds(200),
                               makeResponseStatus(responseBuilder.obj()));
@@ -175,7 +177,7 @@ namespace {
         hbResp.setConfig(rsConfig);
         BSONObjBuilder responseBuilder;
         responseBuilder << "ok" << 1;
-        hbResp.addToBSON(&responseBuilder);
+        hbResp.addToBSON(&responseBuilder, true);
         net->scheduleResponse(noi,
                               startDate + Milliseconds(200),
                               makeResponseStatus(responseBuilder.obj()));

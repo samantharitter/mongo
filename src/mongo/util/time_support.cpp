@@ -32,20 +32,20 @@
 #include <cstdio>
 #include <string>
 #include <iostream>
-#include <boost/thread/thread.hpp>
 #include <boost/thread/tss.hpp>
-#include <boost/thread/xtime.hpp>
 
 #include "mongo/base/init.h"
 #include "mongo/base/parse_number.h"
 #include "mongo/bson/util/builder.h"
 #include "mongo/platform/cstdint.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/mongoutils/str.h"
 
 #ifdef _WIN32
 #include <boost/date_time/filetime_functions.hpp>
 #include "mongo/util/concurrency/mutex.h"
+#include "mongo/util/system_tick_source.h"
 #include "mongo/util/timer.h"
 
 // NOTE(schwerin): MSVC's _snprintf is not a drop-in replacement for C99's snprintf().  In
@@ -793,24 +793,14 @@ namespace {
 
 #if defined(_WIN32)
     void sleepsecs(int s) {
-        Sleep(s*1000);
+        stdx::this_thread::sleep_for(Seconds(s));
     }
+
     void sleepmillis(long long s) {
-        fassert(16228, s <= 0xffffffff );
-        Sleep((DWORD) s);
+        stdx::this_thread::sleep_for(Milliseconds(s));
     }
     void sleepmicros(long long s) {
-        if ( s <= 0 )
-            return;
-        boost::xtime xt;
-        boost::xtime_get(&xt, MONGO_BOOST_TIME_UTC);
-        xt.sec += (int)( s / 1000000 );
-        xt.nsec += (int)(( s % 1000000 ) * 1000);
-        if ( xt.nsec >= 1000000000 ) {
-            xt.nsec -= 1000000000;
-            xt.sec++;
-        }
-        boost::thread::sleep(xt);
+        stdx::this_thread::sleep_for(Microseconds(s));
     }
 #else
     void sleepsecs(int s) {
@@ -836,6 +826,10 @@ namespace {
         sleepmicros( s * 1000 );
     }
 #endif
+
+    void sleepFor(const Milliseconds& time) {
+        sleepmillis(time.count());
+    }
 
     void Backoff::nextSleepMillis(){
 
@@ -908,15 +902,11 @@ namespace {
             Milliseconds(getJSTimeVirtualSkew());
     }
 
-    /** warning this will wrap */
-    unsigned curTimeMicros();
-
-    unsigned long long curTimeMicros64();
 #ifdef _WIN32 // no gettimeofday on windows
     unsigned long long curTimeMillis64() {
-        boost::xtime xt;
-        boost::xtime_get(&xt, MONGO_BOOST_TIME_UTC);
-        return ((unsigned long long)xt.sec) * 1000 + xt.nsec / 1000000;
+        using stdx::chrono::system_clock;
+        return static_cast<unsigned long long>(
+                durationCount<Milliseconds>(system_clock::now() - system_clock::from_time_t(0)));
     }
 
     static unsigned long long getFiletime() {
@@ -968,7 +958,7 @@ namespace {
         SimpleMutex::scoped_lock lkRead(_curTimeMicros64ReadMutex);
         baseFiletime = ftNew;
         basePerfCounter = newPerfCounter;
-        resyncInterval = 60 * Timer::getCountsPerSecond();
+        resyncInterval = 60 * SystemTickSource::get()->getTicksPerSecond();
         return newPerfCounter;
     }
 
@@ -1006,22 +996,16 @@ namespace {
         // truncation while using only integer instructions.
         //
         unsigned long long computedTime = baseFiletime +
-                ((perfCounter - basePerfCounter) * 10 * 1000 * 1000) / Timer::getCountsPerSecond();
+                ((perfCounter - basePerfCounter) * 10 * 1000 * 1000) /
+                SystemTickSource::get()->getTicksPerSecond();
 
         // Convert the computed FILETIME into microseconds since the Unix epoch (1/1/1970).
         //
         return boost::date_time::winapi::file_time_to_microseconds(computedTime);
     }
 
-    unsigned curTimeMicros() {
-        boost::xtime xt;
-        boost::xtime_get(&xt, MONGO_BOOST_TIME_UTC);
-        unsigned t = xt.nsec / 1000;
-        unsigned secs = xt.sec % 1024;
-        return secs*1000000 + t;
-    }
 #else
-#  include <sys/time.h>
+#include <sys/time.h>
     unsigned long long curTimeMillis64() {
         timeval tv;
         gettimeofday(&tv, NULL);
@@ -1032,12 +1016,6 @@ namespace {
         timeval tv;
         gettimeofday(&tv, NULL);
         return (((unsigned long long) tv.tv_sec) * 1000*1000) + tv.tv_usec;
-    }
-    unsigned curTimeMicros() {
-        timeval tv;
-        gettimeofday(&tv, NULL);
-        unsigned secs = tv.tv_sec % 1024;
-        return secs*1000*1000 + tv.tv_usec;
     }
 #endif
 

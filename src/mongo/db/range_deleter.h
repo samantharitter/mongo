@@ -28,8 +28,6 @@
 
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread/thread.hpp>
 #include <deque>
 #include <set>
 #include <string>
@@ -41,6 +39,7 @@
 #include "mongo/db/jsobj.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/write_concern_options.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/concurrency/mutex.h"
 #include "mongo/util/concurrency/synchronization.h"
 #include "mongo/util/time_support.h"
@@ -198,10 +197,10 @@ namespace mongo {
         /** Returns true if stopWorkers() was called. This call is synchronized. */
         bool stopRequested() const;
 
-        boost::scoped_ptr<RangeDeleterEnv> _env;
+        std::unique_ptr<RangeDeleterEnv> _env;
 
         // Initially not active. Must be started explicitly.
-        boost::scoped_ptr<boost::thread> _worker;
+        std::unique_ptr<stdx::thread> _worker;
 
         // Protects _stopRequested.
         mutable mutex _stopMutex;
@@ -212,13 +211,13 @@ namespace mongo {
         // No delete is in progress. Used to make sure that there is no activity
         // in this deleter, and therefore is safe to destroy it. Must be used in
         // conjunction with _stopRequested.
-        boost::condition _nothingInProgressCV;
+        stdx::condition_variable _nothingInProgressCV;
 
         // Protects all the data structure below this.
         mutable mutex _queueMutex;
 
         // _taskQueue has a task ready to work on.
-        boost::condition _taskQueueNotEmptyCV;
+        stdx::condition_variable _taskQueueNotEmptyCV;
 
         // Queue for storing the list of ranges that have cursors pending on it.
         //
@@ -305,8 +304,6 @@ namespace mongo {
      */
     struct RangeDeleterEnv {
         virtual ~RangeDeleterEnv() {}
-
-        virtual void initThread() = 0;
 
         /**
          * Deletes the documents from the given range. This method should be

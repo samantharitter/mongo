@@ -31,8 +31,8 @@
 #include "mongo/db/pipeline/value.h"
 
 #include <cmath>
+#include <limits>
 #include <boost/functional/hash.hpp>
-#include <boost/scoped_array.hpp>
 
 #include "mongo/base/compare_numbers.h"
 #include "mongo/db/jsobj.h"
@@ -124,7 +124,7 @@ namespace mongo {
         const size_t totalLen = patternLen + 1/*middle NUL*/ + flagsLen;
 
         // Need to copy since putString doesn't support scatter-gather.
-        boost::scoped_array<char> buf (new char[totalLen]);
+        std::unique_ptr<char[]> buf (new char[totalLen]);
         re.pattern.copyTo(buf.get(), true);
         re.flags.copyTo(buf.get() + patternLen + 1, false); // no NUL
         putString(StringData(buf.get(), totalLen));
@@ -821,6 +821,22 @@ namespace mongo {
 
         // Reachable, but callers must subsequently err out in this case.
         return Undefined;
+    }
+
+    bool Value::integral() const {
+        switch (getType()) {
+        case NumberInt:
+            return true;
+        case NumberLong:
+            return (_storage.longValue <= numeric_limits<int>::max()
+                    && _storage.longValue >= numeric_limits<int>::min());
+        case NumberDouble:
+            return (_storage.doubleValue <= numeric_limits<int>::max()
+                    && _storage.doubleValue >= numeric_limits<int>::min()
+                    && _storage.doubleValue == static_cast<int>(_storage.doubleValue));
+        default:
+            return false;
+        }
     }
 
     size_t Value::getApproximateSize() const {

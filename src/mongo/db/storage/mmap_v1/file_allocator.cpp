@@ -33,7 +33,6 @@
 
 #include "mongo/db/storage/mmap_v1/file_allocator.h"
 
-#include <boost/thread.hpp>
 #include <boost/filesystem/operations.hpp>
 #include <errno.h>
 #include <fcntl.h>
@@ -54,6 +53,7 @@
 #include "mongo/db/storage/paths.h"
 #include "mongo/platform/posix_fadvise.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/concurrency/thread_name.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/fail_point_service.h"
@@ -121,11 +121,11 @@ namespace mongo {
 
 
     void FileAllocator::start() {
-        boost::thread t( stdx::bind( &FileAllocator::run , this ) );
+        stdx::thread t( stdx::bind( &FileAllocator::run , this ) );
     }
 
     void FileAllocator::requestAllocation( const string &name, long &size ) {
-        boost::lock_guard<boost::mutex> lk( _pendingMutex );
+        stdx::lock_guard<stdx::mutex> lk( _pendingMutex );
         if ( _failed )
             return;
         long oldSize = prevSize( name );
@@ -139,7 +139,7 @@ namespace mongo {
     }
 
     void FileAllocator::allocateAsap( const string &name, unsigned long long &size ) {
-        boost::unique_lock<boost::mutex> lk( _pendingMutex );
+        stdx::unique_lock<stdx::mutex> lk( _pendingMutex );
 
         // In case the allocator is in failed state, check once before starting so that subsequent
         // requests for the same database would fail fast after the first one has failed.
@@ -172,7 +172,7 @@ namespace mongo {
     void FileAllocator::waitUntilFinished() const {
         if ( _failed )
             return;
-        boost::unique_lock<boost::mutex> lk( _pendingMutex );
+        stdx::unique_lock<stdx::mutex> lk( _pendingMutex );
         while( _pending.size() != 0 )
             _pendingUpdated.wait(lk);
     }
@@ -289,7 +289,7 @@ namespace mongo {
             lseek(fd, 0, SEEK_SET);
 
             const long z = 256 * 1024;
-            const boost::scoped_array<char> buf_holder (new char[z]);
+            const std::unique_ptr<char[]> buf_holder (new char[z]);
             char* buf = buf_holder.get();
             memset(buf, 0, z);
             long left = size;
@@ -359,7 +359,7 @@ namespace mongo {
         }
         while( 1 ) {
             {
-                boost::unique_lock<boost::mutex> lk( fa->_pendingMutex );
+                stdx::unique_lock<stdx::mutex> lk( fa->_pendingMutex );
                 if ( fa->_pending.size() == 0 )
                     fa->_pendingUpdated.wait(lk);
             }
@@ -367,7 +367,7 @@ namespace mongo {
                 string name;
                 long size = 0;
                 {
-                    boost::lock_guard<boost::mutex> lk( fa->_pendingMutex );
+                    stdx::lock_guard<stdx::mutex> lk( fa->_pendingMutex );
                     if ( fa->_pending.size() == 0 )
                         break;
                     name = fa->_pending.front();
@@ -439,20 +439,20 @@ namespace mongo {
                     }
 
                     {
-                        boost::lock_guard<boost::mutex> lk(fa->_pendingMutex);
+                        stdx::lock_guard<stdx::mutex> lk(fa->_pendingMutex);
                         fa->_failed = true;
 
                         // TODO: Should we remove the file from pending?
                         fa->_pendingUpdated.notify_all();
                     }
-                    
-                    
+
+
                     sleepsecs(10);
                     continue;
                 }
 
                 {
-                    boost::lock_guard<boost::mutex> lk( fa->_pendingMutex );
+                    stdx::lock_guard<stdx::mutex> lk( fa->_pendingMutex );
                     fa->_pendingSize.erase( name );
                     fa->_pending.pop_front();
                     fa->_pendingUpdated.notify_all();

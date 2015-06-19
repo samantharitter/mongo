@@ -36,6 +36,7 @@
 
 #include "mongo/base/counter.h"
 #include "mongo/db/catalog/collection.h"
+#include "mongo/db/client.h"
 #include "mongo/db/curop.h"
 #include "mongo/db/commands/server_status_metric.h"
 #include "mongo/db/storage/mmap_v1/extent.h"
@@ -43,6 +44,7 @@
 #include "mongo/db/storage/mmap_v1/record.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/storage/mmap_v1/record_store_v1_simple_iterator.h"
+#include "mongo/stdx/memory.h"
 #include "mongo/util/log.h"
 #include "mongo/util/progress_meter.h"
 #include "mongo/util/mongoutils/str.h"
@@ -237,24 +239,26 @@ namespace mongo {
         _details->setDeletedListEntry(txn, b, dloc);
     }
 
-    RecordIterator* SimpleRecordStoreV1::getIterator( OperationContext* txn,
-                                                      const RecordId& start,
-                                                      const CollectionScanParams::Direction& dir) const {
-        return new SimpleRecordStoreV1Iterator( txn, this, start, dir );
+    std::unique_ptr<RecordCursor> SimpleRecordStoreV1::getCursor(OperationContext* txn,
+                                                                 bool forward) const {
+        return stdx::make_unique<SimpleRecordStoreV1Iterator>( txn, this, forward );
     }
 
-    vector<RecordIterator*> SimpleRecordStoreV1::getManyIterators( OperationContext* txn ) const {
-        OwnedPointerVector<RecordIterator> iterators;
+    vector<std::unique_ptr<RecordCursor>> SimpleRecordStoreV1::getManyCursors(
+            OperationContext* txn) const {
+        vector<std::unique_ptr<RecordCursor>> cursors;
         const Extent* ext;
         for (DiskLoc extLoc = details()->firstExtent(txn); !extLoc.isNull(); extLoc = ext->xnext) {
             ext = _getExtent(txn, extLoc);
             if (ext->firstRecord.isNull())
                 continue;
-            iterators.push_back(
-                new RecordStoreV1Base::IntraExtentIterator(txn, ext->firstRecord, this));
+            cursors.push_back(
+                stdx::make_unique<RecordStoreV1Base::IntraExtentIterator>(txn,
+                                                                          ext->firstRecord,
+                                                                          this));
         }
 
-        return iterators.release();
+        return cursors;
     }
 
     class CompactDocWriter : public DocWriter {
@@ -262,7 +266,7 @@ namespace mongo {
         /**
          * param allocationSize - allocation size WITH header
          */
-        CompactDocWriter( const Record* rec, unsigned dataSize, size_t allocationSize )
+        CompactDocWriter( const MmapV1RecordHeader* rec, unsigned dataSize, size_t allocationSize )
             : _rec( rec ),
               _dataSize( dataSize ),
               _allocationSize( allocationSize ) {
@@ -275,7 +279,7 @@ namespace mongo {
         }
 
         virtual size_t documentSize() const {
-            return _allocationSize - Record::HeaderSize;
+            return _allocationSize - MmapV1RecordHeader::HeaderSize;
         }
 
         virtual bool addPadding() const {
@@ -283,7 +287,7 @@ namespace mongo {
         }
 
     private:
-        const Record* _rec;
+        const MmapV1RecordHeader* _rec;
         size_t _dataSize;
         size_t _allocationSize;
     };
@@ -306,7 +310,7 @@ namespace mongo {
         fassert( 17437, sourceExtent->validates(extentLoc) );
 
         {
-            // The next/prev Record pointers within the Extent might not be in order so we first
+            // The next/prev MmapV1RecordHeader pointers within the Extent might not be in order so we first
             // page in the whole Extent sequentially.
             // TODO benchmark on slow storage to verify this is measurably faster.
             log() << "compact paging in len=" << sourceExtent->length/1000000.0 << "MB" << endl;
@@ -321,7 +325,7 @@ namespace mongo {
         }
 
         {
-            // Move each Record out of this extent and insert it in to the "new" extents.
+            // Move each MmapV1RecordHeader out of this extent and insert it in to the "new" extents.
             log() << "compact copying records" << endl;
             long long totalNetSize = 0;
             long long nrecords = 0;
@@ -330,7 +334,7 @@ namespace mongo {
                 txn->checkForInterrupt();
 
                 WriteUnitOfWork wunit(txn);
-                Record* recOld = recordFor(nextSourceLoc);
+                MmapV1RecordHeader* recOld = recordFor(nextSourceLoc);
                 RecordData oldData = recOld->toRecordData();
                 nextSourceLoc = getNextRecordInExtent(txn, nextSourceLoc);
 
@@ -340,7 +344,7 @@ namespace mongo {
                     stats->corruptDocuments++;
                 }
                 else {
-                    // How much data is in the record. Excludes padding and Record headers.
+                    // How much data is in the record. Excludes padding and MmapV1RecordHeader headers.
                     const unsigned rawDataSize = adaptor->dataSize( oldData );
 
                     nrecords++;
@@ -348,7 +352,7 @@ namespace mongo {
                     oldObjSizeWithPadding += recOld->netLength();
 
                     // Allocation sizes include the headers and possibly some padding.
-                    const unsigned minAllocationSize = rawDataSize + Record::HeaderSize;
+                    const unsigned minAllocationSize = rawDataSize + MmapV1RecordHeader::HeaderSize;
                     unsigned allocationSize = minAllocationSize;
                     switch( compactOptions->paddingMode ) {
                     case CompactOptions::NONE: // default padding
@@ -377,7 +381,7 @@ namespace mongo {
                     CompactDocWriter writer( recOld, rawDataSize, allocationSize );
                     StatusWith<RecordId> status = insertRecord( txn, &writer, false );
                     uassertStatusOK( status.getStatus() );
-                    const Record* newRec = recordFor(DiskLoc::fromRecordId(status.getValue()));
+                    const MmapV1RecordHeader* newRec = recordFor(DiskLoc::fromRecordId(status.getValue()));
                     invariant(unsigned(newRec->netLength()) >= rawDataSize);
                     totalNetSize += newRec->netLength();
 
@@ -395,7 +399,7 @@ namespace mongo {
                     *txn->recoveryUnit()->writing(&sourceExtent->lastRecord) = DiskLoc();
                 }
                 else {
-                    Record* newFirstRecord = recordFor(nextSourceLoc);
+                    MmapV1RecordHeader* newFirstRecord = recordFor(nextSourceLoc);
                     txn->recoveryUnit()->writingInt(newFirstRecord->prevOfs()) = DiskLoc::NullOfs;
                 }
 
@@ -466,9 +470,11 @@ namespace mongo {
             wunit.commit();
         }
 
-        ProgressMeterHolder pm(*txn->setMessage("compact extent",
-                                                "Extent Compacting Progress",
-                                                extents.size()));
+        stdx::unique_lock<Client> lk(*txn->getClient());
+        ProgressMeterHolder pm(*txn->setMessage_inlock("compact extent",
+                                                       "Extent Compacting Progress",
+                                                       extents.size()));
+        lk.unlock();
 
         // Go through all old extents and move each record to a new set of extents.
         int extentNumber = 0;

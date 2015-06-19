@@ -30,8 +30,6 @@
 
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/util/background.h"
 
@@ -73,7 +71,7 @@ namespace mongo {
         int _balancedLastTime;
 
         // decide which chunks to move; owned here.
-        boost::scoped_ptr<BalancerPolicy> _policy;
+        std::unique_ptr<BalancerPolicy> _policy;
         
         /**
          * Checks that the balancer can connect to all servers it needs to do its job.
@@ -91,7 +89,7 @@ namespace mongo {
          * @param conn is the connection with the config server(s)
          * @param candidateChunks (IN/OUT) filled with candidate chunks, one per collection, that could possibly be moved
          */
-        void _doBalanceRound(std::vector<boost::shared_ptr<MigrateInfo>>* candidateChunks);
+        void _doBalanceRound(std::vector<std::shared_ptr<MigrateInfo>>* candidateChunks);
 
         /**
          * Issues chunk migration request, one at a time.
@@ -101,7 +99,7 @@ namespace mongo {
          * @param waitForDelete wait for deletes to complete after each chunk move
          * @return number of chunks effectively moved
          */
-        int _moveChunks(const std::vector<boost::shared_ptr<MigrateInfo>>& candidateChunks,
+        int _moveChunks(const std::vector<std::shared_ptr<MigrateInfo>>& candidateChunks,
                         const WriteConcernOptions* writeConcern,
                         bool waitForDelete);
 

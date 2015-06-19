@@ -34,7 +34,6 @@
 
 #include "mongo/client/parallel.h"
 
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/client/connpool.h"
 #include "mongo/client/constants.h"
@@ -44,6 +43,7 @@
 #include "mongo/db/query/lite_parsed_query.h"
 #include "mongo/s/catalog/catalog_cache.h"
 #include "mongo/s/chunk_manager.h"
+#include "mongo/s/client/shard_registry.h"
 #include "mongo/s/config.h"
 #include "mongo/s/grid.h"
 #include "mongo/s/stale_exception.h"
@@ -52,7 +52,7 @@
 
 namespace mongo {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::endl;
     using std::list;
     using std::map;
@@ -158,9 +158,9 @@ namespace mongo {
 
             BSONObjBuilder x( b.subobjStart( "shards" ) );
             for ( map<string,list<BSONObj> >::iterator i=out.begin(); i!=out.end(); ++i ) {
-                string shard = i->first;
+                const ShardId& shardId = i->first;
                 list<BSONObj> l = i->second;
-                BSONArrayBuilder y( x.subarrayStart( shard ) );
+                BSONArrayBuilder y(x.subarrayStart(shardId));
                 for ( list<BSONObj>::iterator j=l.begin(); j!=l.end(); ++j ) {
                     BSONObj temp = *j;
 
@@ -476,8 +476,16 @@ namespace mongo {
 
         {
             BSONObjBuilder bb;
-            for( map< Shard, PCMData >::const_iterator i = _cursorMap.begin(), end = _cursorMap.end(); i != end; ++i ){
-                bb.append( i->first.toString(), i->second.toBSON() );
+            for (map<ShardId, PCMData>::const_iterator i = _cursorMap.begin(),
+                     end = _cursorMap.end();
+                 i != end;
+                 ++i) {
+                const auto shard = grid.shardRegistry()->getShard(i->first);
+                if (!shard) {
+                    continue;
+                }
+
+                bb.append(shard->toString(), i->second.toBSON());
             }
             b.append( "cursors", bb.obj().getOwned() );
         }
@@ -550,8 +558,8 @@ namespace mongo {
 
     void ParallelSortClusteredCursor::setupVersionAndHandleSlaveOk(
         PCStatePtr state,
-        const Shard& shard,
-        boost::shared_ptr<Shard> primary,
+        const ShardId& shardId,
+        std::shared_ptr<Shard> primary,
         const NamespaceString& ns,
         const string& vinfo,
         ChunkManagerPtr manager ) {
@@ -563,11 +571,12 @@ namespace mongo {
             state->primary = primary;
         }
 
-        verify( ! primary || shard == *primary );
+        verify(!primary || shardId == primary->getId());
 
         // Setup conn
         if (!state->conn) {
-            state->conn.reset(new ShardConnection(shard.getConnString(), ns, manager));
+            const auto shard = grid.shardRegistry()->getShard(shardId);
+            state->conn.reset(new ShardConnection(shard->getConnString(), ns, manager));
         }
 
         const DBClientBase* rawConn = state->conn->getRawConn();
@@ -655,7 +664,7 @@ namespace mongo {
         }
         LOG( pc ) << prefix << " pcursor over " << _qSpec << " and " << _cInfo << endl;
 
-        set<Shard> shardsSet;
+        set<ShardId> shardIds;
         string vinfo;
 
         {
@@ -674,21 +683,22 @@ namespace mongo {
                                       << manager->getVersion().toString() << "]";
             }
 
-            manager->getShardsForQuery(shardsSet,
-                                       !_cInfo.isEmpty() ? _cInfo.cmdFilter : _qSpec.filter());
+            manager->getShardIdsForQuery(shardIds,
+                                         !_cInfo.isEmpty() ? _cInfo.cmdFilter : _qSpec.filter());
         }
         else if (primary) {
             if (MONGO_unlikely(shouldLog(pc))) {
                 vinfo = str::stream() << "[unsharded @ " << primary->toString() << "]";
             }
 
-            shardsSet.insert(*primary);
+            shardIds.insert(primary->getId());
         }
 
         // Close all cursors on extra shards first, as these will be invalid
-        for (map<Shard, PCMData>::iterator i = _cursorMap.begin(), end = _cursorMap.end(); i != end;
-            ++i) {
-            if (shardsSet.find(i->first) == shardsSet.end()) {
+        for (map<ShardId, PCMData>::iterator i = _cursorMap.begin(), end = _cursorMap.end();
+             i != end;
+             ++i) {
+            if (shardIds.find(i->first) == shardIds.end()) {
                 LOG( pc ) << "closing cursor on shard " << i->first
                           << " as the connection is no longer required by " << vinfo << endl;
 
@@ -696,18 +706,17 @@ namespace mongo {
             }
         }
 
-        LOG(pc) << "initializing over " << shardsSet.size()
+        LOG(pc) << "initializing over " << shardIds.size()
                 << " shards required by " << vinfo;
 
         // Don't retry indefinitely for whatever reason
         _totalTries++;
         uassert( 15986, "too many retries in total", _totalTries < 10 );
 
-        for (set<Shard>::iterator i = shardsSet.begin(), end = shardsSet.end(); i != end; ++i) {
-            const Shard& shard = *i;
-            PCMData& mdata = _cursorMap[ shard ];
+        for (const ShardId& shardId : shardIds) {
+            PCMData& mdata = _cursorMap[shardId];
 
-            LOG( pc ) << "initializing on shard " << shard
+            LOG( pc ) << "initializing on shard " << shardId
                       << ", current connection state is " << mdata.toBSON() << endl;
 
             // This may be the first time connecting to this shard, if so we can get an error here
@@ -730,7 +739,7 @@ namespace mongo {
                     compatiblePrimary = primary && state->primary && primary == state->primary;
                     compatibleManager = manager &&
                                         state->manager &&
-                                        manager->compatibleWith(*state->manager, shard.getName());
+                                        manager->compatibleWith(*state->manager, shardId);
 
                     if( compatiblePrimary || compatibleManager ){
                         // If we're compatible, don't need to retry unless forced
@@ -750,7 +759,8 @@ namespace mongo {
 
                 mdata.pcState.reset( new PCState() );
                 PCStatePtr state = mdata.pcState;
-                setupVersionAndHandleSlaveOk( state, shard, primary, ns, vinfo, manager );
+
+                setupVersionAndHandleSlaveOk(state, shardId, primary, ns, vinfo, manager);
 
                 const string& ns = _qSpec.ns();
 
@@ -765,7 +775,7 @@ namespace mongo {
                     // shard version must have changed on the single shard between queries.
                     //
 
-                    if (shardsSet.size() > 1) {
+                    if (shardIds.size() > 1) {
 
                         // Query limits split for multiple shards
 
@@ -828,7 +838,7 @@ namespace mongo {
 
                     // Without full initialization, throw an exception
                     uassert( 15987, str::stream() << "could not fully initialize cursor on shard "
-                            << shard.toString() << ", current connection state is "
+                            << shardId << ", current connection state is "
                             << mdata.toBSON().toString(), success );
 
                     mdata.retryNext = false;
@@ -838,7 +848,7 @@ namespace mongo {
 
 
                 LOG( pc ) << "initialized " << ( isCommand() ? "command " : "query " )
-                    << ( lazyInit ? "(lazily) " : "(full) " ) << "on shard " << shard
+                    << ( lazyInit ? "(lazily) " : "(full) " ) << "on shard " << shardId
                     << ", current connection state is " << mdata.toBSON() << endl;
             }
             catch( StaleConfigException& e ){
@@ -869,8 +879,10 @@ namespace mongo {
                 return;
             }
             catch( SocketException& e ){
-                warning() << "socket exception when initializing on " << shard << ", current connection state is " << mdata.toBSON() << causedBy( e ) << endl;
-                e._shard = shard.getName();
+                warning() << "socket exception when initializing on "
+                          << shardId << ", current connection state is "
+                          << mdata.toBSON() << causedBy( e );
+                e._shard = shardId;
                 mdata.errored = true;
                 if( returnPartial ){
                     mdata.cleanup( true );
@@ -879,8 +891,10 @@ namespace mongo {
                 throw;
             }
             catch( DBException& e ){
-                warning() << "db exception when initializing on " << shard << ", current connection state is " << mdata.toBSON() << causedBy( e ) << endl;
-                e._shard = shard.getName();
+                warning() << "db exception when initializing on "
+                          << shardId << ", current connection state is "
+                          << mdata.toBSON() << causedBy( e );
+                e._shard = shardId;
                 mdata.errored = true;
                 if( returnPartial && e.getCode() == 15925 /* From above! */ ){
                     mdata.cleanup( true );
@@ -889,22 +903,25 @@ namespace mongo {
                 throw;
             }
             catch( std::exception& e){
-                warning() << "exception when initializing on " << shard << ", current connection state is " << mdata.toBSON() << causedBy( e ) << endl;
+                warning() << "exception when initializing on "
+                          << shardId << ", current connection state is "
+                          << mdata.toBSON() << causedBy( e );
                 mdata.errored = true;
                 throw;
             }
             catch( ... ){
-                warning() << "unknown exception when initializing on " << shard << ", current connection state is " << mdata.toBSON() << endl;
+                warning() << "unknown exception when initializing on "
+                          << shardId << ", current connection state is "  << mdata.toBSON();
                 mdata.errored = true;
                 throw;
             }
         }
 
         // Sanity check final init'ed connections
-        for (map<Shard, PCMData>::iterator i = _cursorMap.begin(), end = _cursorMap.end();
+        for (map<ShardId, PCMData>::iterator i = _cursorMap.begin(), end = _cursorMap.end();
              i != end;
              ++i) {
-            const Shard& shard = i->first;
+            const ShardId& shardId = i->first;
             PCMData& mdata = i->second;
 
             if (!mdata.pcState) {
@@ -912,7 +929,7 @@ namespace mongo {
             }
 
             // Make sure all state is in shards
-            invariant(shardsSet.find(shard) != shardsSet.end());
+            invariant(shardIds.find(shardId) != shardIds.end());
             invariant(mdata.initialized == true);
 
             if (!mdata.completed) {
@@ -949,12 +966,14 @@ namespace mongo {
 
         LOG( pc ) << "finishing over " << _cursorMap.size() << " shards" << endl;
 
-        for( map< Shard, PCMData >::iterator i = _cursorMap.begin(), end = _cursorMap.end(); i != end; ++i ){
+        for (map<ShardId, PCMData >::iterator i = _cursorMap.begin(), end = _cursorMap.end();
+             i != end;
+             ++i){
 
-            const Shard& shard = i->first;
+            const ShardId& shardId = i->first;
             PCMData& mdata = i->second;
 
-            LOG( pc ) << "finishing on shard " << shard
+            LOG( pc ) << "finishing on shard " << shardId
                 << ", current connection state is " << mdata.toBSON() << endl;
 
             // Ignore empty conns for now
@@ -1004,7 +1023,7 @@ namespace mongo {
                     // Finalize state
                     state->cursor->attach( state->conn.get() ); // Closes connection for us
 
-                    LOG( pc ) << "finished on shard " << shard
+                    LOG( pc ) << "finished on shard " << shardId
                         << ", current connection state is " << mdata.toBSON() << endl;
                 }
             }
@@ -1023,7 +1042,8 @@ namespace mongo {
                 continue;
             }
             catch( SocketException& e ){
-                warning() << "socket exception when finishing on " << shard << ", current connection state is " << mdata.toBSON() << causedBy( e ) << endl;
+                warning() << "socket exception when finishing on " << shardId
+                          << ", current connection state is " << mdata.toBSON() << causedBy(e);
                 mdata.errored = true;
                 if( returnPartial ){
                     mdata.cleanup( true );
@@ -1036,9 +1056,9 @@ namespace mongo {
                 // ABOVE
                 if (e.getCode() == 15988) {
 
-                    warning() << "exception when receiving data from " << shard
+                    warning() << "exception when receiving data from " << shardId
                               << ", current connection state is " << mdata.toBSON()
-                              << causedBy( e ) << endl;
+                              << causedBy(e);
 
                     mdata.errored = true;
                     if (returnPartial) {
@@ -1048,18 +1068,22 @@ namespace mongo {
                     throw;
                 }
                 else {
-                    warning() << "db exception when finishing on " << shard << ", current connection state is " << mdata.toBSON() << causedBy( e ) << endl;
+                    warning() << "db exception when finishing on " << shardId
+                              << ", current connection state is " << mdata.toBSON() << causedBy(e);
                     mdata.errored = true;
                     throw;
                 }
             }
             catch( std::exception& e){
-                warning() << "exception when finishing on " << shard << ", current connection state is " << mdata.toBSON() << causedBy( e ) << endl;
+                warning() << "exception when finishing on " << shardId
+                          << ", current connection state is "
+                          << mdata.toBSON() << causedBy(e);
                 mdata.errored = true;
                 throw;
             }
             catch( ... ){
-                warning() << "unknown exception when finishing on " << shard << ", current connection state is " << mdata.toBSON() << endl;
+                warning() << "unknown exception when finishing on " << shardId
+                          << ", current connection state is " << mdata.toBSON();
                 mdata.errored = true;
                 throw;
             }
@@ -1099,10 +1123,9 @@ namespace mongo {
         }
 
         // Sanity check and clean final connections
-        map< Shard, PCMData >::iterator i = _cursorMap.begin();
+        map<ShardId, PCMData >::iterator i = _cursorMap.begin();
         while( i != _cursorMap.end() ){
 
-            // const Shard& shard = i->first;
             PCMData& mdata = i->second;
 
             // Erase empty stuff
@@ -1130,11 +1153,17 @@ namespace mongo {
 
         // Put the cursors in the legacy format
         int index = 0;
-        for( map< Shard, PCMData >::iterator i = _cursorMap.begin(), end = _cursorMap.end(); i != end; ++i ){
+        for (map<ShardId, PCMData>::iterator i = _cursorMap.begin(), end = _cursorMap.end();
+             i != end;
+             ++i) {
             PCMData& mdata = i->second;
 
             _cursors[ index ].reset( mdata.pcState->cursor.get(), &mdata );
-            _servers.insert(i->first.getConnString().toString());
+
+            {
+                const auto shard = grid.shardRegistry()->getShard(i->first);
+                _servers.insert(shard->getConnString().toString());
+            }
 
             index++;
         }
@@ -1157,34 +1186,26 @@ namespace mongo {
         return _cursorMap.size();
     }
 
-    boost::shared_ptr<Shard> ParallelSortClusteredCursor::getQueryShard() {
-        return boost::shared_ptr<Shard>(new Shard(_cursorMap.begin()->first));
+    std::shared_ptr<Shard> ParallelSortClusteredCursor::getQueryShard() {
+        return grid.shardRegistry()->getShard(_cursorMap.begin()->first);
     }
 
-    void ParallelSortClusteredCursor::getQueryShards(set<Shard>& shards) {
-        for (map<Shard, PCMData>::iterator i = _cursorMap.begin(), end = _cursorMap.end(); i != end;
-            ++i) {
-            shards.insert(i->first);
+    void ParallelSortClusteredCursor::getQueryShardIds(set<ShardId>& shardIds) {
+        for (map<ShardId, PCMData>::iterator i = _cursorMap.begin(), end = _cursorMap.end();
+             i != end;
+             ++i) {
+            shardIds.insert(i->first);
         }
     }
 
-    boost::shared_ptr<Shard> ParallelSortClusteredCursor::getPrimary() {
+    std::shared_ptr<Shard> ParallelSortClusteredCursor::getPrimary() {
         if (isSharded())
-            return boost::shared_ptr<Shard>();
+            return std::shared_ptr<Shard>();
         return _cursorMap.begin()->second.pcState->primary;
     }
 
-    ChunkManagerPtr ParallelSortClusteredCursor::getChunkManager( const Shard& shard ) {
-        if( ! isSharded() ) return ChunkManagerPtr();
-
-        map<Shard,PCMData>::iterator i = _cursorMap.find( shard );
-
-        if( i == _cursorMap.end() ) return ChunkManagerPtr();
-        else return i->second.pcState->manager;
-    }
-
-    DBClientCursorPtr ParallelSortClusteredCursor::getShardCursor( const Shard& shard ) {
-        map<Shard,PCMData>::iterator i = _cursorMap.find( shard );
+    DBClientCursorPtr ParallelSortClusteredCursor::getShardCursor(const ShardId& shardId) {
+        map<ShardId,PCMData>::iterator i = _cursorMap.find(shardId);
 
         if( i == _cursorMap.end() ) return DBClientCursorPtr();
         else return i->second.pcState->cursor;
@@ -1557,13 +1578,12 @@ namespace mongo {
 
     void ParallelSortClusteredCursor::_explain( map< string,list<BSONObj> >& out ) {
 
-        set<Shard> shards;
-        getQueryShards( shards );
+        set<ShardId> shardIds;
+        getQueryShardIds(shardIds);
 
-        for( set<Shard>::iterator i = shards.begin(), end = shards.end(); i != end; ++i ){
-            // TODO: Make this the shard name, not address
-            list<BSONObj>& l = out[i->getConnString().toString()];
-            l.push_back( getShardCursor( *i )->peekFirst().getOwned() );
+        for (const ShardId& shardId : shardIds) {
+            list<BSONObj>& l = out[shardId];
+            l.push_back(getShardCursor(shardId)->peekFirst().getOwned());
         }
 
     }

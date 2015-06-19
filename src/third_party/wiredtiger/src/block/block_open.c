@@ -51,11 +51,41 @@ __wt_block_manager_create(
     WT_SESSION_IMPL *session, const char *filename, uint32_t allocsize)
 {
 	WT_DECL_RET;
+	WT_DECL_ITEM(tmp);
 	WT_FH *fh;
+	int exists, suffix;
 	char *path;
 
-	/* Create the underlying file and open a handle. */
-	WT_RET(__wt_open(session, filename, 1, 1, WT_FILE_TYPE_DATA, &fh));
+	/*
+	 * Create the underlying file and open a handle.
+	 *
+	 * Since WiredTiger schema operations are (currently) non-transactional,
+	 * it's possible to see a partially-created file left from a previous
+	 * create. Further, there's nothing to prevent users from creating files
+	 * in our space. Move any existing files out of the way and complain.
+	 */
+	for (;;) {
+		if ((ret = __wt_open(
+		    session, filename, 1, 1, WT_FILE_TYPE_DATA, &fh)) == 0)
+			break;
+		WT_ERR_TEST(ret != EEXIST, ret);
+
+		if (tmp == NULL)
+			WT_ERR(__wt_scr_alloc(session, 0, &tmp));
+		for (suffix = 1;; ++suffix) {
+			WT_ERR(__wt_buf_fmt(
+			    session, tmp, "%s.%d", filename, suffix));
+			WT_ERR(__wt_exist(session, tmp->data, &exists));
+			if (!exists) {
+				WT_ERR(
+				    __wt_rename(session, filename, tmp->data));
+				WT_ERR(__wt_msg(session,
+				    "unexpected file %s found, renamed to %s",
+				    filename, (char *)tmp->data));
+				break;
+			}
+		}
+	}
 
 	/* Write out the file's meta-data. */
 	ret = __wt_desc_init(session, fh, allocsize);
@@ -82,6 +112,8 @@ __wt_block_manager_create(
 	/* Undo any create on error. */
 	if (ret != 0)
 		WT_TRET(__wt_remove(session, filename));
+
+err:	__wt_scr_free(session, &tmp);
 
 	return (ret);
 }
@@ -356,7 +388,7 @@ err:	__wt_scr_free(session, &buf);
 
 /*
  * __wt_block_stat --
- *	Block statistics
+ *	Set the statistics for a live block handle.
  */
 void
 __wt_block_stat(WT_SESSION_IMPL *session, WT_BLOCK *block, WT_DSRC_STATS *stats)
@@ -376,4 +408,20 @@ __wt_block_stat(WT_SESSION_IMPL *session, WT_BLOCK *block, WT_DSRC_STATS *stats)
 	WT_STAT_SET(stats, block_reuse_bytes, block->live.avail.bytes);
 	WT_STAT_SET(stats, block_size, block->fh->size);
 	__wt_spin_unlock(session, &block->live_lock);
+}
+
+/*
+ * __wt_block_manager_size --
+ *	Set the size statistic for a file.
+ */
+int
+__wt_block_manager_size(
+    WT_SESSION_IMPL *session, const char *filename, WT_DSRC_STATS *stats)
+{
+	wt_off_t filesize;
+
+	WT_RET(__wt_filesize_name(session, filename, &filesize));
+	WT_STAT_SET(stats, block_size, filesize);
+
+	return (0);
 }

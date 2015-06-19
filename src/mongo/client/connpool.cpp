@@ -35,6 +35,7 @@
 #include "mongo/platform/basic.h"
 
 #include "mongo/client/connpool.h"
+#include "mongo/client/global_conn_pool.h"
 #include "mongo/client/replica_set_monitor.h"
 #include "mongo/client/syncclusterconnection.h"
 #include "mongo/util/exit.h"
@@ -175,8 +176,6 @@ namespace mongo {
 
     // ------ DBConnectionPool ------
 
-    DBConnectionPool pool;
-
     const int PoolForHost::kPoolSizeUnlimited(-1);
 
     DBConnectionPool::DBConnectionPool()
@@ -188,7 +187,7 @@ namespace mongo {
     DBClientBase* DBConnectionPool::_get(const string& ident , double socketTimeout ) {
         uassert(17382, "Can't use connection pool during shutdown",
                 !inShutdown());
-        boost::lock_guard<boost::mutex> L(_mutex);
+        stdx::lock_guard<stdx::mutex> L(_mutex);
         PoolForHost& p = _pools[PoolKey(ident,socketTimeout)];
         p.setMaxPoolSize(_maxPoolSize);
         p.initializeHostName(ident);
@@ -197,7 +196,7 @@ namespace mongo {
 
     DBClientBase* DBConnectionPool::_finishCreate( const string& host , double socketTimeout , DBClientBase* conn ) {
         {
-            boost::lock_guard<boost::mutex> L(_mutex);
+            stdx::lock_guard<stdx::mutex> L(_mutex);
             PoolForHost& p = _pools[PoolKey(host,socketTimeout)];
             p.setMaxPoolSize(_maxPoolSize);
             p.initializeHostName(host);
@@ -271,7 +270,7 @@ namespace mongo {
     void DBConnectionPool::release(const string& host, DBClientBase *c) {
         onRelease(c);
 
-        boost::lock_guard<boost::mutex> L(_mutex);
+        stdx::lock_guard<stdx::mutex> L(_mutex);
         _pools[PoolKey(host,c->getSoTimeout())].done(this,c);
     }
 
@@ -281,7 +280,7 @@ namespace mongo {
     }
 
     void DBConnectionPool::flush() {
-        boost::lock_guard<boost::mutex> L(_mutex);
+        stdx::lock_guard<stdx::mutex> L(_mutex);
         for ( PoolMap::iterator i = _pools.begin(); i != _pools.end(); i++ ) {
             PoolForHost& p = i->second;
             p.flush();
@@ -289,7 +288,7 @@ namespace mongo {
     }
 
     void DBConnectionPool::clear() {
-        boost::lock_guard<boost::mutex> L(_mutex);
+        stdx::lock_guard<stdx::mutex> L(_mutex);
         LOG(2) << "Removing connections on all pools owned by " << _name  << endl;
         for (PoolMap::iterator iter = _pools.begin(); iter != _pools.end(); ++iter) {
             iter->second.clear();
@@ -297,7 +296,7 @@ namespace mongo {
     }
 
     void DBConnectionPool::removeHost( const string& host ) {
-        boost::lock_guard<boost::mutex> L(_mutex);
+        stdx::lock_guard<stdx::mutex> L(_mutex);
         LOG(2) << "Removing connections from all pools for host: " << host << endl;
         for ( PoolMap::iterator i = _pools.begin(); i != _pools.end(); ++i ) {
             const string& poolHost = i->first.ident;
@@ -349,7 +348,7 @@ namespace mongo {
         
         BSONObjBuilder bb( b.subobjStart( "hosts" ) );
         {
-            boost::lock_guard<boost::mutex> lk( _mutex );
+            stdx::lock_guard<stdx::mutex> lk( _mutex );
             for ( PoolMap::iterator i=_pools.begin(); i!=_pools.end(); ++i ) {
                 if ( i->second.numCreated() == 0 )
                     continue;
@@ -371,21 +370,8 @@ namespace mongo {
         bb.done();
         
         // Always report all replica sets being tracked
-        set<string> replicaSets = ReplicaSetMonitor::getAllTrackedSets();
-        
-        BSONObjBuilder setBuilder( b.subobjStart( "replicaSets" ) );
-        for ( set<string>::iterator i=replicaSets.begin(); i!=replicaSets.end(); ++i ) {
-            string rs = *i;
-            ReplicaSetMonitorPtr m = ReplicaSetMonitor::get( rs );
-            if ( ! m ) {
-                warning() << "no monitor for set: " << rs << endl;
-                continue;
-            }
-            
-            BSONObjBuilder temp( setBuilder.subobjStart( rs ) );
-            m->appendInfo( temp );
-            temp.done();
-        }
+        BSONObjBuilder setBuilder(b.subobjStart("replicaSets"));
+        globalRSMonitorManager.report(&setBuilder);
         setBuilder.done();
 
         {
@@ -446,7 +432,7 @@ namespace mongo {
         }
 
         {
-            boost::lock_guard<boost::mutex> sl(_mutex);
+            stdx::lock_guard<stdx::mutex> sl(_mutex);
             PoolForHost& pool = _pools[PoolKey(hostName, conn->getSoTimeout())];
             if (pool.isBadSocketCreationTime(conn->getSockCreationMicroSec())) {
                 return false;
@@ -462,7 +448,7 @@ namespace mongo {
         {
             // we need to get the connections inside the lock
             // but we can actually delete them outside
-            boost::lock_guard<boost::mutex> lk( _mutex );
+            stdx::lock_guard<stdx::mutex> lk( _mutex );
             for ( PoolMap::iterator i=_pools.begin(); i!=_pools.end(); ++i ) {
                 i->second.getStaleConnections( toDelete );
             }
@@ -480,6 +466,31 @@ namespace mongo {
     }
 
     // ------ ScopedDbConnection ------
+
+    ScopedDbConnection::ScopedDbConnection(const std::string& host, double socketTimeout)
+        : _host(host),
+          _conn(globalConnPool.get(host, socketTimeout)),
+          _socketTimeout(socketTimeout) {
+
+        _setSocketTimeout();
+    }
+
+    ScopedDbConnection::ScopedDbConnection(const ConnectionString& host, double socketTimeout)
+        : _host(host.toString()),
+          _conn(globalConnPool.get(host, socketTimeout)),
+          _socketTimeout(socketTimeout) {
+
+        _setSocketTimeout();
+    }
+
+    void ScopedDbConnection::done() {
+        if (!_conn) {
+            return;
+        }
+
+        globalConnPool.release(_host, _conn);
+        _conn = NULL;
+    }
 
     void ScopedDbConnection::_setSocketTimeout(){
         if( ! _conn ) return;
@@ -512,7 +523,7 @@ namespace mongo {
     }
 
     void ScopedDbConnection::clearPool() {
-        pool.clear();
+        globalConnPool.clear();
     }
 
     AtomicInt32 AScopedConnection::_numConnections;

@@ -28,7 +28,6 @@
 
 #pragma once
 
-#include <boost/thread.hpp>
 #include <map>
 #include <memory>
 
@@ -38,6 +37,7 @@
 #include "mongo/s/catalog/legacy/distlock.h"
 #include "mongo/s/catalog/legacy/legacy_dist_lock_pinger.h"
 #include "mongo/stdx/memory.h"
+#include "mongo/stdx/thread.h"
 
 namespace mongo {
 
@@ -71,8 +71,8 @@ namespace mongo {
 
         const ConnectionString _configServer;
 
-        boost::mutex _mutex;
-        boost::condition_variable _noLocksCV;
+        stdx::mutex _mutex;
+        stdx::condition_variable _noLocksCV;
         std::map<DistLockHandle, std::unique_ptr<DistributedLock>> _lockMap;
 
         std::unique_ptr<LegacyDistLockPinger> _pinger;

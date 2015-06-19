@@ -38,6 +38,7 @@
 #include "mongo/bson/util/builder.h"
 #include "mongo/client/constants.h"
 #include "mongo/client/dbclientcursor.h"
+#include "mongo/client/dbclientinterface.h"
 #include "mongo/client/replica_set_monitor.h"
 #include "mongo/client/sasl_client_authenticate.h"
 #include "mongo/config.h"
@@ -62,7 +63,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::list;
     using std::map;
@@ -243,14 +244,6 @@ namespace {
         return QueryOptions(0);
     }
 
-    void DBClientWithCommands::setRunCommandHook(RunCommandHookFunc func) {
-        _runCommandHook = func;
-    }
-
-    void DBClientWithCommands::setPostRunCommandHook(PostRunCommandHookFunc func) {
-        _postRunCommandHook = func;
-    }
-
     rpc::ProtocolSet DBClientWithCommands::getClientRPCProtocols() const {
         return _clientRPCProtocols;
     }
@@ -267,46 +260,45 @@ namespace {
         _serverRPCProtocols = std::move(protocols);
     }
 
-    bool DBClientWithCommands::runCommand(const string& dbname,
-                                          const BSONObj& cmd,
-                                          BSONObj &info,
-                                          int options) {
+    void DBClientWithCommands::setRequestMetadataWriter(rpc::RequestMetadataWriter writer) {
+        _metadataWriter = std::move(writer);
+    }
 
-        uassert(ErrorCodes::InvalidNamespace, str::stream() << "Database name '" << dbname
+    const rpc::RequestMetadataWriter& DBClientWithCommands::getRequestMetadataWriter() {
+        return _metadataWriter;
+    }
+
+    void DBClientWithCommands::setReplyMetadataReader(rpc::ReplyMetadataReader reader) {
+        _metadataReader = std::move(reader);
+    }
+
+    const rpc::ReplyMetadataReader& DBClientWithCommands::getReplyMetadataReader() {
+        return _metadataReader;
+    }
+
+    rpc::UniqueReply DBClientWithCommands::runCommandWithMetadata(StringData database,
+                                                                  StringData command,
+                                                                  const BSONObj& metadata,
+                                                                  const BSONObj& commandArgs) {
+        uassert(ErrorCodes::InvalidNamespace, str::stream() << "Database name '" << database
                                                             << "' is not valid.",
-                NamespaceString::validDBName(dbname));
+                NamespaceString::validDBName(database));
 
-        BSONObj maybeInterposedCommand = cmd;
+        BSONObjBuilder metadataBob;
+        metadataBob.appendElements(metadata);
 
-        if (_runCommandHook) {
-            BSONObjBuilder hookInterposedBob;
-            hookInterposedBob.appendElements(cmd);
-            _runCommandHook(&hookInterposedBob);
-            maybeInterposedCommand = hookInterposedBob.obj();
+        if (_metadataWriter) {
+            uassertStatusOK(_metadataWriter(&metadataBob));
         }
 
-        auto requestBuilder =
-            rpc::makeRequestBuilder(getClientRPCProtocols(), getServerRPCProtocols());
+        auto requestBuilder = rpc::makeRequestBuilder(getClientRPCProtocols(),
+                                                      getServerRPCProtocols());
 
-        // upconvert command and metadata to new format
-        // right now this only handles slaveOk
-        BSONObj upconvertedCmd;
-        BSONObj upconvertedMetadata;
-
-        // TODO: This will be downconverted immediately if the underlying
-        // requestBuilder is a legacyRequest builder. Not sure what the best
-        // way to get around that is without breaking the abstraction.
-        std::tie(upconvertedCmd, upconvertedMetadata) = uassertStatusOK(
-            rpc::metadata::upconvertRequest(maybeInterposedCommand, options)
-        );
-
-        auto commandName = upconvertedCmd.firstElementFieldName();
-
-        auto requestMsg = requestBuilder->setDatabase(dbname)
-                                         .setCommandName(commandName)
-                                         .setMetadata(upconvertedMetadata)
-                                         .setCommandArgs(upconvertedCmd)
-                                         .done();
+        requestBuilder->setDatabase(database);
+        requestBuilder->setCommandName(command);
+        requestBuilder->setMetadata(metadataBob.done());
+        requestBuilder->setCommandArgs(commandArgs);
+        auto requestMsg = requestBuilder->done();
 
         auto replyMsg = stdx::make_unique<Message>();
         // call oddly takes this by pointer, so we need to put it on the stack.
@@ -317,15 +309,18 @@ namespace {
         // more helpful error message. Note that call() can itself throw a socket exception.
         uassert(ErrorCodes::HostUnreachable,
                 str::stream() << "network error while attempting to run "
-                              << "command '" << commandName << "' "
-                              << "on host '" << host << "' "
-                              << "with arguments '" << upconvertedCmd << "' "
-                              << "and metadata '" << upconvertedMetadata << "' ",
+                              << "command '" << command << "' "
+                              << "on host '" << host << "' ",
                 call(*requestMsg, *replyMsg, false, &host));
 
-        auto commandReply = rpc::makeReply(replyMsg.get(),
-                                           getClientRPCProtocols(),
-                                           getServerRPCProtocols());
+        auto commandReply = rpc::makeReply(replyMsg.get());
+
+        uassert(ErrorCodes::RPCProtocolNegotiationFailed,
+                      str::stream() << "Mismatched RPC protocols - request was '"
+                                    << opToString(requestMsg->operation()) << "' '"
+                                    << " but reply was '"
+                                    << opToString(replyMsg->operation()) << "' ",
+                requestBuilder->getProtocol() == commandReply->getProtocol());
 
         if (ErrorCodes::SendStaleConfig ==
             getStatusFromCommandResult(commandReply->getCommandReply())) {
@@ -333,11 +328,35 @@ namespace {
                                            commandReply->getCommandReply());
         }
 
-        info = std::move(commandReply->getCommandReply().getOwned());
-
-        if (_postRunCommandHook) {
-            _postRunCommandHook(info, host);
+        if (_metadataReader) {
+            uassertStatusOK(_metadataReader(commandReply->getMetadata(), host));
         }
+
+        return rpc::UniqueReply(std::move(replyMsg), std::move(commandReply));
+    }
+
+    bool DBClientWithCommands::runCommand(const string& dbname,
+                                          const BSONObj& cmd,
+                                          BSONObj &info,
+                                          int options) {
+        BSONObj upconvertedCmd;
+        BSONObj upconvertedMetadata;
+
+        // TODO: This will be downconverted immediately if the underlying
+        // requestBuilder is a legacyRequest builder. Not sure what the best
+        // way to get around that is without breaking the abstraction.
+        std::tie(upconvertedCmd, upconvertedMetadata) = uassertStatusOK(
+            rpc::upconvertRequestMetadata(cmd, options)
+        );
+
+        auto commandName = upconvertedCmd.firstElementFieldName();
+
+        auto result = runCommandWithMetadata(dbname,
+                                             commandName,
+                                             upconvertedMetadata,
+                                             upconvertedCmd);
+
+        info = result->getCommandReply().getOwned();
 
         return isOk(info);
     }
@@ -484,25 +503,25 @@ namespace {
     }
 
     namespace {
-        class RunCommandHookOverrideGuard {
-            MONGO_DISALLOW_COPYING(RunCommandHookOverrideGuard);
+        class ScopedMetadataWriterRemover {
+            MONGO_DISALLOW_COPYING(ScopedMetadataWriterRemover);
         public:
-            RunCommandHookOverrideGuard(DBClientWithCommands* cli,
-                                        const DBClientWithCommands::RunCommandHookFunc& hookFunc)
-                : _cli(cli), _oldHookFunc(cli->getRunCommandHook()) {
-                cli->setRunCommandHook(hookFunc);
+            ScopedMetadataWriterRemover(DBClientWithCommands* cli)
+                : _cli(cli), _oldWriter(cli->getRequestMetadataWriter()) {
+                _cli->setRequestMetadataWriter(rpc::RequestMetadataWriter{});
             }
-            ~RunCommandHookOverrideGuard() {
-                _cli->setRunCommandHook(_oldHookFunc);
+            ~ScopedMetadataWriterRemover() {
+                _cli->setRequestMetadataWriter(_oldWriter);
             }
         private:
             DBClientWithCommands* const _cli;
-            DBClientWithCommands::RunCommandHookFunc const _oldHookFunc;
+            rpc::RequestMetadataWriter _oldWriter;
         };
     }  // namespace
 
     void DBClientWithCommands::_auth(const BSONObj& params) {
-        RunCommandHookOverrideGuard hookGuard(this, RunCommandHookFunc());
+        ScopedMetadataWriterRemover{this};
+
         std::string mechanism;
 
         uassertStatusOK(bsonExtractStringField(params,
@@ -795,7 +814,7 @@ namespace {
 
                 if ( id != 0 ) {
                     const std::string ns = cursorObj["ns"].String();
-                    auto_ptr<DBClientCursor> cursor = getMore(ns, id, 0, 0);
+                    unique_ptr<DBClientCursor> cursor = getMore(ns, id, 0, 0);
                     while ( cursor->more() ) {
                         infos.push_back(cursor->nextSafe().getOwned());
                     }
@@ -826,7 +845,7 @@ namespace {
         fallbackFilter.appendElementsUnique( filter );
 
         string ns = db + ".system.namespaces";
-        auto_ptr<DBClientCursor> c = query(
+        unique_ptr<DBClientCursor> c = query(
                 ns.c_str(), fallbackFilter.obj(), 0, 0, 0, QueryOption_SlaveOk);
         uassert(28611, str::stream() << "listCollections failed querying " << ns, c.get());
 
@@ -870,7 +889,7 @@ namespace {
     void DBClientInterface::findN(vector<BSONObj>& out, const string& ns, Query query, int nToReturn, int nToSkip, const BSONObj *fieldsToReturn, int queryOptions) { 
         out.reserve(nToReturn);
 
-        auto_ptr<DBClientCursor> c =
+        unique_ptr<DBClientCursor> c =
             this->query(ns, query, nToReturn, nToSkip, fieldsToReturn, queryOptions);
 
         uassert( 10276 ,  str::stream() << "DBClientBase::findN: transport error: " << getServerAddress() << " ns: " << ns << " query: " << query.toString(), c.get() );
@@ -906,7 +925,7 @@ namespace {
 
         // we keep around SockAddr for connection life -- maybe MessagingPort
         // requires that?
-        std::auto_ptr<SockAddr> serverSockAddr(new SockAddr(_server.host().c_str(),
+        std::unique_ptr<SockAddr> serverSockAddr(new SockAddr(_server.host().c_str(),
                                                             _server.port()));
         if (!serverSockAddr->isValid()) {
             errmsg = str::stream() << "couldn't initialize connection to host "
@@ -1024,21 +1043,21 @@ namespace {
     const uint64_t DBClientBase::INVALID_SOCK_CREATION_TIME =
             static_cast<uint64_t>(0xFFFFFFFFFFFFFFFFULL);
 
-    auto_ptr<DBClientCursor> DBClientBase::query(const string &ns, Query query, int nToReturn,
+    unique_ptr<DBClientCursor> DBClientBase::query(const string &ns, Query query, int nToReturn,
             int nToSkip, const BSONObj *fieldsToReturn, int queryOptions , int batchSize ) {
-        auto_ptr<DBClientCursor> c( new DBClientCursor( this,
+        unique_ptr<DBClientCursor> c( new DBClientCursor( this,
                                     ns, query.obj, nToReturn, nToSkip,
                                     fieldsToReturn, queryOptions , batchSize ) );
         if ( c->init() )
             return c;
-        return auto_ptr< DBClientCursor >( 0 );
+        return nullptr;
     }
 
-    auto_ptr<DBClientCursor> DBClientBase::getMore( const string &ns, long long cursorId, int nToReturn, int options ) {
-        auto_ptr<DBClientCursor> c( new DBClientCursor( this, ns, cursorId, nToReturn, options ) );
+    unique_ptr<DBClientCursor> DBClientBase::getMore( const string &ns, long long cursorId, int nToReturn, int options ) {
+        unique_ptr<DBClientCursor> c( new DBClientCursor( this, ns, cursorId, nToReturn, options ) );
         if ( c->init() )
             return c;
-        return auto_ptr< DBClientCursor >( 0 );
+        return nullptr;
     }
 
     struct DBClientFunConvertor {
@@ -1067,7 +1086,7 @@ namespace {
         // mask options
         queryOptions &= (int)( QueryOption_NoCursorTimeout | QueryOption_SlaveOk );
 
-        auto_ptr<DBClientCursor> c( this->query(ns, query, 0, 0, fieldsToReturn, queryOptions) );
+        unique_ptr<DBClientCursor> c( this->query(ns, query, 0, 0, fieldsToReturn, queryOptions) );
         uassert( 16090, "socket error for mapping query", c.get() );
 
         unsigned long long n = 0;
@@ -1095,7 +1114,7 @@ namespace {
         queryOptions &= (int)( QueryOption_NoCursorTimeout | QueryOption_SlaveOk );
         queryOptions |= (int)QueryOption_Exhaust;
 
-        auto_ptr<DBClientCursor> c( this->query(ns, query, 0, 0, fieldsToReturn, queryOptions) );
+        unique_ptr<DBClientCursor> c( this->query(ns, query, 0, 0, fieldsToReturn, queryOptions) );
         uassert( 13386, "socket error for mapping query", c.get() );
 
         unsigned long long n = 0;
@@ -1250,7 +1269,7 @@ namespace {
 
                 if ( id != 0 ) {
                     const std::string ns = cursorObj["ns"].String();
-                    auto_ptr<DBClientCursor> cursor = getMore(ns, id, 0, 0);
+                    unique_ptr<DBClientCursor> cursor = getMore(ns, id, 0, 0);
                     while ( cursor->more() ) {
                         specs.push_back(cursor->nextSafe().getOwned());
                     }
@@ -1274,7 +1293,7 @@ namespace {
 
         // fallback to querying system.indexes
         // TODO(spencer): Remove fallback behavior after 3.0
-        auto_ptr<DBClientCursor> cursor = query(NamespaceString(ns).getSystemIndexesCollection(),
+        unique_ptr<DBClientCursor> cursor = query(NamespaceString(ns).getSystemIndexesCollection(),
                                                 BSON("ns" << ns), 0, 0, 0, options);
         uassert(28612, str::stream() << "listIndexes failed querying " << ns, cursor.get());
 
@@ -1383,7 +1402,7 @@ namespace {
     }
 
     /* -- DBClientCursor ---------------------------------------------- */
-    void assembleRequest( const string &ns, BSONObj query, int nToReturn, int nToSkip, const BSONObj *fieldsToReturn, int queryOptions, Message &toSend ) {
+    void assembleQueryRequest( const string &ns, BSONObj query, int nToReturn, int nToSkip, const BSONObj *fieldsToReturn, int queryOptions, Message &toSend ) {
         if (kDebugBuild) {
             massert( 10337 ,  (string)"object not valid assembleRequest query" , query.isValid() );
         }

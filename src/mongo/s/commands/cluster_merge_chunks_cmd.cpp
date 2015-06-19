@@ -28,7 +28,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/client/connpool.h"
 #include "mongo/db/auth/action_type.h"
@@ -38,14 +37,15 @@
 #include "mongo/db/field_parser.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/s/catalog/catalog_cache.h"
+#include "mongo/s/catalog/catalog_manager.h"
 #include "mongo/s/chunk_manager.h"
+#include "mongo/s/client/shard_registry.h"
 #include "mongo/s/config.h"
 #include "mongo/s/grid.h"
-#include "mongo/s/client/shard.h"
 
 namespace mongo {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::string;
     using std::stringstream;
     using std::vector;
@@ -137,7 +137,7 @@ namespace {
                 return appendCommandStatus(result, status.getStatus());
             }
 
-            boost::shared_ptr<DBConfig> config = status.getValue();
+            std::shared_ptr<DBConfig> config = status.getValue();
             if (!config->isSharded(nss.ns())) {
                 return appendCommandStatus(result, Status(ErrorCodes::NamespaceNotSharded,
                                                    "ns [" + nss.ns() + " is not sharded."));
@@ -163,21 +163,28 @@ namespace {
 
             ChunkPtr firstChunk = manager->findIntersectingChunk(minKey);
             verify(firstChunk);
-            Shard shard = firstChunk->getShard();
 
             BSONObjBuilder remoteCmdObjB;
             remoteCmdObjB.append( cmdObj[ ClusterMergeChunksCommand::nsField() ] );
             remoteCmdObjB.append( cmdObj[ ClusterMergeChunksCommand::boundsField() ] );
             remoteCmdObjB.append( ClusterMergeChunksCommand::configField(),
-                                  configServer.getPrimary().getConnString().toString() );
+                                  grid.catalogManager()->connectionString().toString() );
             remoteCmdObjB.append( ClusterMergeChunksCommand::shardNameField(),
-                                  shard.getName() );
+                                  firstChunk->getShardId() );
 
             BSONObj remoteResult;
 
             // Throws, but handled at level above.  Don't want to rewrap to preserve exception
             // formatting.
-            ScopedDbConnection conn(shard.getConnString());
+            const auto shard = grid.shardRegistry()->getShard(firstChunk->getShardId());
+            if (!shard) {
+                return appendCommandStatus(result,
+                                           Status(ErrorCodes::ShardNotFound,
+                                                  str::stream() << "Can't find shard for chunk: "
+                                                                << firstChunk->toString()));
+            }
+
+            ScopedDbConnection conn(shard->getConnString());
             bool ok = conn->runCommand( "admin", remoteCmdObjB.obj(), remoteResult );
             conn.done();
 

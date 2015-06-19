@@ -26,6 +26,8 @@
  *    it in the license file.
  */
 
+#define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kCommand
+
 #include "mongo/platform/basic.h"
 
 #include "mongo/db/catalog/capped_utils.h"
@@ -49,37 +51,14 @@
 #include "mongo/util/scopeguard.h"
 
 namespace mongo {
-namespace {
-    std::vector<BSONObj> stopIndexBuildsEmptyCapped(OperationContext* opCtx,
-                                         Database* db, 
-                                         const NamespaceString& ns) {
-        IndexCatalog::IndexKillCriteria criteria;
-        criteria.ns = ns;
-        return IndexBuilder::killMatchingIndexBuilds(db->getCollection(ns), criteria);
-    }
-
-    std::vector<BSONObj> stopIndexBuildsConvertToCapped(OperationContext* opCtx,
-                                                        Database* db,
-                                                        const NamespaceString& ns) {
-        IndexCatalog::IndexKillCriteria criteria;
-        criteria.ns = ns;
-        Collection* coll = db->getCollection(ns);
-        if (coll) {
-            return IndexBuilder::killMatchingIndexBuilds(coll, criteria);
-        }
-        return std::vector<BSONObj>();
-    }
-
-} // namespace
-
     Status emptyCapped(OperationContext* txn,
                        const NamespaceString& collectionName) {
         ScopedTransaction scopedXact(txn, MODE_IX);
         AutoGetDb autoDb(txn, collectionName.db(), MODE_X);
 
         bool userInitiatedWritesAndNotPrimary = txn->writesAreReplicated() &&
-            !repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(
-                    collectionName.db());
+            !repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(
+                    collectionName);
 
         if (userInitiatedWritesAndNotPrimary) {
             return Status(ErrorCodes::NotMaster,
@@ -93,7 +72,7 @@ namespace {
         Collection* collection = db->getCollection(collectionName);
         massert(28584, "no such collection", collection);
 
-        std::vector<BSONObj> indexes = stopIndexBuildsEmptyCapped(txn, db, collectionName);
+        BackgroundOperation::assertNoBgOpInProgForNs(collectionName.ns());
 
         WriteUnitOfWork wuow(txn);
 
@@ -101,8 +80,6 @@ namespace {
         if (!status.isOK()) {
             return status;
         }
-
-        IndexBuilder::restoreIndexes(txn, indexes);
 
         getGlobalServiceContext()->getOpObserver()->onEmptyCapped(txn, collection->ns());
 
@@ -161,7 +138,7 @@ namespace {
 
         long long excessSize = fromCollection->dataSize(txn) - allocatedSpaceGuess;
 
-        boost::scoped_ptr<PlanExecutor> exec(InternalPlanner::collectionScan(
+        std::unique_ptr<PlanExecutor> exec(InternalPlanner::collectionScan(
                     txn,
                     fromNs,
                     fromCollection,
@@ -184,17 +161,23 @@ namespace {
             switch(state) {
             case PlanExecutor::IS_EOF:
                 return Status::OK();
-            case PlanExecutor::DEAD:
-                db->dropCollection(txn, toNs);
-                return Status(ErrorCodes::InternalError, "executor died while iterating");
-            case PlanExecutor::FAILURE:
-                return Status(ErrorCodes::InternalError, "executor error while iterating");
             case PlanExecutor::ADVANCED:
+            {
                 if (excessSize > 0) {
                     // 4x is for padding, power of 2, etc...
                     excessSize -= (4 * objToClone.value().objsize());
                     continue;
                 }
+                break;
+            }
+            default:
+                // Unreachable as:
+                // 1) We require a read lock (at a minimum) on the "from" collection
+                //    and won't yield, preventing collection drop and PlanExecutor::DEAD
+                // 2) PlanExecutor::FAILURE is only returned on PlanStage::FAILURE. The
+                //    CollectionScan PlanStage does not have a FAILURE scenario.
+                // 3) All other PlanExecutor states are handled above
+                invariant(false);
             }
 
             try {
@@ -243,7 +226,7 @@ namespace {
         AutoGetDb autoDb(txn, collectionName.db(), MODE_X);
 
         bool userInitiatedWritesAndNotPrimary = txn->writesAreReplicated() &&
-            !repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(dbname);
+            !repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(collectionName);
 
         if (userInitiatedWritesAndNotPrimary) {
             return Status(ErrorCodes::NotMaster,
@@ -257,7 +240,6 @@ namespace {
                           str::stream() << "database " << dbname << " not found");
         }
 
-        stopIndexBuildsConvertToCapped(txn, db, collectionName);
         BackgroundOperation::assertNoBgOpInProgForDb(dbname);
 
         std::string shortTmpName = str::stream() << "tmp.convertToCapped." << shortSource;

@@ -38,7 +38,6 @@
 #include "mongo/base/status_with.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
-#include "mongo/client/find_and_modify_request.h"
 #include "mongo/db/catalog/document_validation.h"
 #include "mongo/db/client.h"
 #include "mongo/db/commands.h"
@@ -55,6 +54,7 @@
 #include "mongo/db/ops/update_lifecycle_impl.h"
 #include "mongo/db/ops/update_request.h"
 #include "mongo/db/query/explain.h"
+#include "mongo/db/query/find_and_modify_request.h"
 #include "mongo/db/query/get_executor.h"
 #include "mongo/db/query/plan_executor.h"
 #include "mongo/db/repl/repl_client_info.h"
@@ -103,8 +103,12 @@ namespace {
             return boost::optional<BSONObj>(std::move(value));
         }
         if (PlanExecutor::FAILURE == state || PlanExecutor::DEAD == state) {
-            if (PlanExecutor::FAILURE == state &&
-                WorkingSetCommon::isValidStatusMemberObject(value)) {
+            const std::unique_ptr<PlanStageStats> stats(exec->getStats());
+            error() << "Plan executor error during findAndModify: "
+                    << PlanExecutor::statestr(state)
+                    << ", stats: " << Explain::statsToBSON(*stats);
+
+            if (WorkingSetCommon::isValidStatusMemberObject(value)) {
                 const Status errorStatus =
                     WorkingSetCommon::getMemberObjectStatus(value);
                 invariant(!errorStatus.isOK());
@@ -181,7 +185,7 @@ namespace {
     }
 
     Status checkCanAcceptWritesForDatabase(const NamespaceString& nsString) {
-        if (!repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(nsString.db())) {
+        if (!repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nsString)) {
             return Status(ErrorCodes::NotMaster, str::stream()
                 << "Not primary while running findAndModify command on collection "
                 << nsString.ns());
@@ -231,6 +235,8 @@ namespace {
             const FindAndModifyRequest& args = parseStatus.getValue();
             const NamespaceString& nsString = args.getNamespaceString();
 
+            auto client = txn->getClient();
+
             if (args.isRemove()) {
                 DeleteRequest request(nsString);
                 const bool isExplain = true;
@@ -247,7 +253,7 @@ namespace {
                 AutoGetDb autoDb(txn, dbName, MODE_IX);
                 Lock::CollectionLock collLock(txn->lockState(), nsString.ns(), MODE_IX);
 
-                ensureShardVersionOKOrThrow(nsString.ns());
+                ensureShardVersionOKOrThrow(client, nsString.ns());
 
                 Collection* collection = nullptr;
                 if (autoDb.getDb()) {
@@ -286,7 +292,7 @@ namespace {
                 AutoGetDb autoDb(txn, dbName, MODE_IX);
                 Lock::CollectionLock collLock(txn->lockState(), nsString.ns(), MODE_IX);
 
-                ensureShardVersionOKOrThrow(nsString.ns());
+                ensureShardVersionOKOrThrow(client, nsString.ns());
 
                 Collection* collection = nullptr;
                 if (autoDb.getDb()) {
@@ -344,6 +350,8 @@ namespace {
             if (shouldBypassDocumentValidationForCommand(cmdObj))
                 maybeDisableValidation.emplace(txn);
 
+            auto client = txn->getClient();
+
             // We may encounter a WriteConflictException when creating a collection during an
             // upsert, even when holding the exclusive lock on the database (due to other load on
             // the system). The query framework should handle all other WriteConflictExceptions,
@@ -368,7 +376,7 @@ namespace {
                     Lock::CollectionLock collLock(txn->lockState(), nsString.ns(), MODE_IX);
                     Collection* collection = autoDb.getDb()->getCollection(nsString.ns());
 
-                    ensureShardVersionOKOrThrow(nsString.ns());
+                    ensureShardVersionOKOrThrow(client, nsString.ns());
 
                     Status isPrimary = checkCanAcceptWritesForDatabase(nsString);
                     if (!isPrimary.isOK()) {
@@ -410,7 +418,7 @@ namespace {
                     Lock::CollectionLock collLock(txn->lockState(), nsString.ns(), MODE_IX);
                     Collection* collection = autoDb.getDb()->getCollection(nsString.ns());
 
-                    ensureShardVersionOKOrThrow(nsString.ns());
+                    ensureShardVersionOKOrThrow(client, nsString.ns());
 
                     Status isPrimary = checkCanAcceptWritesForDatabase(nsString);
                     if (!isPrimary.isOK()) {
@@ -466,11 +474,12 @@ namespace {
             } MONGO_WRITE_CONFLICT_RETRY_LOOP_END(txn, "findAndModify", nsString.ns());
 
             WriteConcernResult res;
-            wcResult = waitForWriteConcern(
-                    txn,
-                    repl::ReplClientInfo::forClient(txn->getClient()).getLastOp(),
-                    &res);
-            appendCommandWCStatus(result, wcResult.getStatus());
+            auto waitForWCStatus = waitForWriteConcern(
+                txn,
+                repl::ReplClientInfo::forClient(txn->getClient()).getLastOp(),
+                &res
+            );
+            appendCommandWCStatus(result, waitForWCStatus);
 
             return true;
         }

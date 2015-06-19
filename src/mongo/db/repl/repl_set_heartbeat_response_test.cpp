@@ -28,18 +28,17 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
 
+#include "mongo/db/repl/repl_set_heartbeat_response.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
-#include "mongo/db/repl/repl_set_heartbeat_response.h"
 
 namespace mongo {
 namespace repl {
 namespace {
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::unique_ptr;
 
     bool stringContains(const std::string &haystack, const std::string& needle) {
         return haystack.find(needle) != std::string::npos;
@@ -63,12 +62,12 @@ namespace {
         ASSERT_EQUALS(HostAndPort(), hbResponse.getSyncingTo());
         ASSERT_EQUALS(-1, hbResponse.getConfigVersion());
 
-        BSONObj hbResponseObj = hbResponse.toBSON();
+        BSONObj hbResponseObj = hbResponse.toBSON(false);
         ASSERT_EQUALS(fieldsSet, hbResponseObj.nFields());
         ASSERT_EQUALS("", hbResponseObj["hbmsg"].String());
 
         Status initializeResult = Status::OK();
-        ASSERT_EQUALS(hbResponseObj.toString(), hbResponseObjRoundTripChecker.toBSON().toString());
+        ASSERT_EQUALS(hbResponseObj.toString(), hbResponseObjRoundTripChecker.toString());
 
         // set version
         hbResponse.setConfigVersion(1);
@@ -87,14 +86,14 @@ namespace {
         ASSERT_EQUALS(HostAndPort(), hbResponse.getSyncingTo());
         ASSERT_EQUALS(1, hbResponse.getConfigVersion());
 
-        hbResponseObj = hbResponse.toBSON();
+        hbResponseObj = hbResponse.toBSON(false);
         ASSERT_EQUALS(fieldsSet, hbResponseObj.nFields());
         ASSERT_EQUALS("", hbResponseObj["hbmsg"].String());
         ASSERT_EQUALS(1, hbResponseObj["v"].Number());
 
         initializeResult = hbResponseObjRoundTripChecker.initialize(hbResponseObj, 0);
         ASSERT_EQUALS(Status::OK(), initializeResult);
-        ASSERT_EQUALS(hbResponseObj.toString(), hbResponseObjRoundTripChecker.toBSON().toString());
+        ASSERT_EQUALS(hbResponseObj.toString(), hbResponseObjRoundTripChecker.toString());
 
         // set setname
         hbResponse.setSetName("rs0");
@@ -113,7 +112,7 @@ namespace {
         ASSERT_EQUALS(HostAndPort(), hbResponse.getSyncingTo());
         ASSERT_EQUALS(1, hbResponse.getConfigVersion());
 
-        hbResponseObj = hbResponse.toBSON();
+        hbResponseObj = hbResponse.toBSON(false);
         ASSERT_EQUALS(fieldsSet, hbResponseObj.nFields());
         ASSERT_EQUALS("rs0", hbResponseObj["set"].String());
         ASSERT_EQUALS("", hbResponseObj["hbmsg"].String());
@@ -121,7 +120,7 @@ namespace {
 
         initializeResult = hbResponseObjRoundTripChecker.initialize(hbResponseObj, 0);
         ASSERT_EQUALS(Status::OK(), initializeResult);
-        ASSERT_EQUALS(hbResponseObj.toString(), hbResponseObjRoundTripChecker.toBSON().toString());
+        ASSERT_EQUALS(hbResponseObj.toString(), hbResponseObjRoundTripChecker.toString());
 
         // set electionTime
         hbResponse.setElectionTime(Timestamp(10,0));
@@ -141,7 +140,7 @@ namespace {
         ASSERT_EQUALS(1, hbResponse.getConfigVersion());
         ASSERT_EQUALS(Timestamp(10,0), hbResponse.getElectionTime());
 
-        hbResponseObj = hbResponse.toBSON();
+        hbResponseObj = hbResponse.toBSON(false);
         ASSERT_EQUALS(fieldsSet, hbResponseObj.nFields());
         ASSERT_EQUALS("rs0", hbResponseObj["set"].String());
         ASSERT_EQUALS("", hbResponseObj["hbmsg"].String());
@@ -150,7 +149,7 @@ namespace {
 
         initializeResult = hbResponseObjRoundTripChecker.initialize(hbResponseObj, 0);
         ASSERT_EQUALS(Status::OK(), initializeResult);
-        ASSERT_EQUALS(hbResponseObj.toString(), hbResponseObjRoundTripChecker.toBSON().toString());
+        ASSERT_EQUALS(hbResponseObj.toString(), hbResponseObjRoundTripChecker.toString());
 
         // set opTime
         hbResponse.setOpTime(OpTime(Timestamp(10), 0));
@@ -171,7 +170,7 @@ namespace {
         ASSERT_EQUALS(Timestamp(10,0), hbResponse.getElectionTime());
         ASSERT_EQUALS(OpTime(Timestamp(0,10), 0), hbResponse.getOpTime());
 
-        hbResponseObj = hbResponse.toBSON();
+        hbResponseObj = hbResponse.toBSON(false);
         ASSERT_EQUALS(fieldsSet, hbResponseObj.nFields());
         ASSERT_EQUALS("rs0", hbResponseObj["set"].String());
         ASSERT_EQUALS("", hbResponseObj["hbmsg"].String());
@@ -181,7 +180,8 @@ namespace {
 
         initializeResult = hbResponseObjRoundTripChecker.initialize(hbResponseObj, 0);
         ASSERT_EQUALS(Status::OK(), initializeResult);
-        ASSERT_EQUALS(hbResponseObj.toString(), hbResponseObjRoundTripChecker.toBSON().toString());
+        ASSERT_EQUALS(hbResponseObj.toString(),
+                      hbResponseObjRoundTripChecker.toBSON(false).toString());
 
         // set time
         hbResponse.setTime(Seconds(10));
@@ -203,7 +203,7 @@ namespace {
         ASSERT_EQUALS(OpTime(Timestamp(0,10), 0), hbResponse.getOpTime());
         ASSERT_EQUALS(Seconds(10), hbResponse.getTime());
 
-        hbResponseObj = hbResponse.toBSON();
+        hbResponseObj = hbResponse.toBSON(false);
         ASSERT_EQUALS(fieldsSet, hbResponseObj.nFields());
         ASSERT_EQUALS("rs0", hbResponseObj["set"].String());
         ASSERT_EQUALS("", hbResponseObj["hbmsg"].String());
@@ -214,7 +214,8 @@ namespace {
 
         initializeResult = hbResponseObjRoundTripChecker.initialize(hbResponseObj, 0);
         ASSERT_EQUALS(Status::OK(), initializeResult);
-        ASSERT_EQUALS(hbResponseObj.toString(), hbResponseObjRoundTripChecker.toBSON().toString());
+        ASSERT_EQUALS(hbResponseObj.toString(),
+                      hbResponseObjRoundTripChecker.toBSON(false).toString());
 
         // set electable
         hbResponse.setElectable(true);
@@ -237,7 +238,7 @@ namespace {
         ASSERT_EQUALS(Seconds(10), hbResponse.getTime());
         ASSERT_EQUALS(true, hbResponse.isElectable());
 
-        hbResponseObj = hbResponse.toBSON();
+        hbResponseObj = hbResponse.toBSON(false);
         ASSERT_EQUALS(fieldsSet, hbResponseObj.nFields());
         ASSERT_EQUALS("rs0", hbResponseObj["set"].String());
         ASSERT_EQUALS("", hbResponseObj["hbmsg"].String());
@@ -249,7 +250,8 @@ namespace {
 
         initializeResult = hbResponseObjRoundTripChecker.initialize(hbResponseObj, 0);
         ASSERT_EQUALS(Status::OK(), initializeResult);
-        ASSERT_EQUALS(hbResponseObj.toString(), hbResponseObjRoundTripChecker.toBSON().toString());
+        ASSERT_EQUALS(hbResponseObj.toString(),
+                      hbResponseObjRoundTripChecker.toBSON(false).toString());
 
         // set config
         ReplicaSetConfig config;
@@ -274,7 +276,7 @@ namespace {
         ASSERT_EQUALS(true, hbResponse.isElectable());
         ASSERT_EQUALS(config.toBSON().toString(), hbResponse.getConfig().toBSON().toString());
 
-        hbResponseObj = hbResponse.toBSON();
+        hbResponseObj = hbResponse.toBSON(false);
         ASSERT_EQUALS(fieldsSet, hbResponseObj.nFields());
         ASSERT_EQUALS("rs0", hbResponseObj["set"].String());
         ASSERT_EQUALS("", hbResponseObj["hbmsg"].String());
@@ -287,7 +289,8 @@ namespace {
 
         initializeResult = hbResponseObjRoundTripChecker.initialize(hbResponseObj, 0);
         ASSERT_EQUALS(Status::OK(), initializeResult);
-        ASSERT_EQUALS(hbResponseObj.toString(), hbResponseObjRoundTripChecker.toBSON().toString());
+        ASSERT_EQUALS(hbResponseObj.toString(),
+                      hbResponseObjRoundTripChecker.toBSON(false).toString());
 
         // set state
         hbResponse.setState(MemberState(MemberState::RS_SECONDARY));
@@ -313,7 +316,7 @@ namespace {
         ASSERT_EQUALS(true, hbResponse.isElectable());
         ASSERT_EQUALS(config.toBSON().toString(), hbResponse.getConfig().toBSON().toString());
 
-        hbResponseObj = hbResponse.toBSON();
+        hbResponseObj = hbResponse.toBSON(false);
         ASSERT_EQUALS(fieldsSet, hbResponseObj.nFields());
         ASSERT_EQUALS("rs0", hbResponseObj["set"].String());
         ASSERT_EQUALS("", hbResponseObj["hbmsg"].String());
@@ -327,7 +330,8 @@ namespace {
 
         initializeResult = hbResponseObjRoundTripChecker.initialize(hbResponseObj, 0);
         ASSERT_EQUALS(Status::OK(), initializeResult);
-        ASSERT_EQUALS(hbResponseObj.toString(), hbResponseObjRoundTripChecker.toBSON().toString());
+        ASSERT_EQUALS(hbResponseObj.toString(),
+                      hbResponseObjRoundTripChecker.toBSON(false).toString());
 
         // set stateDisagreement
         hbResponse.noteStateDisagreement();
@@ -353,7 +357,7 @@ namespace {
         ASSERT_EQUALS(true, hbResponse.isElectable());
         ASSERT_EQUALS(config.toBSON().toString(), hbResponse.getConfig().toBSON().toString());
 
-        hbResponseObj = hbResponse.toBSON();
+        hbResponseObj = hbResponse.toBSON(false);
         ASSERT_EQUALS(fieldsSet, hbResponseObj.nFields());
         ASSERT_EQUALS("rs0", hbResponseObj["set"].String());
         ASSERT_EQUALS("", hbResponseObj["hbmsg"].String());
@@ -369,7 +373,8 @@ namespace {
 
         initializeResult = hbResponseObjRoundTripChecker.initialize(hbResponseObj, 0);
         ASSERT_EQUALS(Status::OK(), initializeResult);
-        ASSERT_EQUALS(hbResponseObj.toString(), hbResponseObjRoundTripChecker.toBSON().toString());
+        ASSERT_EQUALS(hbResponseObj.toString(),
+                      hbResponseObjRoundTripChecker.toBSON(false).toString());
 
         // set replSet
         hbResponse.noteReplSet();
@@ -395,7 +400,7 @@ namespace {
         ASSERT_EQUALS(true, hbResponse.isElectable());
         ASSERT_EQUALS(config.toBSON().toString(), hbResponse.getConfig().toBSON().toString());
 
-        hbResponseObj = hbResponse.toBSON();
+        hbResponseObj = hbResponse.toBSON(false);
         ASSERT_EQUALS(fieldsSet, hbResponseObj.nFields());
         ASSERT_EQUALS("rs0", hbResponseObj["set"].String());
         ASSERT_EQUALS("", hbResponseObj["hbmsg"].String());
@@ -412,7 +417,8 @@ namespace {
 
         initializeResult = hbResponseObjRoundTripChecker.initialize(hbResponseObj, 0);
         ASSERT_EQUALS(Status::OK(), initializeResult);
-        ASSERT_EQUALS(hbResponseObj.toString(), hbResponseObjRoundTripChecker.toBSON().toString());
+        ASSERT_EQUALS(hbResponseObj.toString(),
+                      hbResponseObjRoundTripChecker.toBSON(false).toString());
 
         // set syncingTo
         hbResponse.setSyncingTo(HostAndPort("syncTarget"));
@@ -438,7 +444,7 @@ namespace {
         ASSERT_EQUALS(true, hbResponse.isElectable());
         ASSERT_EQUALS(config.toBSON().toString(), hbResponse.getConfig().toBSON().toString());
 
-        hbResponseObj = hbResponse.toBSON();
+        hbResponseObj = hbResponse.toBSON(false);
         ASSERT_EQUALS(fieldsSet, hbResponseObj.nFields());
         ASSERT_EQUALS("rs0", hbResponseObj["set"].String());
         ASSERT_EQUALS("", hbResponseObj["hbmsg"].String());
@@ -456,7 +462,8 @@ namespace {
 
         initializeResult = hbResponseObjRoundTripChecker.initialize(hbResponseObj, 0);
         ASSERT_EQUALS(Status::OK(), initializeResult);
-        ASSERT_EQUALS(hbResponseObj.toString(), hbResponseObjRoundTripChecker.toBSON().toString());
+        ASSERT_EQUALS(hbResponseObj.toString(),
+                      hbResponseObjRoundTripChecker.toBSON(false).toString());
 
         // set hbmsg
         hbResponse.setHbMsg("lub dub");
@@ -481,7 +488,7 @@ namespace {
         ASSERT_EQUALS(true, hbResponse.isElectable());
         ASSERT_EQUALS(config.toBSON().toString(), hbResponse.getConfig().toBSON().toString());
 
-        hbResponseObj = hbResponse.toBSON();
+        hbResponseObj = hbResponse.toBSON(false);
         ASSERT_EQUALS(fieldsSet, hbResponseObj.nFields());
         ASSERT_EQUALS("rs0", hbResponseObj["set"].String());
         ASSERT_EQUALS("lub dub", hbResponseObj["hbmsg"].String());
@@ -499,7 +506,8 @@ namespace {
 
         initializeResult = hbResponseObjRoundTripChecker.initialize(hbResponseObj, 0);
         ASSERT_EQUALS(Status::OK(), initializeResult);
-        ASSERT_EQUALS(hbResponseObj.toString(), hbResponseObjRoundTripChecker.toBSON().toString());
+        ASSERT_EQUALS(hbResponseObj.toString(),
+                      hbResponseObjRoundTripChecker.toBSON(false).toString());
 
         // set mismatched
         hbResponse.noteMismatched();
@@ -524,7 +532,7 @@ namespace {
         ASSERT_EQUALS(true, hbResponse.isElectable());
         ASSERT_EQUALS(config.toBSON().toString(), hbResponse.getConfig().toBSON().toString());
 
-        hbResponseObj = hbResponse.toBSON();
+        hbResponseObj = hbResponse.toBSON(false);
         ASSERT_EQUALS(2, hbResponseObj.nFields());
         ASSERT_EQUALS(true, hbResponseObj["mismatch"].trueValue());
 

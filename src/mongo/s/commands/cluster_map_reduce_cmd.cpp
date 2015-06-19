@@ -30,7 +30,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/shared_ptr.hpp>
 #include <map>
 #include <set>
 #include <string>
@@ -48,6 +47,7 @@
 #include "mongo/s/commands/cluster_commands_common.h"
 #include "mongo/s/config.h"
 #include "mongo/s/catalog/dist_lock_manager.h"
+#include "mongo/s/client/shard_registry.h"
 #include "mongo/s/grid.h"
 #include "mongo/s/strategy.h"
 #include "mongo/stdx/chrono.h"
@@ -55,7 +55,7 @@
 
 namespace mongo {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::map;
     using std::set;
     using std::string;
@@ -284,7 +284,8 @@ namespace {
             if (!shardedInput && !shardedOutput && !customOutDB) {
                 LOG(1) << "simple MR, just passthrough";
 
-                ShardConnection conn(confIn->getPrimary().getConnString(), "");
+                const auto shard = grid.shardRegistry()->getShard(confIn->getPrimaryId());
+                ShardConnection conn(shard->getConnString(), "");
 
                 BSONObj res;
                 bool ok = conn->runCommand(dbname, cmdObj, res);
@@ -304,7 +305,6 @@ namespace {
                 q = cmdObj["query"].embeddedObjectUserCheck();
             }
 
-            set<Shard> shards;
             set<string> servers;
             vector<Strategy::CommandResult> mrCommandResults;
 
@@ -319,7 +319,7 @@ namespace {
                 // TODO: take distributed lock to prevent split / migration?
 
                 try {
-                    STRATEGY->commandOp(dbname, shardedCommand, 0, fullns, q, &mrCommandResults);
+                    Strategy::commandOp(dbname, shardedCommand, 0, fullns, q, &mrCommandResults);
                 }
                 catch (DBException& e){
                     e.addContext(str::stream() << "could not run map command on all shards for ns "
@@ -329,7 +329,12 @@ namespace {
 
                 for (const auto& mrResult : mrCommandResults) {
                     // Need to gather list of all servers even if an error happened
-                    const string server = mrResult.shardTarget.getConnString().toString();
+                    string server;
+                    {
+                        const auto shard =
+                            grid.shardRegistry()->getShard(mrResult.shardTargetId);
+                        server = shard->getConnString().toString();
+                    }
                     servers.insert(server);
 
                     if (!ok) {
@@ -416,10 +421,11 @@ namespace {
             BSONObj singleResult;
 
             if (!shardedOutput) {
+                const auto shard = grid.shardRegistry()->getShard(confOut->getPrimaryId());
                 LOG(1) << "MR with single shard output, NS=" << finalColLong
-                       << " primary=" << confOut->getPrimary();
+                       << " primary=" << shard->toString();
 
-                ShardConnection conn(confOut->getPrimary().getConnString(), finalColLong);
+                ShardConnection conn(shard->getConnString(), finalColLong);
                 ok = conn->runCommand(outDB, finalCmd.obj(), singleResult);
 
                 BSONObj counts = singleResult.getObjectField("counts");
@@ -452,9 +458,8 @@ namespace {
                     //
                     // TODO: pre-split mapReduce output in a safer way.
 
-                    set<Shard> shardSet;
-                    confOut->getAllShards(shardSet);
-                    vector<Shard> outShards(shardSet.begin(), shardSet.end());
+                    set<ShardId> outShardIds;
+                    confOut->getAllShardIds(&outShardIds);
 
                     BSONObj sortKey = BSON("_id" << 1);
                     ShardKeyPattern sortKeyPattern(sortKey);
@@ -462,7 +467,7 @@ namespace {
                                                                            sortKeyPattern,
                                                                            true,
                                                                            &sortedSplitPts,
-                                                                           &outShards);
+                                                                           &outShardIds);
                     if (!status.isOK()) {
                         return appendCommandStatus(result, status);
                     }
@@ -485,7 +490,7 @@ namespace {
                     mrCommandResults.clear();
 
                     try {
-                        STRATEGY->commandOp(outDB, finalCmdObj, 0, finalColLong, BSONObj(), &mrCommandResults);
+                        Strategy::commandOp(outDB, finalCmdObj, 0, finalColLong, BSONObj(), &mrCommandResults);
                         ok = true;
                     }
                     catch (DBException& e){
@@ -495,7 +500,12 @@ namespace {
                     }
 
                     for (const auto& mrResult : mrCommandResults) {
-                        const string server = mrResult.shardTarget.getConnString().toString();
+                        string server;
+                        {
+                            const auto shard =
+                                grid.shardRegistry()->getShard(mrResult.shardTargetId);
+                            server = shard->getConnString().toString();
+                        }
                         singleResult = mrResult.result;
 
                         ok = singleResult["ok"].trueValue();

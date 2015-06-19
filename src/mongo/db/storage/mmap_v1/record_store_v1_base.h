@@ -30,7 +30,6 @@
 
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
 #include "mongo/util/concurrency/spin_lock.h"
 #include "mongo/platform/unordered_set.h"
 
@@ -42,7 +41,7 @@ namespace mongo {
     class DeletedRecord;
     class DocWriter;
     class ExtentManager;
-    class Record;
+    class MmapV1RecordHeader;
     class OperationContext;
 
     struct Extent;
@@ -189,9 +188,6 @@ namespace mongo {
         void deleteRecord( OperationContext* txn,
                            const RecordId& dl );
 
-        virtual RecordFetcher* recordNeedsFetch( OperationContext* txn,
-                                                 const RecordId& loc ) const;
-
         StatusWith<RecordId> insertRecord( OperationContext* txn,
                                            const char* data,
                                            int len,
@@ -216,7 +212,7 @@ namespace mongo {
                                           const char* damageSource,
                                           const mutablebson::DamageVector& damages );
 
-        virtual RecordIterator* getIteratorForRepair( OperationContext* txn ) const;
+        virtual std::unique_ptr<RecordCursor> getCursorForRepair( OperationContext* txn ) const;
 
         void increaseStorageSize( OperationContext* txn, int size, bool enforceQuota );
 
@@ -261,7 +257,7 @@ namespace mongo {
         }
     protected:
 
-        virtual Record* recordFor( const DiskLoc& loc ) const;
+        virtual MmapV1RecordHeader* recordFor( const DiskLoc& loc ) const;
 
         const DeletedRecord* deletedRecordFor( const DiskLoc& loc ) const;
 
@@ -299,7 +295,7 @@ namespace mongo {
         /** add a record to the end of the linked list chain within this extent.
             require: you must have already declared write intent for the record header.
         */
-        void _addRecordToRecListInExtent(OperationContext* txn, Record* r, DiskLoc loc);
+        void _addRecordToRecListInExtent(OperationContext* txn, MmapV1RecordHeader* r, DiskLoc loc);
 
         /**
          * internal
@@ -310,11 +306,11 @@ namespace mongo {
                                             int len,
                                             bool enforceQuota );
 
-        boost::scoped_ptr<RecordStoreV1MetaData> _details;
+        std::unique_ptr<RecordStoreV1MetaData> _details;
         ExtentManager* _extentManager;
         bool _isSystemIndexes;
 
-        friend class RecordStoreV1RepairIterator;
+        friend class RecordStoreV1RepairCursor;
     };
 
     /**
@@ -322,7 +318,7 @@ namespace mongo {
      *
      * EOF at end of extent, even if there are more extents.
      */
-    class RecordStoreV1Base::IntraExtentIterator : public RecordIterator {
+    class RecordStoreV1Base::IntraExtentIterator final : public RecordCursor {
     public:
         IntraExtentIterator(OperationContext* txn,
                             DiskLoc start,
@@ -330,22 +326,20 @@ namespace mongo {
                             bool forward = true)
             : _txn(txn), _curr(start), _rs(rs), _forward(forward) {}
 
-        virtual bool isEOF() { return _curr.isNull(); }
-
-        virtual RecordId curr() { return _curr.toRecordId(); }
-
-        virtual RecordId getNext( );
-
-        virtual void invalidate(const RecordId& dl);
-
-        virtual void saveState() {}
-
-        virtual bool restoreState(OperationContext* txn) { return true; }
-
-        virtual RecordData dataFor( const RecordId& loc ) const { return _rs->dataFor(_txn, loc); }
+        boost::optional<Record> next() final;
+        boost::optional<Record> seekExact(const RecordId& id) final;
+        void invalidate(const RecordId& dl) final;
+        void savePositioned() final {}
+        bool restore(OperationContext* txn) final { return true; }
+        std::unique_ptr<RecordFetcher> fetcherForNext() const final;
 
     private:
-        virtual const Record* recordFor( const DiskLoc& loc ) const { return _rs->recordFor(loc); }
+        virtual const MmapV1RecordHeader* recordFor( const DiskLoc& loc ) const {
+            return _rs->recordFor(loc);
+        }
+
+        void advance();
+
         OperationContext* _txn;
         DiskLoc _curr;
         const RecordStoreV1Base* _rs;

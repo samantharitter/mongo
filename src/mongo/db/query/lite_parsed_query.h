@@ -28,36 +28,58 @@
 
 #pragma once
 
-#include <algorithm>
 #include <boost/optional.hpp>
+#include <string>
 
-#include "mongo/client/dbclientinterface.h"
 #include "mongo/db/jsobj.h"
 
 namespace mongo {
 
+    class NamespaceString;
     class QueryMessage;
+    class Status;
+    template<typename T> class StatusWith;
 
     /**
-     * Parses the QueryMessage received from the user and makes the various fields more easily
-     * accessible.
+     * Parses the QueryMessage or find command received from the user and makes the various fields
+     * more easily accessible.
      */
     class LiteParsedQuery {
     public:
         /**
-         * Parses a find command object, 'cmdObj'. Caller must indicate whether or not
-         * this lite parsed query is an explained query or not via 'isExplain'.
+         * Parses a find command object, 'cmdObj'. Caller must indicate whether or not this lite
+         * parsed query is an explained query or not via 'isExplain'.
          *
-         * On success, fills in the out-parameter 'parsedQuery' and returns an OK status.
-         * The caller takes ownership of *out.
-         *
-         * Returns a failure status if 'cmdObj' is not well formed. On failure the caller
-         * is not responsible for deleting *out.
+         * Returns a heap allocated LiteParsedQuery on success or an error if 'cmdObj' is not well
+         * formed.
          */
-        static Status make(const std::string& fullns,
-                           const BSONObj& cmdObj,
-                           bool isExplain,
-                           LiteParsedQuery** out);
+        static StatusWith<std::unique_ptr<LiteParsedQuery>>
+            makeFromFindCommand(const NamespaceString& nss, const BSONObj& cmdObj, bool isExplain);
+
+        /**
+         * Short and long forms for constructing a new LiteParsedQuery.
+         */
+        static StatusWith<std::unique_ptr<LiteParsedQuery>> make(const std::string& ns,
+                                                                 int ntoreturn,
+                                                                 const BSONObj& query);
+
+        static StatusWith<std::unique_ptr<LiteParsedQuery>> make(const std::string& ns,
+                                                                 int ntoskip,
+                                                                 int ntoreturn,
+                                                                 int queryoptions,
+                                                                 const BSONObj& query,
+                                                                 const BSONObj& proj,
+                                                                 const BSONObj& sort,
+                                                                 const BSONObj& hint,
+                                                                 const BSONObj& minObj,
+                                                                 const BSONObj& maxObj,
+                                                                 bool snapshot,
+                                                                 bool explain);
+
+        /**
+         * Converts this LPQ into a find command.
+         */
+        BSONObj asFindCommand() const;
 
         /**
          * Helper functions to parse maxTimeMS from a command object.  Returns the contained value,
@@ -111,7 +133,6 @@ namespace mongo {
         static const std::string metaIndexKey;
 
         const std::string& ns() const { return _ns; }
-        bool isLocalDB() const { return _ns.compare(0, 6, "local.") == 0; }
 
         const BSONObj& getFilter() const { return _filter; }
         const BSONObj& getProj() const { return _proj; }
@@ -125,7 +146,7 @@ namespace mongo {
         boost::optional<int> getBatchSize() const { return _batchSize; }
         bool wantMore() const { return _wantMore; }
 
-        bool fromFindCommand() const { return _fromCommand; }
+        bool isFromFindCommand() const { return _fromCommand; }
         bool isExplain() const { return _explain; }
 
         const std::string& getComment() const { return _comment; }
@@ -159,33 +180,14 @@ namespace mongo {
         //
 
         /**
-         * Parse the provided QueryMessage and set *out to point to the output.
-         *
-         * Return Status::OK() if parsing succeeded.  Caller owns *out.
-         * Otherwise, *out is invalid and the returned Status indicates why parsing failed.
+         * Parse the provided QueryMessage and return a heap constructed LiteParsedQuery, which
+         * represents it or an error.
          */
-        static Status make(const QueryMessage& qm, LiteParsedQuery** out);
-
-        /**
-         * Fills out a LiteParsedQuery.  Used for debugging and testing, when we don't have a
-         * QueryMessage.
-         */
-        static Status make(const std::string& ns,
-                           int ntoskip,
-                           int ntoreturn,
-                           int queryoptions,
-                           const BSONObj& query,
-                           const BSONObj& proj,
-                           const BSONObj& sort,
-                           const BSONObj& hint,
-                           const BSONObj& minObj,
-                           const BSONObj& maxObj,
-                           bool snapshot,
-                           bool explain,
-                           LiteParsedQuery** out);
+        static StatusWith<std::unique_ptr<LiteParsedQuery>> fromLegacyQueryMessage(
+            const QueryMessage& qm);
 
     private:
-        LiteParsedQuery();
+        LiteParsedQuery() = default;
 
         /**
          * Parsing code calls this after construction of the LPQ is complete. There are additional
@@ -227,36 +229,36 @@ namespace mongo {
         // {$hint: <String>}, where <String> is the index name hinted.
         BSONObj _hint;
 
-        int _skip;
-        bool _wantMore;
+        int _skip = 0;
+        bool _wantMore = true;
 
         boost::optional<int> _limit;
         boost::optional<int> _batchSize;
 
-        bool _fromCommand;
-        bool _explain;
+        bool _fromCommand = false;
+        bool _explain = false;
 
         std::string _comment;
 
-        int _maxScan;
-        int _maxTimeMS;
+        int _maxScan = 0;
+        int _maxTimeMS = 0;
 
         BSONObj _min;
         BSONObj _max;
 
-        bool _returnKey;
-        bool _showRecordId;
-        bool _snapshot;
-        bool _hasReadPref;
+        bool _returnKey = false;
+        bool _showRecordId = false;
+        bool _snapshot = false;
+        bool _hasReadPref = false;
 
         // Options that can be specified in the OP_QUERY 'flags' header.
-        bool _tailable;
-        bool _slaveOk;
-        bool _oplogReplay;
-        bool _noCursorTimeout;
-        bool _awaitData;
-        bool _exhaust;
-        bool _partial;
+        bool _tailable = false;
+        bool _slaveOk = false;
+        bool _oplogReplay = false;
+        bool _noCursorTimeout = false;
+        bool _awaitData = false;
+        bool _exhaust = false;
+        bool _partial = false;
     };
 
 } // namespace mongo

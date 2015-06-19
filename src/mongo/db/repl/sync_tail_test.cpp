@@ -64,20 +64,7 @@ namespace {
     void BackgroundSyncMock::consume() { }
     void BackgroundSyncMock::waitForMore() { }
 
-    class OperationContextSyncTailMock : public OperationContextReplMock {
-    public:
-        Client* getClient() const override;
-    };
-
-    Client* OperationContextSyncTailMock::getClient() const {
-        Client::initThreadIfNotAlready();
-        return &cc();
-    }
-
     class SyncTailTest : public unittest::Test {
-    public:
-        SyncTailTest();
-
     protected:
         void _testSyncApplyInsertDocument(LockMode expectedMode);
 
@@ -90,11 +77,7 @@ namespace {
     private:
         void setUp() override;
         void tearDown() override;
-
-        ReplicationCoordinator* _prevCoordinator;
     };
-
-    SyncTailTest::SyncTailTest() : _prevCoordinator(nullptr) { }
 
     void SyncTailTest::setUp() {
         ServiceContext* serviceContext = getGlobalServiceContext();
@@ -103,14 +86,17 @@ namespace {
             // go away after the global storage engine is initialized.
             unittest::TempDir tempDir("sync_tail_test");
             mongo::storageGlobalParams.dbpath = tempDir.path();
-            serviceContext->setGlobalStorageEngine("devnull");
+            mongo::storageGlobalParams.engine = "devnull";
+            mongo::storageGlobalParams.engineSetByUser = true;
+            serviceContext->initializeGlobalStorageEngine();
         }
-        _prevCoordinator = getGlobalReplicationCoordinator();
         ReplSettings replSettings;
         replSettings.oplogSize = 5 * 1024 * 1024;
 
         setGlobalReplicationCoordinator(new ReplicationCoordinatorMock(replSettings));
-        _txn.reset(new OperationContextSyncTailMock());
+
+        Client::initThreadIfNotAlready();
+        _txn.reset(new OperationContextReplMock(&cc(), 0));
         _opsApplied = 0;
         _applyOp = [](OperationContext* txn,
                                    Database* db,
@@ -131,8 +117,7 @@ namespace {
             invariant(mongo::dbHolder().closeAll(_txn.get(), unused, false));
         }
         _txn.reset();
-        delete getGlobalReplicationCoordinator();
-        setGlobalReplicationCoordinator(_prevCoordinator);
+        setGlobalReplicationCoordinator(nullptr);
     }
 
     TEST_F(SyncTailTest, Peek) {

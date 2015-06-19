@@ -35,7 +35,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::list;
     using std::string;
     using std::vector;
@@ -139,7 +139,7 @@ namespace mongo {
                 ++_commonStats.needTime;
                 return PlanStage::NEED_TIME;
             }
-            else if (PlanStage::FAILURE == code) {
+            else if (PlanStage::FAILURE == code || PlanStage::DEAD == code) {
                 *out = id;
                 // If a stage fails, it may create a status WSM to indicate why it
                 // failed, in which case 'id' is valid.  If ID is invalid, we
@@ -270,7 +270,7 @@ namespace mongo {
 
         _specificStats.sortPattern = _pattern;
 
-        auto_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_SORT_MERGE));
+        unique_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_SORT_MERGE));
         ret->specific.reset(new MergeSortStats(_specificStats));
         for (size_t i = 0; i < _children.size(); ++i) {
             ret->children.push_back(_children[i]->getStats());

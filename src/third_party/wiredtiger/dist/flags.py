@@ -29,6 +29,7 @@ flags = {
         'LOGSCAN_RECOVER',
     ],
     'log_write' : [
+        'LOG_BACKGROUND',
         'LOG_DSYNC',
         'LOG_FLUSH',
         'LOG_FSYNC',
@@ -44,18 +45,13 @@ flags = {
         'READ_TRUNCATE',
         'READ_WONT_NEED',
     ],
-    'page_eviction' : [
-        'EVICT_CHECK_SPLITS',
-        'EVICT_EXCLUSIVE',
-        'EVICT_INMEM_SPLIT',
-    ],
     'rec_write' : [
         'EVICTING',
         'SKIP_UPDATE_ERR',
         'SKIP_UPDATE_RESTORE',
     ],
     'txn_log_checkpoint' : [
-        'TXN_LOG_CKPT_FAIL',
+        'TXN_LOG_CKPT_CLEANUP',
         'TXN_LOG_CKPT_PREPARE',
         'TXN_LOG_CKPT_START',
         'TXN_LOG_CKPT_STOP',
@@ -71,6 +67,7 @@ flags = {
         'VERB_FILEOPS',
         'VERB_LOG',
         'VERB_LSM',
+        'VERB_LSM_MANAGER',
         'VERB_METADATA',
         'VERB_MUTEX',
         'VERB_OVERFLOW',

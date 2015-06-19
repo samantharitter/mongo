@@ -68,18 +68,17 @@ namespace mongo {
     // to their old style equivalents.
     void Command::execCommand(OperationContext* txn,
                               Command* command,
-                              const BSONObj& interposedCmd,
                               const rpc::RequestInterface& request,
                               rpc::ReplyBuilderInterface* replyBuilder) {
 
         int queryFlags = 0;
+        BSONObj cmdObj;
 
-        std::tie(std::ignore, queryFlags) = uassertStatusOK(
-            rpc::metadata::downconvertRequest(request.getCommandArgs(),
-                                              request.getMetadata())
+        std::tie(cmdObj, queryFlags) = uassertStatusOK(
+            rpc::downconvertRequestMetadata(request.getCommandArgs(),
+                                            request.getMetadata())
         );
 
-        BSONObj cmdObj = interposedCmd;
         std::string db = request.getDatabase().rawData();
         BSONObjBuilder result;
 
@@ -92,7 +91,7 @@ namespace mongo {
                                result);
 
         replyBuilder
-            ->setMetadata(rpc::metadata::empty())
+            ->setMetadata(rpc::makeEmptyMetadata())
             .setCommandReply(result.done());
     }
 
@@ -169,8 +168,11 @@ namespace mongo {
             return;
         }
 
-        OperationContext* noTxn = NULL; // mongos doesn't use transactions SERVER-13931
-        execCommandClientBasic(noTxn, c, cc(), queryOptions, ns, jsobj, anObjBuilder);
+        auto txn = cc().makeOperationContext();
+        execCommandClientBasic(txn.get(), c, cc(), queryOptions, ns, jsobj, anObjBuilder);
+    }
+
+    void Command::registerError(OperationContext* txn, const DBException& exception) {
     }
 
 } //namespace mongo

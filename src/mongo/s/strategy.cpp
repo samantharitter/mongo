@@ -32,7 +32,6 @@
 
 #include "mongo/s/strategy.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/base/status.h"
 #include "mongo/base/owned_pointer_vector.h"
@@ -52,6 +51,7 @@
 #include "mongo/s/catalog/catalog_cache.h"
 #include "mongo/s/chunk_manager_targeter.h"
 #include "mongo/s/client/dbclient_multi_command.h"
+#include "mongo/s/client/shard_registry.h"
 #include "mongo/s/chunk_manager.h"
 #include "mongo/s/chunk_version.h"
 #include "mongo/s/config.h"
@@ -69,8 +69,8 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
-    using boost::shared_ptr;
+    using std::unique_ptr;
+    using std::shared_ptr;
     using std::endl;
     using std::set;
     using std::string;
@@ -87,7 +87,11 @@ namespace mongo {
     static bool doShardedIndexQuery(Request& r, const QuerySpec& qSpec) {
         // Extract the ns field from the query, which may be embedded within the "query" or
         // "$query" field.
-        const NamespaceString indexNSSQuery(qSpec.filter()["ns"].str());
+        auto nsField = qSpec.filter()["ns"];
+        if (nsField.eoo()) {
+            return false;
+        }
+        const NamespaceString indexNSSQuery(nsField.str());
 
         auto status = grid.catalogCache()->getDatabase(indexNSSQuery.db().toString());
         if (!status.isOK()) {
@@ -107,10 +111,10 @@ namespace mongo {
         ChunkManagerPtr cm;
         config->getChunkManagerOrPrimary(indexNSSQuery.ns(), cm, shard);
         if ( cm ) {
-            set<Shard> shards;
-            cm->getAllShards( shards );
-            verify( shards.size() > 0 );
-            shard.reset( new Shard( *shards.begin() ) );
+            set<ShardId> shardIds;
+            cm->getAllShardIds(&shardIds);
+            verify(shardIds.size() > 0);
+            shard = grid.shardRegistry()->getShard(*shardIds.begin());
         }
 
         ShardConnection dbcon(shard->getConnString(), r.getns());
@@ -240,11 +244,11 @@ namespace mongo {
             // Only one shard is used
 
             // Remote cursors are stored remotely, we shouldn't need this around.
-            scoped_ptr<ParallelSortClusteredCursor> cursorDeleter( cursor );
+            unique_ptr<ParallelSortClusteredCursor> cursorDeleter( cursor );
 
             ShardPtr shard = cursor->getQueryShard();
             verify( shard.get() );
-            DBClientCursorPtr shardCursor = cursor->getShardCursor(*shard);
+            DBClientCursorPtr shardCursor = cursor->getShardCursor(shard->getId());
 
             // Implicitly stores the cursor in the cache
             r.reply( *(shardCursor->getMessage()) , shardCursor->originalHost() );
@@ -389,17 +393,18 @@ namespace mongo {
         // Initialize the cursor
         cursor.init();
 
-        set<Shard> shards;
-        cursor.getQueryShards( shards );
+        set<ShardId> shardIds;
+        cursor.getQueryShardIds(shardIds);
 
-        for( set<Shard>::iterator i = shards.begin(), end = shards.end(); i != end; ++i ){
+        for (const ShardId& shardId : shardIds) {
             CommandResult result;
-            result.shardTarget = *i;
+            result.shardTargetId = shardId;
+
             string errMsg; // ignored, should never be invalid b/c an exception thrown earlier
             result.target =
-                    ConnectionString::parse( cursor.getShardCursor( *i )->originalHost(),
+                    ConnectionString::parse( cursor.getShardCursor(shardId)->originalHost(),
                                              errMsg );
-            result.result = cursor.getShardCursor( *i )->peekFirst().getOwned();
+            result.result = cursor.getShardCursor(shardId)->peekFirst().getOwned();
             results->push_back( result );
         }
 
@@ -478,7 +483,10 @@ namespace mongo {
 
             CommandResult result;
             result.target = host;
-            result.shardTarget = Shard::make(host.toString());
+            {
+                const auto shard = grid.shardRegistry()->getShard(host.toString());
+                result.shardTargetId = shard->getId();
+            }
             result.result = response.toBSON();
 
             results->push_back(result);
@@ -511,11 +519,11 @@ namespace mongo {
             return Status(ErrorCodes::IllegalOperation, ss);
         }
 
-        Shard primaryShard = conf->getPrimary();
+        const auto primaryShard = grid.shardRegistry()->getShard(conf->getPrimaryId());
 
         BSONObj shardResult;
         try {
-            ShardConnection conn(primaryShard.getConnString(), "");
+            ShardConnection conn(primaryShard->getConnString(), "");
 
             // TODO: this can throw a stale config when mongos is not up-to-date -- fix.
             if (!conn->runCommand(db, command, shardResult, options)) {
@@ -532,9 +540,9 @@ namespace mongo {
         }
 
         // Fill out the command result.
-        cmdResult->shardTarget = primaryShard;
+        cmdResult->shardTargetId = conf->getPrimaryId();
         cmdResult->result = shardResult;
-        cmdResult->target = primaryShard.getConnString();
+        cmdResult->target = primaryShard->getConnString();
 
         return Status::OK();
     }
@@ -700,5 +708,4 @@ namespace mongo {
         }
     }
 
-    Strategy * STRATEGY = new Strategy();
 }

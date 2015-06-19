@@ -28,7 +28,6 @@
 
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -134,7 +133,7 @@ namespace mongo {
         CommonStats common;
 
         // Per-stage place to stash additional information
-        boost::scoped_ptr<SpecificStats> specific;
+        std::unique_ptr<SpecificStats> specific;
 
         // The stats of the node's children.
         std::vector<PlanStageStats*> children;
@@ -179,8 +178,7 @@ namespace mongo {
     };
 
     struct AndSortedStats : public SpecificStats {
-        AndSortedStats() : flagged(0),
-                           matchTested(0) { }
+        AndSortedStats() : flagged(0) { }
 
         virtual ~AndSortedStats() { }
 
@@ -194,9 +192,6 @@ namespace mongo {
 
         // How many results were flagged via invalidation?
         size_t flagged;
-
-        // Fails == common.advanced - matchTested
-        size_t matchTested;
     };
 
     struct CachedPlanStats : public SpecificStats {
@@ -245,6 +240,9 @@ namespace mongo {
     struct CountScanStats : public SpecificStats {
         CountScanStats() : indexVersion(0),
                            isMultiKey(false),
+                           isPartial(false),
+                           isSparse(false),
+                           isUnique(false),
                            keysExamined(0) { }
 
         virtual ~CountScanStats() { }
@@ -263,6 +261,9 @@ namespace mongo {
         int indexVersion;
 
         bool isMultiKey;
+        bool isPartial;
+        bool isSparse;
+        bool isUnique;
 
         size_t keysExamined;
 
@@ -304,7 +305,6 @@ namespace mongo {
     struct FetchStats : public SpecificStats {
         FetchStats() : alreadyHasObj(0),
                        forcedFetches(0),
-                       matchTested(0),
                        docsExamined(0) { }
 
         virtual ~FetchStats() { }
@@ -319,9 +319,6 @@ namespace mongo {
 
         // How many records were we forced to fetch as the result of an invalidation?
         size_t forcedFetches;
-
-        // We know how many passed (it's the # of advanced) and therefore how many failed.
-        size_t matchTested;
 
         // The total number of full documents touched by the fetch stage.
         size_t docsExamined;
@@ -364,10 +361,12 @@ namespace mongo {
         IndexScanStats() : indexVersion(0),
                            direction(1),
                            isMultiKey(false),
+                           isPartial(false),
+                           isSparse(false),
+                           isUnique(false),
                            dupsTested(0),
                            dupsDropped(0),
                            seenInvalidated(0),
-                           matchTested(0),
                            keysExamined(0) { }
 
         virtual ~IndexScanStats() { }
@@ -398,17 +397,18 @@ namespace mongo {
         // against the order.
         int direction;
 
+        // index properties
         // Whether this index is over a field that contain array values.
         bool isMultiKey;
+        bool isPartial;
+        bool isSparse;
+        bool isUnique;
 
         size_t dupsTested;
         size_t dupsDropped;
 
         size_t seenInvalidated;
         // TODO: we could track key sizes here.
-
-        // We know how many passed (it's the # of advanced) and therefore how many failed.
-        size_t matchTested;
 
         // Number of entries retrieved from the index during the scan.
         size_t keysExamined;
@@ -459,9 +459,6 @@ namespace mongo {
 
         // How many calls to invalidate(...) actually removed a RecordId from our deduping map?
         size_t locsForgotten;
-
-        // We know how many passed (it's the # of advanced) and therefore how many failed.
-        std::vector<size_t> matchTested;
     };
 
     struct ProjectionStats : public SpecificStats {

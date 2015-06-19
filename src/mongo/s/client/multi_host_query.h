@@ -28,15 +28,14 @@
 
 #pragma once
 
-#include <boost/smart_ptr/shared_ptr.hpp>
-#include <boost/thread/condition_variable.hpp>
-#include <boost/thread/mutex.hpp>
-#include <boost/thread/thread.hpp>
 #include <vector>
 
 #include "mongo/base/disallow_copying.h"
 #include "mongo/client/dbclientinterface.h"
+#include "mongo/stdx/condition_variable.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/mutex.h"
+#include "mongo/stdx/thread.h"
 
 namespace mongo {
 
@@ -139,7 +138,7 @@ namespace mongo {
             const Date_t timeoutAtMillis;
 
             // Must be held to access the parent pointer below
-            boost::mutex parentMutex;
+            stdx::mutex parentMutex;
             // Set and unset by the parent operation on scheduling and destruction
             MultiHostQueryOp* parentOp;
         };
@@ -169,17 +168,17 @@ namespace mongo {
         HostThreadPools* _hostThreads;
 
         // Outstanding requests
-        typedef std::map<ConnectionString, boost::shared_ptr<PendingQueryContext> > PendingMap;
+        typedef std::map<ConnectionString, std::shared_ptr<PendingQueryContext> > PendingMap;
         PendingMap _pending;
 
         // Synchronizes below
-        boost::mutex _resultsMutex;
+        stdx::mutex _resultsMutex;
 
         // Current results recv'd
         typedef std::map<ConnectionString, StatusWith<DBClientCursor*> > ResultMap;
         ResultMap _results;
 
-        boost::condition_variable _nextResultCV;
+        stdx::condition_variable _nextResultCV;
     };
 
     /**
@@ -248,7 +247,7 @@ namespace mongo {
         const int _poolSize;
         const bool _scopeAllWork;
 
-        boost::mutex _mutex;
+        stdx::mutex _mutex;
         typedef std::map<ConnectionString, HostThreadPool*> HostPoolMap;
         HostPoolMap _pools;
     };
@@ -299,15 +298,15 @@ namespace mongo {
             }
 
             // Synchronizes below
-            boost::mutex mutex;
+            stdx::mutex mutex;
 
             // The scheduled work
             std::deque<Callback> scheduled;
-            boost::condition_variable workScheduledCV;
+            stdx::condition_variable workScheduledCV;
 
             // How many workers are currently active
             int numActiveWorkers;
-            boost::condition_variable isIdleCV;
+            stdx::condition_variable isIdleCV;
 
             // Whether the pool has been disposed of
             bool isPoolActive;
@@ -316,14 +315,14 @@ namespace mongo {
         /**
          * Worker loop run by each thread.
          */
-        static void doWork(boost::shared_ptr<PoolContext> context);
+        static void doWork(std::shared_ptr<PoolContext> context);
 
         const bool _scopeAllWork;
 
         // For now, only modified in the constructor and destructor, but non-const
-        std::vector<boost::thread*> _threads;
+        std::vector<stdx::thread*> _threads;
 
         // Shared work and worker activity information
-        boost::shared_ptr<PoolContext> _context;
+        std::shared_ptr<PoolContext> _context;
     };
 }

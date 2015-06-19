@@ -28,11 +28,12 @@
 
 #pragma once
 
-#include <boost/shared_ptr.hpp>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "mongo/base/disallow_copying.h"
+#include "mongo/s/client/shard.h"
 
 namespace mongo {
 
@@ -50,7 +51,6 @@ namespace mongo {
     class OperationContext;
     class Query;
     class SettingsType;
-    class Shard;
     class ShardKeyPattern;
     class ShardType;
     class Status;
@@ -85,6 +85,13 @@ namespace mongo {
         virtual ConnectionString connectionString() const = 0;
 
         /**
+         * Performs implementation-specific startup tasks including but not limited to doing any
+         * necessary config schema upgrade work.  Must be run after the catalog manager
+         * has been installed into the global 'grid' object.
+         */
+        virtual Status startup(bool upgrade) = 0;
+
+        /**
          * Performs necessary cleanup when shutting down cleanly.
          */
         virtual void shutDown() = 0;
@@ -108,7 +115,7 @@ namespace mongo {
          * @param fieldsAndOrder: shardKey pattern
          * @param unique: if true, ensure underlying index enforces a unique constraint.
          * @param initPoints: create chunks based on a set of specified split points.
-         * @param initShards: if nullptr, use primary shard as lone shard for DB.
+         * @param initShardIds: if nullptr, use primary shard as lone shard for DB.
          *
          * WARNING: It's not completely safe to place initial chunks onto non-primary
          *          shards using this method because a conflict may result if multiple map-reduce
@@ -119,7 +126,7 @@ namespace mongo {
                                        const ShardKeyPattern& fieldsAndOrder,
                                        bool unique,
                                        std::vector<BSONObj>* initPoints,
-                                       std::vector<Shard>* initShards = nullptr) = 0;
+                                       std::set<ShardId>* initShardIds = nullptr) = 0;
 
         /**
          *
@@ -262,12 +269,6 @@ namespace mongo {
         virtual bool isShardHost(const ConnectionString& shardConnectionString) = 0;
 
         /**
-         * Returns true if there are any shards in the sharded cluster.
-         * Otherwise, returns false.
-         */
-        virtual bool doShardsExist() = 0;
-
-        /**
          * Runs a user management command on the config servers.
          * @param commandName: name of command
          * @param dbname: database for which the user management command is invoked
@@ -322,7 +323,10 @@ namespace mongo {
          * Returns global settings for a certain key.
          * @param key: key for SettingsType::ConfigNS document.
          *
-         * Returns NoSuchKey if no SettingsType::ConfigNS document with such key exists.
+         * Returns ErrorCodes::NoMatchingDocument if no SettingsType::ConfigNS document
+         * with such key exists.
+         * Returns ErrorCodes::FailedToParse if we encountered an error while parsing
+         * the settings document.
          */
         virtual StatusWith<SettingsType> getGlobalSettings(const std::string& key) = 0;
 
@@ -356,6 +360,9 @@ namespace mongo {
         /**
          * Updates a document in the specified namespace on the config server (only the config or
          * admin databases).
+         *
+         * NOTE: Should not be used in new code. Instead add a new metadata operation to the
+         *       interface.
          */
         Status update(const std::string& ns,
                       const BSONObj& query,

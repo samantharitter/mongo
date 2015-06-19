@@ -37,11 +37,11 @@ namespace mongo {
      * Implements a standalone instance remote command targeter, which always returns the same
      * host regardless of the read preferences.
      */
-    class RemoteCommandTargeterStandalone : public RemoteCommandTargeter {
+    class RemoteCommandTargeterStandalone final : public RemoteCommandTargeter {
     public:
         explicit RemoteCommandTargeterStandalone(const HostAndPort& hostAndPort);
 
-        StatusWith<HostAndPort> findHost(const ReadPreferenceSetting& readPref) final;
+        StatusWith<HostAndPort> findHost(const ReadPreferenceSetting& readPref) override;
 
     private:
         const HostAndPort _hostAndPort;

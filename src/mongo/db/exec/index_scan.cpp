@@ -78,6 +78,9 @@ namespace mongo {
         _specificStats.keyPattern = _keyPattern;
         _specificStats.indexName = _params.descriptor->indexName();
         _specificStats.isMultiKey = _params.descriptor->isMultikey(_txn);
+        _specificStats.isUnique = _params.descriptor->unique();
+        _specificStats.isSparse = _params.descriptor->isSparse();
+        _specificStats.isPartial = _params.descriptor->isPartial();
         _specificStats.indexVersion = _params.descriptor->version();
     }
 
@@ -205,10 +208,8 @@ namespace mongo {
                 ++_commonStats.needTime;
                 return PlanStage::NEED_TIME;
             }
-
-            ++_specificStats.matchTested;
         }
-        
+
         if (!kv->key.isOwned()) kv->key = kv->key.getOwned();
 
         // We found something to return, so fill out the WSM.

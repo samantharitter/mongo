@@ -29,12 +29,11 @@
 
 #pragma once
 
-#include <iosfwd>
-#include <ctime>
-#include <string>
+#include <boost/date_time/gregorian/gregorian_types.hpp>
 #include <boost/date_time/posix_time/posix_time_types.hpp>
-#include <boost/thread/xtime.hpp>
-#include <boost/version.hpp>
+#include <ctime>
+#include <iosfwd>
+#include <string>
 
 #include "mongo/base/status_with.h"
 #include "mongo/stdx/chrono.h"
@@ -304,6 +303,7 @@ namespace mongo {
     void sleepsecs(int s);
     void sleepmillis(long long ms);
     void sleepmicros(long long micros);
+    void sleepFor(const Milliseconds& time);
 
     class Backoff {
     public:
@@ -343,8 +343,6 @@ namespace mongo {
     /** Date_t is milliseconds since epoch */
      Date_t jsTime();
 
-    /** warning this will wrap */
-    unsigned curTimeMicros();
     unsigned long long curTimeMicros64();
     unsigned long long curTimeMillis64();
 
@@ -354,11 +352,4 @@ namespace mongo {
     struct tm *gmtime(const time_t *timep);
     struct tm *localtime(const time_t *timep);
 
-#if defined(MONGO_BOOST_TIME_UTC_HACK) || (BOOST_VERSION >= 105000)
-#define MONGO_BOOST_TIME_UTC boost::TIME_UTC_
-#else
-#define MONGO_BOOST_TIME_UTC boost::TIME_UTC
-#endif
-
 }  // namespace mongo
-

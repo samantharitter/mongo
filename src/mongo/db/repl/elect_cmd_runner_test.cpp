@@ -28,25 +28,26 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread.hpp>
-
 #include "mongo/base/status.h"
 #include "mongo/db/jsobj.h"
+#include "mongo/db/repl/elect_cmd_runner.h"
 #include "mongo/db/repl/member_heartbeat_data.h"
-#include "mongo/db/repl/network_interface_mock.h"
 #include "mongo/db/repl/replica_set_config.h"
 #include "mongo/db/repl/replication_executor.h"
-#include "mongo/db/repl/elect_cmd_runner.h"
+#include "mongo/db/repl/storage_interface_mock.h"
+#include "mongo/executor/network_interface_mock.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/unittest/unittest.h"
 
 
-using boost::scoped_ptr;
+using std::unique_ptr;
 
 namespace mongo {
 namespace repl {
 namespace {
+
+    using executor::NetworkInterfaceMock;
 
     class ElectCmdRunnerTest : public mongo::unittest::Test {
     public:
@@ -57,7 +58,7 @@ namespace {
 
         void waitForTest();
 
-        void electCmdRunnerRunner(const ReplicationExecutor::CallbackData& data,
+        void electCmdRunnerRunner(const ReplicationExecutor::CallbackArgs& data,
                                   ElectCmdRunner* electCmdRunner,
                                   StatusWith<ReplicationExecutor::EventHandle>* evh,
                                   const ReplicaSetConfig& currentConfig,
@@ -65,8 +66,9 @@ namespace {
                                   const std::vector<HostAndPort>& hosts);
 
         NetworkInterfaceMock* _net;
-        boost::scoped_ptr<ReplicationExecutor> _executor;
-        boost::scoped_ptr<boost::thread> _executorThread;
+        StorageInterfaceMock* _storage;
+        std::unique_ptr<ReplicationExecutor> _executor;
+        std::unique_ptr<stdx::thread> _executorThread;
 
     private:
         void setUp();
@@ -77,8 +79,9 @@ namespace {
 
     void ElectCmdRunnerTest::setUp() {
         _net = new NetworkInterfaceMock;
-        _executor.reset(new ReplicationExecutor(_net, 1 /* prng seed */));
-        _executorThread.reset(new boost::thread(stdx::bind(&ReplicationExecutor::run,
+        _storage = new StorageInterfaceMock;
+        _executor.reset(new ReplicationExecutor(_net, _storage, 1 /* prng seed */));
+        _executorThread.reset(new stdx::thread(stdx::bind(&ReplicationExecutor::run,
                                                            _executor.get())));
     }
 
@@ -120,7 +123,7 @@ namespace {
     // This is necessary because the run method must be scheduled in the Replication Executor
     // for correct concurrency operation.
     void ElectCmdRunnerTest::electCmdRunnerRunner(
-            const ReplicationExecutor::CallbackData& data,
+            const ReplicationExecutor::CallbackArgs& data,
             ElectCmdRunner* electCmdRunner,
             StatusWith<ReplicationExecutor::EventHandle>* evh,
             const ReplicaSetConfig& currentConfig,
@@ -128,8 +131,10 @@ namespace {
             const std::vector<HostAndPort>& hosts) {
 
         invariant(data.status.isOK());
+        ReplicationExecutor* executor = dynamic_cast<ReplicationExecutor*>(data.executor);
+        ASSERT(executor);
         *evh = electCmdRunner->start(
-                data.executor,
+                executor,
                 currentConfig,
                 selfIndex,
                 hosts);
@@ -332,7 +337,7 @@ namespace {
         }
 
     private:
-        scoped_ptr<ElectCmdRunner::Algorithm> _checker;
+        unique_ptr<ElectCmdRunner::Algorithm> _checker;
     };
 
     TEST_F(ElectScatterGatherTest, NodeRespondsWithBadVoteType) {

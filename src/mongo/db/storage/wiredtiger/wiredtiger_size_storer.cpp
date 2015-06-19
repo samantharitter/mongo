@@ -31,15 +31,17 @@
 
 #define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kStorage
 
-#include <boost/thread.hpp>
 #include <wiredtiger.h>
 
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/db/service_context.h"
+#include "mongo/db/storage/wiredtiger/wiredtiger_customization_hooks.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_record_store.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_session_cache.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_size_storer.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_util.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/log.h"
 #include "mongo/util/scopeguard.h"
 
@@ -59,8 +61,9 @@ namespace mongo {
                                        "overwrite=true", &_cursor);
         if (ret == ENOENT) {
             // Need to create table.
-            // TODO any config options we want?
-            invariantWTOK(session->create(session, storageUri.c_str(), NULL));
+            std::string config = WiredTigerCustomizationHooks::get(
+                getGlobalServiceContext())->getOpenConfig(storageUri);
+            invariantWTOK(session->create(session, storageUri.c_str(), config.c_str()));
             ret = session->open_cursor(session, storageUri.c_str(), NULL,
                                        "overwrite=true", &_cursor);
         }
@@ -71,7 +74,7 @@ namespace mongo {
 
     WiredTigerSizeStorer::~WiredTigerSizeStorer() {
         // This shouldn't be necessary, but protects us if we screw up.
-        boost::lock_guard<boost::mutex> cursorLock( _cursorMutex );
+        stdx::lock_guard<stdx::mutex> cursorLock( _cursorMutex );
 
         _magic = 11111;
         _cursor->close(_cursor);
@@ -87,7 +90,7 @@ namespace mongo {
     void WiredTigerSizeStorer::onCreate( WiredTigerRecordStore* rs,
                                          long long numRecords, long long dataSize ) {
         _checkMagic();
-        boost::lock_guard<boost::mutex> lk( _entriesMutex );
+        stdx::lock_guard<stdx::mutex> lk( _entriesMutex );
         Entry& entry = _entries[rs->getURI()];
         entry.rs = rs;
         entry.numRecords = numRecords;
@@ -97,7 +100,7 @@ namespace mongo {
 
     void WiredTigerSizeStorer::onDestroy( WiredTigerRecordStore* rs ) {
         _checkMagic();
-        boost::lock_guard<boost::mutex> lk( _entriesMutex );
+        stdx::lock_guard<stdx::mutex> lk( _entriesMutex );
         Entry& entry = _entries[rs->getURI()];
         entry.numRecords = rs->numRecords( NULL );
         entry.dataSize = rs->dataSize( NULL );
@@ -109,7 +112,7 @@ namespace mongo {
     void WiredTigerSizeStorer::storeToCache( StringData uri,
                                              long long numRecords, long long dataSize ) {
         _checkMagic();
-        boost::lock_guard<boost::mutex> lk( _entriesMutex );
+        stdx::lock_guard<stdx::mutex> lk( _entriesMutex );
         Entry& entry = _entries[uri.toString()];
         entry.numRecords = numRecords;
         entry.dataSize = dataSize;
@@ -119,7 +122,7 @@ namespace mongo {
     void WiredTigerSizeStorer::loadFromCache( StringData uri,
                                               long long* numRecords, long long* dataSize ) const {
         _checkMagic();
-        boost::lock_guard<boost::mutex> lk( _entriesMutex );
+        stdx::lock_guard<stdx::mutex> lk( _entriesMutex );
         Map::const_iterator it = _entries.find( uri.toString() );
         if ( it == _entries.end() ) {
             *numRecords = 0;
@@ -131,7 +134,7 @@ namespace mongo {
     }
 
     void WiredTigerSizeStorer::fillCache() {
-        boost::lock_guard<boost::mutex> cursorLock( _cursorMutex );
+        stdx::lock_guard<stdx::mutex> cursorLock( _cursorMutex );
         _checkMagic();
 
         Map m;
@@ -163,17 +166,17 @@ namespace mongo {
             }
         }
 
-        boost::lock_guard<boost::mutex> lk( _entriesMutex );
+        stdx::lock_guard<stdx::mutex> lk( _entriesMutex );
         _entries.swap(m);
     }
 
     void WiredTigerSizeStorer::syncCache(bool syncToDisk) {
-        boost::lock_guard<boost::mutex> cursorLock( _cursorMutex );
+        stdx::lock_guard<stdx::mutex> cursorLock( _cursorMutex );
         _checkMagic();
 
         Map myMap;
         {
-            boost::lock_guard<boost::mutex> lk( _entriesMutex );
+            stdx::lock_guard<stdx::mutex> lk( _entriesMutex );
             for ( Map::iterator it = _entries.begin(); it != _entries.end(); ++it ) {
                 std::string uriKey = it->first;
                 Entry& entry = it->second;
@@ -228,7 +231,7 @@ namespace mongo {
         invariantWTOK(session->commit_transaction(session, NULL));
 
         {
-            boost::lock_guard<boost::mutex> lk( _entriesMutex );
+            stdx::lock_guard<stdx::mutex> lk( _entriesMutex );
             for (Map::iterator it = _entries.begin(); it != _entries.end(); ++it) {
                 it->second.dirty = false;
             }

@@ -33,7 +33,6 @@
 #include "mongo/db/jsobj.h"
 #include "mongo/db/operation_context_noop.h"
 #include "mongo/db/repl/is_master_response.h"
-#include "mongo/db/repl/network_interface_mock.h"
 #include "mongo/db/repl/operation_context_repl_mock.h"
 #include "mongo/db/repl/repl_set_heartbeat_args_v1.h"
 #include "mongo/db/repl/repl_set_heartbeat_response.h"
@@ -41,6 +40,7 @@
 #include "mongo/db/repl/replication_coordinator_external_state_mock.h"
 #include "mongo/db/repl/replication_coordinator_impl.h"
 #include "mongo/db/repl/replication_coordinator_test_fixture.h"
+#include "mongo/executor/network_interface_mock.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/log.h"
 
@@ -48,10 +48,12 @@ namespace mongo {
 namespace repl {
 namespace {
 
+    using executor::NetworkInterfaceMock;
+
     class ReplCoordElectV1Test : public ReplCoordTest {
     protected:
         void simulateEnoughHeartbeatsForElectability();
-        void simulateFreshEnoughForElectability();
+        void simulateSuccessfulDryRun();
     };
 
     void ReplCoordElectV1Test::simulateEnoughHeartbeatsForElectability()  {
@@ -70,7 +72,33 @@ namespace {
                 hbResp.setState(MemberState::RS_SECONDARY);
                 hbResp.setConfigVersion(rsConfig.getConfigVersion());
                 BSONObjBuilder respObj;
-                net->scheduleResponse(noi, net->now(), makeResponseStatus(hbResp.toBSON()));
+                net->scheduleResponse(noi, net->now(), makeResponseStatus(hbResp.toBSON(true)));
+            }
+            else {
+                error() << "Black holing unexpected request to " << request.target << ": " <<
+                    request.cmdObj;
+                net->blackHole(noi);
+            }
+            net->runReadyNetworkOperations();
+        }
+        net->exitNetwork();
+    }
+
+    void ReplCoordElectV1Test::simulateSuccessfulDryRun() {
+        ReplicationCoordinatorImpl* replCoord = getReplCoord();
+        ReplicaSetConfig rsConfig = replCoord->getReplicaSetConfig_forTest();
+        NetworkInterfaceMock* net = getNet();
+        net->enterNetwork();
+        for (int i = 0; i < rsConfig.getNumMembers() / 2; ++i) {
+            const NetworkInterfaceMock::NetworkOperationIterator noi = net->getNextReadyRequest();
+            const RemoteCommandRequest& request = noi->getRequest();
+            log() << request.target.toString() << " processing " << request.cmdObj;
+            if (request.cmdObj.firstElement().fieldNameStringData() == "replSetRequestVotes") {
+                net->scheduleResponse(noi, net->now(), makeResponseStatus(
+                                              BSON("ok" << 1 <<
+                                                   "reason" << "" <<
+                                                   "term" << request.cmdObj["term"].Long() <<
+                                                   "voteGranted" << true)));
             }
             else {
                 error() << "Black holing unexpected request to " << request.target << ": " <<
@@ -188,7 +216,7 @@ namespace {
         ASSERT_EQUALS(1, countLogLinesContaining("election succeeded"));
     }
 
-    TEST_F(ReplCoordElectV1Test, ElectNotEnoughVotes) {
+    TEST_F(ReplCoordElectV1Test, ElectNotEnoughVotesInDryRun) {
         startCapturingLogMessages();
         BSONObj configObj = BSON("_id" << "mySet" <<
                                  "version" << 1 <<
@@ -221,7 +249,7 @@ namespace {
                         noi,
                         net->now(),
                         makeResponseStatus(BSON("ok" << 1 <<
-                                                "term" << 1 <<
+                                                "term" << 0 <<
                                                 "voteGranted" << false <<
                                                 "reason" << "don't like him much")));
             }
@@ -230,10 +258,10 @@ namespace {
         net->exitNetwork();
         stopCapturingLogMessages();
         ASSERT_EQUALS(1,
-                countLogLinesContaining("not becoming primary, we received insufficient votes"));
+                countLogLinesContaining("not running for primary, we received insufficient votes"));
     }
 
-    TEST_F(ReplCoordElectV1Test, ElectStaleTerm) {
+    TEST_F(ReplCoordElectV1Test, ElectStaleTermInDryRun) {
         startCapturingLogMessages();
         BSONObj configObj = BSON("_id" << "mySet" <<
                                  "version" << 1 <<
@@ -275,7 +303,8 @@ namespace {
         net->exitNetwork();
         stopCapturingLogMessages();
         ASSERT_EQUALS(1,
-                countLogLinesContaining("not becoming primary, we have been superceded already"));
+                countLogLinesContaining(
+                    "not running for primary, we have been superceded already"));
     }
 
     TEST_F(ReplCoordElectV1Test, ElectionDuringHBReconfigFails) {
@@ -316,7 +345,7 @@ namespace {
         hbResp2.setState(MemberState::RS_SECONDARY);
         net->runUntil(net->now() + Seconds(10)); // run until we've sent a heartbeat request
         const NetworkInterfaceMock::NetworkOperationIterator noi2 = net->getNextReadyRequest();
-        net->scheduleResponse(noi2, net->now(), makeResponseStatus(hbResp2.toBSON()));
+        net->scheduleResponse(noi2, net->now(), makeResponseStatus(hbResp2.toBSON(true)));
         net->runReadyNetworkOperations();
         getNet()->exitNetwork();
 
@@ -346,7 +375,7 @@ namespace {
                 hbResp.setState(MemberState::RS_SECONDARY);
                 hbResp.setConfigVersion(rsConfig.getConfigVersion());
                 BSONObjBuilder respObj;
-                net->scheduleResponse(noi, net->now(), makeResponseStatus(hbResp.toBSON()));
+                net->scheduleResponse(noi, net->now(), makeResponseStatus(hbResp.toBSON(true)));
             }
             else {
                 error() << "Black holing unexpected request to " << request.target << ": " <<
@@ -395,7 +424,9 @@ namespace {
                         noi,
                         net->now(),
                         makeResponseStatus(BSON("ok" << 1 <<
-                                                "term" << request.cmdObj["term"].Long() <<
+                                                "term" << (request.cmdObj["dryRun"].Bool() ?
+                                                              request.cmdObj["term"].Long() - 1 :
+                                                              request.cmdObj["term"].Long()) <<
                                                 "voteGranted" << true)));
             }
             else if (request.cmdObj.firstElement().fieldNameStringData() ==
@@ -416,6 +447,174 @@ namespace {
         net->exitNetwork();
         stopCapturingLogMessages();
         ASSERT_EQUALS(1, countLogLinesContaining("stepping down from primary, because:"));
+    }
+
+
+    TEST_F(ReplCoordElectV1Test, ElectNotEnoughVotes) {
+        startCapturingLogMessages();
+        BSONObj configObj = BSON("_id" << "mySet" <<
+                                 "version" << 1 <<
+                                 "members" << BSON_ARRAY(BSON("_id" << 1 << "host" << "node1:12345")
+                                                      << BSON("_id" << 2 << "host" << "node2:12345")
+                                                      << BSON("_id" << 3 << "host" << "node3:12345")
+                                                        ) <<
+                                 "protocolVersion" << 1);
+        assertStartSuccess(configObj, HostAndPort("node1", 12345));
+        ReplicaSetConfig config = assertMakeRSConfig(configObj);
+
+        OperationContextNoop txn;
+        OpTime time1(Timestamp(100, 1), 0);
+        getReplCoord()->setMyLastOptime(time1);
+        ASSERT(getReplCoord()->setFollowerMode(MemberState::RS_SECONDARY));
+
+        simulateEnoughHeartbeatsForElectability();
+        simulateSuccessfulDryRun();
+
+        NetworkInterfaceMock* net = getNet();
+        net->enterNetwork();
+        while (net->hasReadyRequests()) {
+            const NetworkInterfaceMock::NetworkOperationIterator noi = net->getNextReadyRequest();
+            const RemoteCommandRequest& request = noi->getRequest();
+            log() << request.target.toString() << " processing " << request.cmdObj;
+            if (request.cmdObj.firstElement().fieldNameStringData() != "replSetRequestVotes") {
+                net->blackHole(noi);
+            }
+            else {
+                net->scheduleResponse(
+                        noi,
+                        net->now(),
+                        makeResponseStatus(BSON("ok" << 1 <<
+                                                "term" << 1 <<
+                                                "voteGranted" << false <<
+                                                "reason" << "don't like him much")));
+            }
+            net->runReadyNetworkOperations();
+        }
+        net->exitNetwork();
+        stopCapturingLogMessages();
+        ASSERT_EQUALS(1,
+                countLogLinesContaining("not becoming primary, we received insufficient votes"));
+    }
+
+    TEST_F(ReplCoordElectV1Test, ElectStaleTerm) {
+        startCapturingLogMessages();
+        BSONObj configObj = BSON("_id" << "mySet" <<
+                                 "version" << 1 <<
+                                 "members" << BSON_ARRAY(BSON("_id" << 1 << "host" << "node1:12345")
+                                                      << BSON("_id" << 2 << "host" << "node2:12345")
+                                                      << BSON("_id" << 3 << "host" << "node3:12345")
+                                                        ) <<
+                                 "protocolVersion" << 1);
+        assertStartSuccess(configObj, HostAndPort("node1", 12345));
+        ReplicaSetConfig config = assertMakeRSConfig(configObj);
+
+        OperationContextNoop txn;
+        OpTime time1(Timestamp(100, 1), 0);
+        getReplCoord()->setMyLastOptime(time1);
+        ASSERT(getReplCoord()->setFollowerMode(MemberState::RS_SECONDARY));
+
+        simulateEnoughHeartbeatsForElectability();
+        simulateSuccessfulDryRun();
+
+        NetworkInterfaceMock* net = getNet();
+        net->enterNetwork();
+        while (net->hasReadyRequests()) {
+            const NetworkInterfaceMock::NetworkOperationIterator noi = net->getNextReadyRequest();
+            const RemoteCommandRequest& request = noi->getRequest();
+            log() << request.target.toString() << " processing " << request.cmdObj;
+            if (request.cmdObj.firstElement().fieldNameStringData() != "replSetRequestVotes") {
+                net->blackHole(noi);
+            }
+            else {
+                net->scheduleResponse(
+                        noi,
+                        net->now(),
+                        makeResponseStatus(BSON("ok" << 1 <<
+                                                "term" << request.cmdObj["term"].Long() + 1 <<
+                                                "voteGranted" << false <<
+                                                "reason" << "quit living in the past")));
+            }
+            net->runReadyNetworkOperations();
+        }
+        net->exitNetwork();
+        stopCapturingLogMessages();
+        ASSERT_EQUALS(1,
+                countLogLinesContaining("not becoming primary, we have been superceded already"));
+    }
+
+    TEST_F(ReplCoordElectV1Test, ElectTermChangeDuringDryRun) {
+        startCapturingLogMessages();
+        BSONObj configObj = BSON("_id" << "mySet" <<
+                                 "version" << 1 <<
+                                 "members" << BSON_ARRAY(BSON("_id" << 1 << "host" << "node1:12345")
+                                                      << BSON("_id" << 2 << "host" << "node2:12345")
+                                                      << BSON("_id" << 3 << "host" << "node3:12345")
+                                                        ) <<
+                                 "protocolVersion" << 1);
+        assertStartSuccess(configObj, HostAndPort("node1", 12345));
+        ReplicaSetConfig config = assertMakeRSConfig(configObj);
+
+        OperationContextNoop txn;
+        OpTime time1(Timestamp(100, 1), 0);
+        getReplCoord()->setMyLastOptime(time1);
+        ASSERT(getReplCoord()->setFollowerMode(MemberState::RS_SECONDARY));
+
+        simulateEnoughHeartbeatsForElectability();
+        // update to a future term before dry run completes
+        getReplCoord()->updateTerm(1000);
+        simulateSuccessfulDryRun();
+        stopCapturingLogMessages();
+        ASSERT_EQUALS(1,
+                countLogLinesContaining(
+                    "not running for primary, we have been superceded already"));
+    }
+
+    TEST_F(ReplCoordElectV1Test, ElectTermChangeDuringActualElection) {
+        startCapturingLogMessages();
+        BSONObj configObj = BSON("_id" << "mySet" <<
+                                 "version" << 1 <<
+                                 "members" << BSON_ARRAY(BSON("_id" << 1 << "host" << "node1:12345")
+                                                      << BSON("_id" << 2 << "host" << "node2:12345")
+                                                      << BSON("_id" << 3 << "host" << "node3:12345")
+                                                        ) <<
+                                 "protocolVersion" << 1);
+        assertStartSuccess(configObj, HostAndPort("node1", 12345));
+        ReplicaSetConfig config = assertMakeRSConfig(configObj);
+
+        OperationContextNoop txn;
+        OpTime time1(Timestamp(100, 1), 0);
+        getReplCoord()->setMyLastOptime(time1);
+        ASSERT(getReplCoord()->setFollowerMode(MemberState::RS_SECONDARY));
+
+        simulateEnoughHeartbeatsForElectability();
+        simulateSuccessfulDryRun();
+        // update to a future term before the election completes
+        getReplCoord()->updateTerm(1000);
+
+        NetworkInterfaceMock* net = getNet();
+        net->enterNetwork();
+        while (net->hasReadyRequests()) {
+            const NetworkInterfaceMock::NetworkOperationIterator noi = net->getNextReadyRequest();
+            const RemoteCommandRequest& request = noi->getRequest();
+            log() << request.target.toString() << " processing " << request.cmdObj;
+            if (request.cmdObj.firstElement().fieldNameStringData() != "replSetRequestVotes") {
+                net->blackHole(noi);
+            }
+            else {
+                net->scheduleResponse(
+                        noi,
+                        net->now(),
+                        makeResponseStatus(BSON("ok" << 1 <<
+                                                "term" << request.cmdObj["term"].Long() <<
+                                                "voteGranted" << true <<
+                                                "reason" << "")));
+            }
+            net->runReadyNetworkOperations();
+        }
+        net->exitNetwork();
+        stopCapturingLogMessages();
+        ASSERT_EQUALS(1,
+                countLogLinesContaining("not becoming primary, we have been superceded already"));
     }
 
 }

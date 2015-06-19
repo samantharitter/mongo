@@ -80,7 +80,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::string;
     using std::vector;
@@ -166,7 +166,7 @@ namespace mongo {
         // Filter index catalog if index filters are specified for query.
         // Also, signal to planner that application hint should be ignored.
         if (querySettings->getAllowedIndices(planCacheKey, &allowedIndicesRaw)) {
-            boost::scoped_ptr<AllowedIndices> allowedIndices(allowedIndicesRaw);
+            std::unique_ptr<AllowedIndices> allowedIndices(allowedIndicesRaw);
             filterAllowedIndexEntries(*allowedIndices, &plannerParams->indices);
             plannerParams->indexFiltersApplied = true;
         }
@@ -319,7 +319,7 @@ namespace mongo {
             if (PlanCache::shouldCacheQuery(*canonicalQuery) &&
                 collection->infoCache()->getPlanCache()->get(*canonicalQuery, &rawCS).isOK()) {
                 // We have a CachedSolution.  Have the planner turn it into a QuerySolution.
-                boost::scoped_ptr<CachedSolution> cs(rawCS);
+                std::unique_ptr<CachedSolution> cs(rawCS);
                 QuerySolution *qs;
                 Status status = QueryPlanner::planFromCache(*canonicalQuery, plannerParams, *cs,
                                                             &qs);
@@ -445,8 +445,8 @@ namespace mongo {
                        PlanExecutor::YieldPolicy yieldPolicy,
                        PlanExecutor** out,
                        size_t plannerOptions) {
-        auto_ptr<CanonicalQuery> canonicalQuery(rawCanonicalQuery);
-        auto_ptr<WorkingSet> ws(new WorkingSet());
+        unique_ptr<CanonicalQuery> canonicalQuery(rawCanonicalQuery);
+        unique_ptr<WorkingSet> ws(new WorkingSet());
         PlanStage* root;
         QuerySolution* querySolution;
         Status status = prepareExecution(txn, collection, ws.get(), canonicalQuery.get(),
@@ -534,7 +534,7 @@ namespace {
                              PlanExecutor** execOut) {
         invariant(collection);
         invariant(cq);
-        auto_ptr<CanonicalQuery> autoCq(cq);
+        unique_ptr<CanonicalQuery> autoCq(cq);
 
         // A query can only do oplog start finding if it has a top-level $gt or $gte predicate over
         // the "ts" field (the operation's timestamp). Find that predicate and pass it to
@@ -635,7 +635,7 @@ namespace {
         }
 
         size_t options = QueryPlannerParams::DEFAULT;
-        if (shardingState.needCollectionMetadata(nss.ns())) {
+        if (shardingState.needCollectionMetadata(txn->getClient(), nss.ns())) {
             options |= QueryPlannerParams::INCLUDE_SHARD_FILTER;
         }
         return getExecutor(txn, collection, cq.release(), PlanExecutor::YIELD_AUTO, out, options);
@@ -711,7 +711,7 @@ namespace {
         }
 
         bool userInitiatedWritesAndNotPrimary = txn->writesAreReplicated() &&
-            !repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(nss.db());
+            !repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nss);
 
         if (userInitiatedWritesAndNotPrimary) {
             return Status(ErrorCodes::NotMaster,
@@ -724,7 +724,7 @@ namespace {
         deleteStageParams.isExplain = request->isExplain();
         deleteStageParams.returnDeleted = request->shouldReturnDeleted();
 
-        auto_ptr<WorkingSet> ws(new WorkingSet());
+        unique_ptr<WorkingSet> ws(new WorkingSet());
         PlanExecutor::YieldPolicy policy = parsedDelete->canYield() ? PlanExecutor::YIELD_AUTO :
                                                                       PlanExecutor::YIELD_MANUAL;
 
@@ -769,7 +769,7 @@ namespace {
         }
 
         // This is the regular path for when we have a CanonicalQuery.
-        std::auto_ptr<CanonicalQuery> cq(parsedDelete->releaseParsedQuery());
+        std::unique_ptr<CanonicalQuery> cq(parsedDelete->releaseParsedQuery());
 
         PlanStage* rawRoot;
         QuerySolution* rawQuerySolution;
@@ -866,7 +866,7 @@ namespace {
         // however, then we make an exception and let the write proceed. In this case,
         // shouldCallLogOp() will be false.
         bool userInitiatedWritesAndNotPrimary = txn->writesAreReplicated() &&
-            !repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(nsString.db());
+            !repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nsString);
 
         if (userInitiatedWritesAndNotPrimary) {
             return Status(ErrorCodes::NotMaster,
@@ -882,7 +882,7 @@ namespace {
         PlanExecutor::YieldPolicy policy = parsedUpdate->canYield() ? PlanExecutor::YIELD_AUTO :
                                                                       PlanExecutor::YIELD_MANUAL;
 
-        auto_ptr<WorkingSet> ws(new WorkingSet());
+        unique_ptr<WorkingSet> ws(new WorkingSet());
         UpdateStageParams updateStageParams(request, driver, opDebug);
 
         if (!parsedUpdate->hasParsedQuery()) {
@@ -926,7 +926,7 @@ namespace {
         }
 
         // This is the regular path for when we have a CanonicalQuery.
-        std::auto_ptr<CanonicalQuery> cq(parsedUpdate->releaseParsedQuery());
+        std::unique_ptr<CanonicalQuery> cq(parsedUpdate->releaseParsedQuery());
 
         PlanStage* rawRoot;
         QuerySolution* rawQuerySolution;
@@ -988,7 +988,7 @@ namespace {
             return Status(ErrorCodes::BadValue, "server-side JavaScript execution is disabled");
         }
 
-        auto_ptr<WorkingSet> ws(new WorkingSet());
+        unique_ptr<WorkingSet> ws(new WorkingSet());
         PlanStage* root;
         QuerySolution* querySolution;
 
@@ -1011,7 +1011,7 @@ namespace {
         if (!canonicalizeStatus.isOK()) {
             return canonicalizeStatus;
         }
-        auto_ptr<CanonicalQuery> canonicalQuery(rawCanonicalQuery);
+        unique_ptr<CanonicalQuery> canonicalQuery(rawCanonicalQuery);
 
         const size_t defaultPlannerOptions = 0;
         Status status = prepareExecution(txn, collection, ws.get(), canonicalQuery.get(),
@@ -1213,9 +1213,11 @@ namespace {
     Status getExecutorCount(OperationContext* txn,
                             Collection* collection,
                             const CountRequest& request,
+                            bool explain,
                             PlanExecutor::YieldPolicy yieldPolicy,
                             PlanExecutor** execOut) {
-        auto_ptr<WorkingSet> ws(new WorkingSet());
+
+        unique_ptr<WorkingSet> ws(new WorkingSet());
         PlanStage* root;
         QuerySolution* querySolution;
 
@@ -1225,28 +1227,33 @@ namespace {
         // to create a child for the count stage in this case.
         //
         // If there is a hint, then we can't use a trival count plan as described above.
-        if (collection && request.query.isEmpty() && request.hint.isEmpty()) {
+        if (collection && request.getQuery().isEmpty() && request.getHint().isEmpty()) {
             root = new CountStage(txn, collection, request, ws.get(), NULL);
-            return PlanExecutor::make(txn, ws.release(), root, request.ns, yieldPolicy, execOut);
+            return PlanExecutor::make(txn,
+                                      ws.release(),
+                                      root,
+                                      request.getNs(),
+                                      yieldPolicy,
+                                      execOut);
         }
 
-        auto_ptr<CanonicalQuery> cq;
-        if (!request.query.isEmpty() || !request.hint.isEmpty()) {
+        unique_ptr<CanonicalQuery> cq;
+        if (!request.getQuery().isEmpty() || !request.getHint().isEmpty()) {
             // If query or hint is not empty, canonicalize the query before working with collection.
             typedef MatchExpressionParser::WhereCallback WhereCallback;
             CanonicalQuery* rawCq = NULL;
             Status canonStatus = CanonicalQuery::canonicalize(
-                request.ns,
-                request.query,
+                request.getNs(),
+                request.getQuery(),
                 BSONObj(), // sort
                 BSONObj(), // projection
                 0, // skip
                 0, // limit
-                request.hint,
+                request.getHint(),
                 BSONObj(), // min
                 BSONObj(), // max
                 false, // snapshot
-                request.explain,
+                explain,
                 &rawCq,
                 collection ?
                     static_cast<const WhereCallback&>(WhereCallbackReal(txn,
@@ -1263,7 +1270,12 @@ namespace {
             // reporting machinery always assumes that the root stage for a count operation is
             // a CountStage, so in this case we put a CountStage on top of an EOFStage.
             root = new CountStage(txn, collection, request, ws.get(), new EOFStage());
-            return PlanExecutor::make(txn, ws.release(), root, request.ns, yieldPolicy, execOut);
+            return PlanExecutor::make(txn,
+                                      ws.release(),
+                                      root,
+                                      request.getNs(),
+                                      yieldPolicy,
+                                      execOut);
         }
 
         invariant(cq.get());
@@ -1421,7 +1433,7 @@ namespace {
             return status;
         }
 
-        auto_ptr<CanonicalQuery> autoCq(cq);
+        unique_ptr<CanonicalQuery> autoCq(cq);
 
         // If there's no query, we can just distinct-scan one of the indices.
         // Not every index in plannerParams.indices may be suitable. Refer to

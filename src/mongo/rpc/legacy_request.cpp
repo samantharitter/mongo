@@ -41,12 +41,17 @@ namespace rpc {
     LegacyRequest::LegacyRequest(const Message *message)
         : _message(std::move(message))
         , _dbMessage(*message)
-        , _queryMessage(_dbMessage)
-        , _database(NamespaceString(_queryMessage.ns).db().toString()) {
+        , _queryMessage(_dbMessage) {
+
+        _database = nsToDatabaseSubstring(_queryMessage.ns);
+
+        uassert(ErrorCodes::InvalidNamespace,
+                str::stream() << "Invalid database name: '" << _database << "'",
+                NamespaceString::validDBName(_database));
 
         std::tie(_upconvertedCommandArgs, _upconvertedMetadata) = uassertStatusOK(
-            metadata::upconvertRequest(std::move(_queryMessage.query),
-                                       std::move(_queryMessage.queryOptions))
+            rpc::upconvertRequestMetadata(std::move(_queryMessage.query),
+                                          std::move(_queryMessage.queryOptions))
         );
     }
 
@@ -72,6 +77,10 @@ namespace rpc {
     DocumentRange LegacyRequest::getInputDocs() const {
         // return an empty document range.
         return DocumentRange{};
+    }
+
+    Protocol LegacyRequest::getProtocol() const {
+        return rpc::Protocol::kOpQuery;
     }
 
 }  // namespace rpc

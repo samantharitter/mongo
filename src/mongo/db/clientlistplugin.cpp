@@ -28,7 +28,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
 #include <boost/thread/locks.hpp>
 
 #include "mongo/bson/bsonobjbuilder.h"
@@ -47,7 +46,7 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
+    using std::unique_ptr;
     using std::string;
 
 namespace {
@@ -92,7 +91,7 @@ namespace {
                 invariant(client);
 
                 // Make the client stable
-                boost::unique_lock<Client> clientLock(*client);
+                stdx::lock_guard<Client> lk(*client);
                 const OperationContext* txn = client->getOperationContext();
                 if (!txn) continue;
 
@@ -101,8 +100,8 @@ namespace {
 
                 ss << "<tr><td>" << client->desc() << "</td>";
 
-                tablecell(ss, curOp->opNum());
-                tablecell(ss, curOp->active());
+                tablecell(ss, txn->getOpID());
+                tablecell(ss, true);
 
                 // LockState
                 {
@@ -115,12 +114,7 @@ namespace {
                     tablecell(ss, lockerInfoBuilder.obj());
                 }
 
-                if (curOp->active()) {
-                    tablecell(ss, curOp->elapsedSeconds());
-                }
-                else {
-                    tablecell(ss, "");
-                }
+                tablecell(ss, curOp->elapsedSeconds());
 
                 tablecell(ss, curOp->getOp());
                 tablecell(ss, html::escape(curOp->getNS()));
@@ -174,7 +168,7 @@ namespace {
                   string& errmsg,
                   BSONObjBuilder& result) {
 
-            scoped_ptr<MatchExpression> filter;
+            unique_ptr<MatchExpression> filter;
             if ( cmdObj["filter"].isABSONObj() ) {
                 StatusWithMatchExpression res =
                     MatchExpressionParser::parse( cmdObj["filter"].Obj() );
@@ -205,17 +199,19 @@ namespace {
                 BSONObjBuilder b;
 
                 // Make the client stable
-                boost::unique_lock<Client> clientLock(*client);
+                stdx::lock_guard<Client> lk(*client);
 
                 client->reportState(b);
 
                 const OperationContext* txn = client->getOperationContext();
+                b.appendBool("active", static_cast<bool>(txn));
                 if (txn) {
-
-                    // CurOp
-                    if (CurOp::get(txn)) {
-                        CurOp::get(txn)->reportState(&b);
+                    b.append("opid", txn->getOpID());
+                    if (txn->isKillPending()) {
+                        b.append("killPending", true);
                     }
+
+                    CurOp::get(txn)->reportState(&b);
 
                     // LockState
                     if (txn->lockState()) {

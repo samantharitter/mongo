@@ -26,17 +26,17 @@
  *    it in the license file.
  */
 
-#include <boost/thread.hpp>
 #include <string>
 
 #include "mongo/db/field_parser.h"
 #include "mongo/db/range_deleter.h"
 #include "mongo/db/range_deleter_mock_env.h"
 #include "mongo/db/repl/repl_settings.h"
-#include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/repl/replication_coordinator_mock.h"
+#include "mongo/db/service_context.h"
 #include "mongo/db/write_concern_options.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/unittest/unittest.h"
 
 namespace {
@@ -54,6 +54,8 @@ namespace {
     using mongo::RangeDeleterOptions;
     using mongo::OperationContext;
 
+    namespace stdx = mongo::stdx;
+
     OperationContext* const noTxn = NULL; // MockEnv doesn't need txn XXX SERVER-13931
 
     // Capped sleep interval is 640 mSec, Nyquist frequency is 1280 mSec => round up to 2 sec.
@@ -63,13 +65,14 @@ namespace {
 
     // Should not be able to queue deletes if deleter workers were not started.
     TEST(QueueDelete, CantAfterStop) {
-        boost::scoped_ptr<mongo::repl::ReplicationCoordinatorMock> mock(
-            new mongo::repl::ReplicationCoordinatorMock(replSettings));
-
-        mongo::repl::setGlobalReplicationCoordinator(mock.get());
-
         RangeDeleterMockEnv* env = new RangeDeleterMockEnv();
         RangeDeleter deleter(env);
+
+        std::unique_ptr<mongo::repl::ReplicationCoordinatorMock> mock(
+            new mongo::repl::ReplicationCoordinatorMock(replSettings));
+
+        mongo::repl::ReplicationCoordinator::set(mongo::getGlobalServiceContext(),
+                                                 std::move(mock));
 
         deleter.startWorkers();
         deleter.stopWorkers();
@@ -85,7 +88,6 @@ namespace {
         ASSERT_FALSE(errMsg.empty());
         ASSERT_FALSE(env->deleteOccured());
 
-        mongo::repl::setGlobalReplicationCoordinator(NULL);
     }
 
     // Should not start delete if the set of cursors that were open when the
@@ -93,13 +95,14 @@ namespace {
     TEST(QueuedDelete, ShouldWaitCursor) {
         const string ns("test.user");
 
-        boost::scoped_ptr<mongo::repl::ReplicationCoordinatorMock> mock(
-            new mongo::repl::ReplicationCoordinatorMock(replSettings));
-
-        mongo::repl::setGlobalReplicationCoordinator(mock.get());
-
         RangeDeleterMockEnv* env = new RangeDeleterMockEnv();
         RangeDeleter deleter(env);
+
+        std::unique_ptr<mongo::repl::ReplicationCoordinatorMock> mock(
+            new mongo::repl::ReplicationCoordinatorMock(replSettings));
+
+        mongo::repl::ReplicationCoordinator::set(mongo::getGlobalServiceContext(),
+                                                 std::move(mock));
 
         deleter.startWorkers();
 
@@ -137,20 +140,20 @@ namespace {
 
         deleter.stopWorkers();
 
-        mongo::repl::setGlobalReplicationCoordinator(NULL);
     }
 
     // Should terminate when stop is requested.
     TEST(QueuedDelete, StopWhileWaitingCursor) {
         const string ns("test.user");
 
-        boost::scoped_ptr<mongo::repl::ReplicationCoordinatorMock> mock(
-            new mongo::repl::ReplicationCoordinatorMock(replSettings));
-
-        mongo::repl::setGlobalReplicationCoordinator(mock.get());
-
         RangeDeleterMockEnv* env = new RangeDeleterMockEnv();
         RangeDeleter deleter(env);
+
+        std::unique_ptr<mongo::repl::ReplicationCoordinatorMock> mock(
+            new mongo::repl::ReplicationCoordinatorMock(replSettings));
+
+        mongo::repl::ReplicationCoordinator::set(mongo::getGlobalServiceContext(),
+                                                 std::move(mock));
 
         deleter.startWorkers();
 
@@ -173,7 +176,6 @@ namespace {
         deleter.stopWorkers();
         ASSERT_FALSE(env->deleteOccured());
 
-        mongo::repl::setGlobalReplicationCoordinator(NULL);
     }
 
     static void rangeDeleterDeleteNow(RangeDeleter* deleter,
@@ -188,13 +190,14 @@ namespace {
     TEST(ImmediateDelete, ShouldWaitCursor) {
         const string ns("test.user");
 
-        boost::scoped_ptr<mongo::repl::ReplicationCoordinatorMock> mock(
-            new mongo::repl::ReplicationCoordinatorMock(replSettings));
-
-        mongo::repl::setGlobalReplicationCoordinator(mock.get());
-
         RangeDeleterMockEnv* env = new RangeDeleterMockEnv();
         RangeDeleter deleter(env);
+
+        std::unique_ptr<mongo::repl::ReplicationCoordinatorMock> mock(
+            new mongo::repl::ReplicationCoordinatorMock(replSettings));
+
+        mongo::repl::ReplicationCoordinator::set(mongo::getGlobalServiceContext(),
+                                                 std::move(mock));
 
         deleter.startWorkers();
 
@@ -206,7 +209,7 @@ namespace {
                                                    BSON("x" << 10),
                                                    BSON("x" << 1)));
         deleterOption.waitForOpenCursors = true;
-        boost::thread deleterThread = boost::thread(mongo::stdx::bind(
+        stdx::thread deleterThread = stdx::thread(mongo::stdx::bind(
                                                             rangeDeleterDeleteNow,
                                                             &deleter,
                                                             noTxn,
@@ -238,20 +241,20 @@ namespace {
 
         deleter.stopWorkers();
 
-        mongo::repl::setGlobalReplicationCoordinator(NULL);
     }
 
     // Should terminate when stop is requested.
     TEST(ImmediateDelete, StopWhileWaitingCursor) {
         const string ns("test.user");
 
-        boost::scoped_ptr<mongo::repl::ReplicationCoordinatorMock> mock(
-            new mongo::repl::ReplicationCoordinatorMock(replSettings));
-
-        mongo::repl::setGlobalReplicationCoordinator(mock.get());
-
         RangeDeleterMockEnv* env = new RangeDeleterMockEnv();
         RangeDeleter deleter(env);
+
+        std::unique_ptr<mongo::repl::ReplicationCoordinatorMock> mock(
+            new mongo::repl::ReplicationCoordinatorMock(replSettings));
+
+        mongo::repl::ReplicationCoordinator::set(mongo::getGlobalServiceContext(),
+                                                 std::move(mock));
 
         deleter.startWorkers();
 
@@ -263,7 +266,7 @@ namespace {
                                                    BSON("x" << 10),
                                                    BSON("x" << 1)));
         deleterOption.waitForOpenCursors = true;
-        boost::thread deleterThread = boost::thread(mongo::stdx::bind(
+        stdx::thread deleterThread = stdx::thread(mongo::stdx::bind(
                                                             rangeDeleterDeleteNow,
                                                             &deleter,
                                                             noTxn,
@@ -285,7 +288,6 @@ namespace {
 
         ASSERT_FALSE(env->deleteOccured());
 
-        mongo::repl::setGlobalReplicationCoordinator(NULL);
     }
 
     // Tests the interaction of multiple deletes queued with different states.
@@ -297,13 +299,14 @@ namespace {
         const string blockedNS("foo.bar");
         const string ns("test.user");
 
-        boost::scoped_ptr<mongo::repl::ReplicationCoordinatorMock> mock(
-            new mongo::repl::ReplicationCoordinatorMock(replSettings));
-
-        mongo::repl::setGlobalReplicationCoordinator(mock.get());
-
         RangeDeleterMockEnv* env = new RangeDeleterMockEnv();
         RangeDeleter deleter(env);
+
+        std::unique_ptr<mongo::repl::ReplicationCoordinatorMock> mock(
+            new mongo::repl::ReplicationCoordinatorMock(replSettings));
+
+        mongo::repl::ReplicationCoordinator::set(mongo::getGlobalServiceContext(),
+                                                 std::move(mock));
 
         deleter.startWorkers();
 
@@ -401,7 +404,6 @@ namespace {
 
         deleter.stopWorkers();
 
-        mongo::repl::setGlobalReplicationCoordinator(NULL);
     }
 
 } // unnamed namespace

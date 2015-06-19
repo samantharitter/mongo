@@ -30,8 +30,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/shared_ptr.hpp>
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/db/audit.h"
 #include "mongo/db/auth/action_set.h"
@@ -44,6 +42,7 @@
 #include "mongo/s/catalog/catalog_cache.h"
 #include "mongo/s/chunk_manager.h"
 #include "mongo/s/client/shard_connection.h"
+#include "mongo/s/client/shard_registry.h"
 #include "mongo/s/config.h"
 #include "mongo/s/grid.h"
 #include "mongo/util/log.h"
@@ -51,8 +50,8 @@
 
 namespace mongo {
 
-    using boost::shared_ptr;
-    using boost::scoped_ptr;
+    using std::shared_ptr;
+    using std::unique_ptr;
     using std::string;
 
 namespace {
@@ -113,7 +112,7 @@ namespace {
 
             const NamespaceString nss(parseNs(dbname, cmdObj));
 
-            boost::shared_ptr<DBConfig> config;
+            std::shared_ptr<DBConfig> config;
 
             {
                 if (nss.size() == 0) {
@@ -145,8 +144,8 @@ namespace {
                 return false;
             }
 
-            Shard to = Shard::findIfExists(toString);
-            if (!to.ok()) {
+            const auto to = grid.shardRegistry()->getShard(toString);
+            if (!to) {
                 string msg(str::stream() <<
                            "Could not move chunk in '" << nss.ns() <<
                            "' to shard '" << toString <<
@@ -221,11 +220,12 @@ namespace {
                 }
             }
 
-            const Shard& from = chunk->getShard();
-
-            if (from == to) {
-                errmsg = "that chunk is already on that shard";
-                return false;
+            {
+                const auto from = grid.shardRegistry()->getShard(chunk->getShardId());
+                if (from->getId() == to->getId()) {
+                    errmsg = "that chunk is already on that shard";
+                    return false;
+                }
             }
 
             LOG(0) << "CMD: movechunk: " << cmdObj;
@@ -237,7 +237,7 @@ namespace {
                 return false;
             }
 
-            scoped_ptr<WriteConcernOptions> writeConcern(new WriteConcernOptions());
+            unique_ptr<WriteConcernOptions> writeConcern(new WriteConcernOptions());
 
             Status status = writeConcern->parseSecondaryThrottle(cmdObj, NULL);
             if (!status.isOK()){
@@ -251,7 +251,7 @@ namespace {
             }
 
             BSONObj res;
-            if (!chunk->moveAndCommit(to,
+            if (!chunk->moveAndCommit(to->getId(),
                                       maxChunkSizeBytes,
                                       writeConcern.get(),
                                       cmdObj["_waitForDelete"].trueValue(),

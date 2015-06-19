@@ -30,7 +30,6 @@
 
 #include "mongo/db/exec/pipeline_proxy.h"
 
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/db/pipeline/document_source.h"
 #include "mongo/db/pipeline/expression_context.h"
@@ -38,11 +37,13 @@
 namespace mongo {
 
     using boost::intrusive_ptr;
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::vector;
 
+    const char* PipelineProxyStage::kStageType = "PIPELINE_PROXY";
+
     PipelineProxyStage::PipelineProxyStage(intrusive_ptr<Pipeline> pipeline,
-                                           const boost::shared_ptr<PlanExecutor>& child,
+                                           const std::shared_ptr<PlanExecutor>& child,
                                            WorkingSet* ws)
         : _pipeline(pipeline)
         , _includeMetaData(_pipeline->getContext()->inShard) // send metadata to merger
@@ -91,7 +92,7 @@ namespace mongo {
                                         const RecordId& dl,
                                         InvalidationType type) {
         // propagate to child executor if still in use
-        if (boost::shared_ptr<PlanExecutor> exec = _childExec.lock()) {
+        if (std::shared_ptr<PlanExecutor> exec = _childExec.lock()) {
             exec->invalidate(txn, dl, type);
         }
     }
@@ -112,6 +113,13 @@ namespace mongo {
     vector<PlanStage*> PipelineProxyStage::getChildren() const {
         vector<PlanStage*> empty;
         return empty;
+    }
+
+    PlanStageStats* PipelineProxyStage::getStats() {
+        std::unique_ptr<PlanStageStats> ret(new PlanStageStats(CommonStats(kStageType),
+                                                               STAGE_PIPELINE_PROXY));
+        ret->specific.reset(new CollectionScanStats());
+        return ret.release();
     }
 
     boost::optional<BSONObj> PipelineProxyStage::getNextBson() {

@@ -159,7 +159,7 @@ namespace QueryStageIxscan {
             // Make the {x: 1} index multikey by inserting a doc where 'x' is an array.
             insert(fromjson("{_id: 1, x: [1, 2, 3]}"));
 
-            std::auto_ptr<IndexScan> ixscan(
+            std::unique_ptr<IndexScan> ixscan(
                 createIndexScanSimpleRange(BSON("x" << 1), BSON("x" << 3)));
 
             // Verify that SpecificStats of 'ixscan' have been properly initialized.
@@ -181,7 +181,7 @@ namespace QueryStageIxscan {
             insert(fromjson("{_id: 2, x: 6}"));
             insert(fromjson("{_id: 3, x: 12}"));
 
-            boost::scoped_ptr<IndexScan> ixscan(createIndexScan(BSON("x" << 5),
+            std::unique_ptr<IndexScan> ixscan(createIndexScan(BSON("x" << 5),
                                                                 BSON("x" << 10),
                                                                 true,
                                                                 true));
@@ -220,7 +220,7 @@ namespace QueryStageIxscan {
             insert(fromjson("{_id: 2, x: 6}"));
             insert(fromjson("{_id: 3, x: 10}"));
 
-            boost::scoped_ptr<IndexScan> ixscan(createIndexScan(BSON("x" << 5),
+            std::unique_ptr<IndexScan> ixscan(createIndexScan(BSON("x" << 5),
                                                                 BSON("x" << 10),
                                                                 false,
                                                                 false));
@@ -255,7 +255,7 @@ namespace QueryStageIxscan {
             insert(fromjson("{_id: 2, x: 6}"));
             insert(fromjson("{_id: 3, x: 12}"));
 
-            boost::scoped_ptr<IndexScan> ixscan(createIndexScan(BSON("x" << 5),
+            std::unique_ptr<IndexScan> ixscan(createIndexScan(BSON("x" << 5),
                                                                 BSON("x" << 10),
                                                                 false,
                                                                 false));
@@ -287,7 +287,7 @@ namespace QueryStageIxscan {
             insert(fromjson("{_id: 2, x: 8}"));
             insert(fromjson("{_id: 3, x: 3}"));
 
-            boost::scoped_ptr<IndexScan> ixscan(createIndexScan(BSON("x" << 10),
+            std::unique_ptr<IndexScan> ixscan(createIndexScan(BSON("x" << 10),
                                                                 BSON("x" << 5),
                                                                 true,
                                                                 true,

@@ -32,7 +32,6 @@
 
 #include "mongo/db/commands/dbhash.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/database.h"
@@ -47,8 +46,8 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::unique_ptr;
     using std::list;
     using std::endl;
     using std::set;
@@ -79,7 +78,7 @@ namespace mongo {
                                           Database* db,
                                           const std::string& fullCollectionName,
                                           bool* fromCache) {
-        boost::unique_lock<boost::mutex> cachedHashedLock(_cachedHashedMutex, boost::defer_lock);
+        stdx::unique_lock<stdx::mutex> cachedHashedLock(_cachedHashedMutex, stdx::defer_lock);
 
         if ( isCachable( fullCollectionName ) ) {
             cachedHashedLock.lock();
@@ -97,7 +96,7 @@ namespace mongo {
 
         IndexDescriptor* desc = collection->getIndexCatalog()->findIdIndex( opCtx );
 
-        auto_ptr<PlanExecutor> exec;
+        unique_ptr<PlanExecutor> exec;
         if ( desc ) {
             exec.reset(InternalPlanner::indexScan(opCtx,
                                                   collection,
@@ -233,7 +232,7 @@ namespace mongo {
 
         }
         void commit() {
-            boost::lock_guard<boost::mutex> lk( _dCmd->_cachedHashedMutex );
+            stdx::lock_guard<stdx::mutex> lk( _dCmd->_cachedHashedMutex );
             _dCmd->_cachedHashed.erase(_ns);
         }
         void rollback() { }

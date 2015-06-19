@@ -30,10 +30,8 @@
 
 #include "mongo/util/fail_point.h"
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread.hpp>
-
 #include "mongo/platform/random.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/concurrency/threadlocal.h"
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
@@ -49,7 +47,7 @@ namespace {
     class FailPointPRNG {
     public:
         FailPointPRNG() :
-            _prng(boost::scoped_ptr<SecureRandom>(SecureRandom::create())->nextInt64()) {}
+            _prng(std::unique_ptr<SecureRandom>(SecureRandom::create())->nextInt64()) {}
 
         void resetSeed(int32_t seed) {
             _prng = PseudoRandom(seed);
@@ -96,7 +94,7 @@ namespace {
          * 3. Sets the new mode.
          */
 
-        boost::lock_guard<boost::mutex> scoped(_modMutex);
+        stdx::lock_guard<stdx::mutex> scoped(_modMutex);
 
         // Step 1
         disableFailPoint();
@@ -189,7 +187,7 @@ namespace {
     BSONObj FailPoint::toBSON() const {
         BSONObjBuilder builder;
 
-        boost::lock_guard<boost::mutex> scoped(_modMutex);
+        stdx::lock_guard<stdx::mutex> scoped(_modMutex);
         builder.append("mode", _mode);
         builder.append("data", _data);
 

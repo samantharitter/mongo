@@ -28,12 +28,11 @@
 
 #pragma once
 
-#include <boost/shared_ptr.hpp>
-#include <boost/thread/mutex.hpp>
 #include <map>
 #include <string>
 
 #include "mongo/base/disallow_copying.h"
+#include "mongo/stdx/mutex.h"
 
 namespace mongo {
 
@@ -61,7 +60,7 @@ namespace mongo {
          * @param dbname The name of the database (must not contain dots, etc).
          * @return The database if it exists, NULL otherwise.
          */
-        StatusWith<boost::shared_ptr<DBConfig>> getDatabase(const std::string& dbName);
+        StatusWith<std::shared_ptr<DBConfig>> getDatabase(const std::string& dbName);
 
         /**
          * Removes the database information for the specified name from the cache, so that the
@@ -75,14 +74,14 @@ namespace mongo {
         void invalidateAll();
 
     private:
-        typedef std::map<std::string, boost::shared_ptr<DBConfig>> ShardedDatabasesMap;
+        typedef std::map<std::string, std::shared_ptr<DBConfig>> ShardedDatabasesMap;
 
 
         // Reference to the catalog manager. Not owned.
         CatalogManager* const _catalogManager;
 
         // Databases catalog map and mutex to protect it
-        boost::mutex _mutex;
+        stdx::mutex _mutex;
         ShardedDatabasesMap _databases;
     };
 

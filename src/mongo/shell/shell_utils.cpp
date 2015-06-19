@@ -196,10 +196,11 @@ namespace mongo {
             uassert(17134, "replMonitorStats requires a single string argument (the ReplSet name)",
                     a.nFields() == 1 && a.firstElement().type() == String);
 
-            ReplicaSetMonitorPtr rsm = ReplicaSetMonitor::get(a.firstElement().valuestrsafe(),true);
+            ReplicaSetMonitorPtr rsm = ReplicaSetMonitor::get(a.firstElement().valuestrsafe());
             if (!rsm) {
                 return BSON("" << "no ReplSetMonitor exists by that name");
             }
+
             BSONObjBuilder result;
             rsm->appendInfo(result);
             return result.obj();
@@ -295,14 +296,14 @@ namespace mongo {
             BSONObj info;
             if ( client.runCommand( "admin", BSON( "whatsmyuri" << 1 ), info ) ) {
                 string connstr = dynamic_cast<DBClientBase&>( client ).getServerAddress();
-                boost::lock_guard<boost::mutex> lk( _mutex );
+                stdx::lock_guard<stdx::mutex> lk( _mutex );
                 _connectionUris[ connstr ].insert( info[ "you" ].str() );
-            }            
+            }
         }
 
         void ConnectionRegistry::killOperationsOnAllConnections( bool withPrompt ) const {
             Prompter prompter( "do you want to kill the current op(s) on the server?" );
-            boost::lock_guard<boost::mutex> lk( _mutex );
+            stdx::lock_guard<stdx::mutex> lk( _mutex );
             for( map<string,set<string> >::const_iterator i = _connectionUris.begin();
                 i != _connectionUris.end(); ++i ) {
 
@@ -314,7 +315,7 @@ namespace mongo {
                 const ConnectionString cs(status.getValue());
 
                 string errmsg;
-                boost::scoped_ptr<DBClientWithCommands> conn( cs.connect( errmsg ) );
+                std::unique_ptr<DBClientWithCommands> conn( cs.connect( errmsg ) );
                 if ( !conn ) {
                     continue;
                 }
@@ -370,6 +371,6 @@ namespace mongo {
         }
 
 
-        mongo::mutex &mongoProgramOutputMutex(*(new boost::mutex()));
+        mongo::mutex &mongoProgramOutputMutex(*(new stdx::mutex()));
     }
 }

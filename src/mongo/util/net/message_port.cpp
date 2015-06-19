@@ -33,7 +33,6 @@
 
 #include "mongo/util/net/message_port.h"
 
-#include <boost/shared_ptr.hpp>
 #include <fcntl.h>
 #include <time.h>
 
@@ -58,7 +57,7 @@
 
 namespace mongo {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::string;
 
 // if you want trace output:
@@ -118,7 +117,7 @@ namespace mongo {
     public:
         Ports() : ports() {}
         void closeAll(unsigned skip_mask) {
-            boost::lock_guard<boost::mutex> bl(m);
+            stdx::lock_guard<stdx::mutex> bl(m);
             for ( std::set<MessagingPort*>::iterator i = ports.begin(); i != ports.end(); i++ ) {
                 if( (*i)->tag & skip_mask )
                     continue;
@@ -126,11 +125,11 @@ namespace mongo {
             }
         }
         void insert(MessagingPort* p) {
-            boost::lock_guard<boost::mutex> bl(m);
+            stdx::lock_guard<stdx::mutex> bl(m);
             ports.insert(p);
         }
         void erase(MessagingPort* p) {
-            boost::lock_guard<boost::mutex> bl(m);
+            stdx::lock_guard<stdx::mutex> bl(m);
             ports.erase(p);
         }
     };
@@ -154,7 +153,7 @@ namespace mongo {
         piggyBackData = 0;
     }
 
-    MessagingPort::MessagingPort( boost::shared_ptr<Socket> sock )
+    MessagingPort::MessagingPort( std::shared_ptr<Socket> sock )
         : psock( sock ), piggyBackData( 0 ) {
         ports.insert(this);
     }
@@ -278,7 +277,7 @@ again:
                 mmm( log() << "recv not ok" << endl; )
                 return false;
             }
-            //log() << "got response: " << response.data->responseTo << endl;
+
             if ( response.header().getResponseTo() == toSend.header().getId() )
                 break;
             error() << "MessagingPort::call() wrong id got:"

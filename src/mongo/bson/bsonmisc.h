@@ -204,7 +204,8 @@ namespace mongo {
     // definitions in bsonobjbuilder.h b/c of incomplete types
 
     // Utility class to implement BSON( key << val ) as described above.
-    class BSONObjBuilderValueStream : public boost::noncopyable {
+    class BSONObjBuilderValueStream {
+        MONGO_DISALLOW_COPYING(BSONObjBuilderValueStream);
     public:
         friend class Labeler;
         BSONObjBuilderValueStream( BSONObjBuilder * builder );
@@ -241,7 +242,7 @@ namespace mongo {
 
         bool haveSubobj() const { return _subobj.get() != 0; }
         BSONObjBuilder *subobj();
-        std::auto_ptr< BSONObjBuilder > _subobj;
+        std::unique_ptr< BSONObjBuilder > _subobj;
     };
 
     /**

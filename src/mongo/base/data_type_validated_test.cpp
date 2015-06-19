@@ -97,36 +97,4 @@ namespace {
         }
     }
 
-    TEST(DataTypeValidated, BSONValidation) {
-
-        using std::begin;
-
-        BSONObj valid = BSON("foo" << "bar");
-        char buf[1024] = { 0 };
-        std::copy(valid.objdata(), valid.objdata() + valid.objsize(), begin(buf));
-
-        {
-            Validated<BSONObj> v;
-            ConstDataRangeCursor cdrc(begin(buf), end(buf));
-            ASSERT_OK(cdrc.readAndAdvance(&v));
-        }
-
-        {
-            // mess up the data
-            DataRangeCursor drc(begin(buf), end(buf));
-            auto maxIntLE = LittleEndian<int>(std::numeric_limits<int>::max());
-
-            drc.writeAndAdvance(maxIntLE);
-            drc.writeAndAdvance(maxIntLE);
-            drc.writeAndAdvance(maxIntLE);
-            drc.writeAndAdvance(maxIntLE);
-        }
-
-        {
-            Validated<BSONObj> v;
-            ConstDataRangeCursor cdrc(begin(buf), end(buf));
-            ASSERT_NOT_OK(cdrc.readAndAdvance(&v));
-        }
-    }
-
 }  // namespace

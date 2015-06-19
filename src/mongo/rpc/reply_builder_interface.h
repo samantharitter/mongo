@@ -32,6 +32,7 @@
 
 #include "mongo/base/disallow_copying.h"
 #include "mongo/base/status_with.h"
+#include "mongo/rpc/protocol.h"
 
 namespace mongo {
     class BSONObj;
@@ -110,6 +111,18 @@ namespace rpc {
          * code that manipulates the builder more readable.
          */
         virtual State getState() const = 0;
+
+        /**
+         * Gets the protocol used to serialize this reply. This should be used for validity checks
+         * only - runtime behavior changes should be implemented with polymorphism.
+         */
+        virtual Protocol getProtocol() const = 0;
+
+        /**
+         * Resets the state of the builder to kMetadata and clears any data that was previously
+         * written.
+         */
+        virtual void reset() = 0;
 
         /**
          * Writes data then transfers ownership of the message to the caller. The behavior of

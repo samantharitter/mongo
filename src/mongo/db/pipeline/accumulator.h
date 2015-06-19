@@ -32,6 +32,7 @@
 
 #include <boost/intrusive_ptr.hpp>
 #include <boost/unordered_set.hpp>
+#include <vector>
 
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/pipeline/value.h"
@@ -39,6 +40,8 @@
 namespace mongo {
     class Accumulator : public RefCountable {
     public:
+        Accumulator() = default;
+
         /** Process input and update internal state.
          *  merging should be true when processing outputs from getValue(true).
          */
@@ -63,18 +66,18 @@ namespace mongo {
         virtual void reset() = 0;
 
     protected:
-        Accumulator() : _memUsageBytes(0) {}
-
         /// Update subclass's internal state based on input
         virtual void processInternal(const Value& input, bool merging) = 0;
 
         /// subclasses are expected to update this as necessary
-        int _memUsageBytes;
+        int _memUsageBytes = 0;
     };
 
 
     class AccumulatorAddToSet final : public Accumulator {
     public:
+        AccumulatorAddToSet();
+
         void processInternal(const Value& input, bool merging) final;
         Value getValue(bool toBeMerged) const final;
         const char* getOpName() const final;
@@ -83,7 +86,6 @@ namespace mongo {
         static boost::intrusive_ptr<Accumulator> create();
 
     private:
-        AccumulatorAddToSet();
         typedef boost::unordered_set<Value, Value::Hash> SetType;
         SetType set;
     };
@@ -91,6 +93,8 @@ namespace mongo {
 
     class AccumulatorFirst final : public Accumulator {
     public:
+        AccumulatorFirst();
+
         void processInternal(const Value& input, bool merging) final;
         Value getValue(bool toBeMerged) const final;
         const char* getOpName() const final;
@@ -99,8 +103,6 @@ namespace mongo {
         static boost::intrusive_ptr<Accumulator> create();
 
     private:
-        AccumulatorFirst();
-
         bool _haveFirst;
         Value _first;
     };
@@ -108,6 +110,8 @@ namespace mongo {
 
     class AccumulatorLast final : public Accumulator {
     public:
+        AccumulatorLast();
+
         void processInternal(const Value& input, bool merging) final;
         Value getValue(bool toBeMerged) const final;
         const char* getOpName() const final;
@@ -116,13 +120,14 @@ namespace mongo {
         static boost::intrusive_ptr<Accumulator> create();
 
     private:
-        AccumulatorLast();
         Value _last;
     };
 
 
     class AccumulatorSum final : public Accumulator {
     public:
+        AccumulatorSum();
+
         void processInternal(const Value& input, bool merging) final;
         Value getValue(bool toBeMerged) const final;
         const char* getOpName() const final;
@@ -131,8 +136,6 @@ namespace mongo {
         static boost::intrusive_ptr<Accumulator> create();
 
     private:
-        AccumulatorSum();
-
         BSONType totalType;
         long long longTotal;
         double doubleTotal;
@@ -141,6 +144,13 @@ namespace mongo {
 
     class AccumulatorMinMax final : public Accumulator {
     public:
+        enum Sense : int {
+            MIN = 1,
+            MAX = -1,  // Used to "scale" comparison.
+        };
+
+        explicit AccumulatorMinMax(Sense sense);
+
         void processInternal(const Value& input, bool merging) final;
         Value getValue(bool toBeMerged) const final;
         const char* getOpName() const final;
@@ -150,15 +160,15 @@ namespace mongo {
         static boost::intrusive_ptr<Accumulator> createMax();
 
     private:
-        AccumulatorMinMax(int theSense);
-
         Value _val;
-        const int _sense; /* 1 for min, -1 for max; used to "scale" comparison */
+        const Sense _sense;
     };
 
 
     class AccumulatorPush final : public Accumulator {
     public:
+        AccumulatorPush();
+
         void processInternal(const Value& input, bool merging) final;
         Value getValue(bool toBeMerged) const final;
         const char* getOpName() const final;
@@ -167,14 +177,14 @@ namespace mongo {
         static boost::intrusive_ptr<Accumulator> create();
 
     private:
-        AccumulatorPush();
-
         std::vector<Value> vpValue;
     };
 
 
     class AccumulatorAvg final : public Accumulator {
     public:
+        AccumulatorAvg();
+
         void processInternal(const Value& input, bool merging) final;
         Value getValue(bool toBeMerged) const final;
         const char* getOpName() const final;
@@ -183,9 +193,27 @@ namespace mongo {
         static boost::intrusive_ptr<Accumulator> create();
 
     private:
-        AccumulatorAvg();
-
         double _total;
         long long _count;
+    };
+
+
+    class AccumulatorStdDev final : public Accumulator {
+    public:
+        explicit AccumulatorStdDev(bool isSamp);
+
+        void processInternal(const Value& input, bool merging) final;
+        Value getValue(bool toBeMerged) const final;
+        const char* getOpName() const final;
+        void reset() final;
+
+        static boost::intrusive_ptr<Accumulator> createSamp();
+        static boost::intrusive_ptr<Accumulator> createPop();
+
+    private:
+        const bool _isSamp;
+        long long _count;
+        double _mean;
+        double _m2; // Running sum of squares of delta from mean. Named to match algorithm.
     };
 }

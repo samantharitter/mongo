@@ -33,7 +33,6 @@
 #include "mongo/db/auth/authorization_manager.h"
 
 #include <boost/bind.hpp>
-#include <boost/thread/mutex.hpp>
 #include <memory>
 #include <string>
 #include <vector>
@@ -58,6 +57,7 @@
 #include "mongo/platform/compiler.h"
 #include "mongo/platform/unordered_map.h"
 #include "mongo/stdx/memory.h"
+#include "mongo/stdx/mutex.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
@@ -248,7 +248,7 @@ namespace mongo {
         OID _startGeneration;
         bool _isThisGuardInFetchPhase;
         AuthorizationManager* _authzManager;
-        boost::unique_lock<boost::mutex> _lock;
+        stdx::unique_lock<stdx::mutex> _lock;
     };
 
     AuthorizationManager::AuthorizationManager(
@@ -312,7 +312,7 @@ namespace mongo {
     }
 
     bool AuthorizationManager::hasAnyPrivilegeDocuments(OperationContext* txn) {
-        boost::unique_lock<boost::mutex> lk(_privilegeDocsExistMutex);
+        stdx::unique_lock<stdx::mutex> lk(_privilegeDocsExistMutex);
         if (_privilegeDocsExist) {
             // If we know that a user exists, don't re-check.
             return true;
@@ -464,7 +464,7 @@ namespace mongo {
             return Status::OK();
         }
 
-        std::auto_ptr<User> user;
+        std::unique_ptr<User> user;
 
         int authzVersion = _version;
         guard.beginFetchPhase();
@@ -530,16 +530,16 @@ namespace mongo {
 
     Status AuthorizationManager::_fetchUserV2(OperationContext* txn,
                                               const UserName& userName,
-                                              std::auto_ptr<User>* acquiredUser) {
+                                              std::unique_ptr<User>* acquiredUser) {
         BSONObj userObj;
         Status status = getUserDescription(txn, userName, &userObj);
         if (!status.isOK()) {
             return status;
         }
 
-        // Put the new user into an auto_ptr temporarily in case there's an error while
+        // Put the new user into an unique_ptr temporarily in case there's an error while
         // initializing the user.
-        std::auto_ptr<User> user(new User(userName));
+        std::unique_ptr<User> user(new User(userName));
 
         status = _initializeUserFromPrivilegeDocument(user.get(), userObj);
         if (!status.isOK()) {
@@ -715,12 +715,10 @@ namespace {
             // already checked that it's not the roles or version collection.
             invariant(ns == AuthorizationManager::usersCollectionNamespace.ns());
 
-            StatusWith<UserName> userName(Status::OK());
-            if (*op == 'u') {
-                userName = extractUserNameFromIdString((*o2)["_id"].str());
-            } else {
-                userName = extractUserNameFromIdString(o["_id"].str());
-            }
+            StatusWith<UserName> userName = (*op == 'u') ?
+                extractUserNameFromIdString((*o2)["_id"].str()) :
+                extractUserNameFromIdString(o["_id"].str());
+
             if (!userName.isOK()) {
                 warning() << "Invalidating user cache based on user being updated failed, will "
                         "invalidate the entire cache instead: " << userName.getStatus() << endl;

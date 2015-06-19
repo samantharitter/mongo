@@ -45,7 +45,7 @@
 
 namespace QueryStageTests {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
 
     class IndexScanBase {
     public:
@@ -78,7 +78,7 @@ namespace QueryStageTests {
 
             StatusWithMatchExpression swme = MatchExpressionParser::parse(filterObj);
             verify(swme.isOK());
-            auto_ptr<MatchExpression> filterExpr(swme.getValue());
+            unique_ptr<MatchExpression> filterExpr(swme.getValue());
 
             WorkingSet* ws = new WorkingSet();
 
@@ -90,7 +90,7 @@ namespace QueryStageTests {
                                                PlanExecutor::YIELD_MANUAL,
                                                &rawExec);
             ASSERT_OK(status);
-            boost::scoped_ptr<PlanExecutor> exec(rawExec);
+            std::unique_ptr<PlanExecutor> exec(rawExec);
 
             int count = 0;
             for (RecordId dl; PlanExecutor::ADVANCED == exec->getNext(NULL, &dl); ) {

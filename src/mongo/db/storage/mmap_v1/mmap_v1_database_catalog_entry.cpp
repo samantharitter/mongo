@@ -32,7 +32,6 @@
 
 #include "mongo/db/storage/mmap_v1/mmap_v1_database_catalog_entry.h"
 
-#include <boost/scoped_ptr.hpp>
 #include <utility>
 
 #include "mongo/db/catalog/index_catalog_entry.h"
@@ -56,8 +55,8 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::unique_ptr;
 
 namespace {
 
@@ -270,11 +269,9 @@ namespace {
         invariant( details );
 
         RecordStoreV1Base* systemIndexRecordStore = _getIndexRecordStore();
-        scoped_ptr<RecordIterator> it( systemIndexRecordStore->getIterator(txn) );
-
-        while ( !it->isEOF() ) {
-            RecordId loc = it->getNext();
-            BSONObj oldIndexSpec = it->dataFor( loc ).toBson();
+        auto cursor = systemIndexRecordStore->getCursor(txn);
+        while (auto record = cursor->next()) {
+            BSONObj oldIndexSpec = record->data.releaseToBson();
             if ( fromNS != oldIndexSpec["ns"].valuestrsafe() )
                 continue;
 
@@ -326,7 +323,7 @@ namespace {
                     return s;
             }
 
-            systemIndexRecordStore->deleteRecord( txn, loc );
+            systemIndexRecordStore->deleteRecord( txn, record->id );
         }
 
         return Status::OK();
@@ -381,12 +378,11 @@ namespace {
             BSONObj oldSpec;
             {
                 RecordStoreV1Base* rs = _getNamespaceRecordStore();
-                scoped_ptr<RecordIterator> it( rs->getIterator(txn) );
-                while ( !it->isEOF() ) {
-                    RecordId loc = it->getNext();
-                    BSONObj entry = it->dataFor( loc ).toBson();
+                auto cursor = rs->getCursor(txn);
+                while (auto record = cursor->next()) {
+                    BSONObj entry = record->data.releaseToBson();
                     if ( fromNS == entry["name"].String() ) {
-                        oldSpecLocation = loc;
+                        oldSpecLocation = record->id;
                         oldSpec = entry.getOwned();
                         break;
                     }
@@ -738,7 +734,7 @@ namespace {
                                                        _getIndexRecordStore(),
                                                        this));
 
-        auto_ptr<NamespaceDetailsRSV1MetaData> md(new NamespaceDetailsRSV1MetaData(ns, details));
+        unique_ptr<NamespaceDetailsRSV1MetaData> md(new NamespaceDetailsRSV1MetaData(ns, details));
         const NamespaceString nss(ns);
 
         if (details->isCapped) {
@@ -782,7 +778,7 @@ namespace {
         RecordStoreV1Base* rs = _getRecordStore(entry->descriptor()->indexNamespace());
         invariant(rs);
 
-        std::auto_ptr<SortedDataInterface> btree(
+        std::unique_ptr<SortedDataInterface> btree(
             getMMAPV1Interface(entry->headManager(),
                                rs,
                                &rs->savedCursors,
@@ -864,13 +860,12 @@ namespace {
         RecordStoreV1Base* rs = _getNamespaceRecordStore();
         invariant( rs );
 
-        scoped_ptr<RecordIterator> it( rs->getIterator(txn) );
-        while ( !it->isEOF() ) {
-            RecordId loc = it->getNext();
-            BSONObj entry = it->dataFor( loc ).toBson();
+        auto cursor = rs->getCursor(txn);
+        while (auto record = cursor->next()) {
+            BSONObj entry = record->data.releaseToBson();
             BSONElement name = entry["name"];
             if ( name.type() == String && name.String() == ns ) {
-                rs->deleteRecord( txn, loc );
+                rs->deleteRecord( txn, record->id );
                 break;
             }
         }
@@ -885,10 +880,9 @@ namespace {
         RecordStoreV1Base* rs = _getNamespaceRecordStore();
         invariant( rs );
 
-        scoped_ptr<RecordIterator> it( rs->getIterator(txn) );
-        while ( !it->isEOF() ) {
-            RecordId loc = it->getNext();
-            BSONObj entry = it->dataFor( loc ).toBson();
+        auto cursor = rs->getCursor(txn);
+        while (auto record = cursor->next()) {
+            BSONObj entry = record->data.releaseToBson();
             BSONElement name = entry["name"];
             if ( name.type() == String && name.String() == ns ) {
                 CollectionOptions options;

@@ -36,7 +36,6 @@ namespace mongo {
     struct HostAndPort;
     template<typename T> class StatusWith;
 
-
     /**
      * Interface encapsulating the targeting logic for a given replica set or a standalone host.
      */
@@ -48,8 +47,11 @@ namespace mongo {
         /**
          * Obtains a host, which matches the read preferences specified by readPref.
          *
-         * Returns OK and a host and port to use for the specified read preference. Otherwise may
-         *      return any ErrorCode.
+         * Returns OK and a host and port to use for the specified read preference or any
+         * ErrorCode. Known error codes are:
+         *      NotMaster if readPref is PrimaryOnly and there is no primary in the set
+         *      FailedToSatisfyReadPreference if it cannot find a node to match the read preference
+         *          and the readPref is anything other than PrimaryOnly
          */
         virtual StatusWith<HostAndPort> findHost(const ReadPreferenceSetting& readPref) = 0;
 

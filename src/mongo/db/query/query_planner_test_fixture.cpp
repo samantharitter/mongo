@@ -32,6 +32,7 @@
 
 #include "mongo/db/query/query_planner_test_fixture.h"
 
+#include "mongo/db/namespace_string.h"
 #include "mongo/db/matcher/expression_parser.h"
 #include "mongo/db/query/query_knobs.h"
 #include "mongo/db/query/query_planner.h"
@@ -40,7 +41,9 @@
 
 namespace mongo {
 
-    const char* QueryPlannerTest::ns = "somebogusns";
+    using unittest::assertGet;
+
+    const char* QueryPlannerTest::ns = "somebogus.ns";
 
     void QueryPlannerTest::setUp() {
         internalQueryPlannerEnableHashIntersection = true;
@@ -234,20 +237,18 @@ namespace mongo {
     void QueryPlannerTest::runQueryAsCommand(const BSONObj& cmdObj) {
         solns.clear();
 
-        std::unique_ptr<LiteParsedQuery> lpq;
-        {
-            LiteParsedQuery* rawLpq;
-            const bool isExplain = false;
-            Status lpqStatus = LiteParsedQuery::make(ns, cmdObj, isExplain, &rawLpq);
-            ASSERT_OK(lpqStatus);
-            lpq.reset(rawLpq);
+        const NamespaceString nss(ns);
+        invariant(nss.isValid());
 
-            CanonicalQuery* rawCq;
-            WhereCallbackNoop whereCallback;
-            Status canonStatus = CanonicalQuery::canonicalize(lpq.release(), &rawCq, whereCallback);
-            ASSERT_OK(canonStatus);
-            cq.reset(rawCq);
-        }
+        const bool isExplain = false;
+        std::unique_ptr<LiteParsedQuery> lpq(
+            assertGet(LiteParsedQuery::makeFromFindCommand(nss, cmdObj, isExplain)));
+
+        CanonicalQuery* rawCq;
+        WhereCallbackNoop whereCallback;
+        Status canonStatus = CanonicalQuery::canonicalize(lpq.release(), &rawCq, whereCallback);
+        ASSERT_OK(canonStatus);
+        cq.reset(rawCq);
 
         Status s = QueryPlanner::plan(*cq, params, &solns.mutableVector());
         ASSERT_OK(s);

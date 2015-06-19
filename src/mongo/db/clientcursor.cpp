@@ -33,7 +33,6 @@
 #include <vector>
 
 #include "mongo/base/counter.h"
-#include "mongo/client/dbclientinterface.h"
 #include "mongo/db/audit.h"
 #include "mongo/db/auth/action_set.h"
 #include "mongo/db/auth/action_type.h"
@@ -49,6 +48,7 @@
 #include "mongo/db/repl/repl_client_info.h"
 #include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/server_parameters.h"
+#include "mongo/util/background.h"
 #include "mongo/util/exit.h"
 
 namespace mongo {
@@ -293,9 +293,11 @@ namespace mongo {
             Timer t;
             const int Secs = 4;
             while (!inShutdown()) {
-                OperationContextImpl txn;
-                cursorStatsTimedOut.increment(
-                    CursorManager::timeoutCursorsGlobal(&txn, t.millisReset()));
+                {
+                    OperationContextImpl txn;
+                    cursorStatsTimedOut.increment(
+                            CursorManager::timeoutCursorsGlobal(&txn, t.millisReset()));
+                }
                 sleepsecs(Secs);
             }
         }

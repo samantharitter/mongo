@@ -33,7 +33,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::vector;
 
     // static
@@ -69,7 +69,7 @@ namespace mongo {
             ++_commonStats.advanced;
             return PlanStage::ADVANCED;
         }
-        else if (PlanStage::FAILURE == status) {
+        else if (PlanStage::FAILURE == status || PlanStage::DEAD == status) {
             *out = id;
             // If a stage fails, it may create a status WSM to indicate why it
             // failed, in which case 'id' is valid.  If ID is invalid, we
@@ -118,7 +118,7 @@ namespace mongo {
     PlanStageStats* SkipStage::getStats() {
         _commonStats.isEOF = isEOF();
         _specificStats.skip = _toSkip;
-        auto_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_SKIP));
+        unique_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_SKIP));
         ret->specific.reset(new SkipStats(_specificStats));
         ret->children.push_back(_child->getStats());
         return ret.release();

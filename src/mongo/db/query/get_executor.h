@@ -40,7 +40,7 @@
 namespace mongo {
 
     class Collection;
-    struct CountRequest;
+    class CountRequest;
 
     struct GroupRequest;
 
@@ -145,6 +145,7 @@ namespace mongo {
     Status getExecutorCount(OperationContext* txn,
                             Collection* collection,
                             const CountRequest& request,
+                            bool explain,
                             PlanExecutor::YieldPolicy yieldPolicy,
                             PlanExecutor** execOut);
 

@@ -30,9 +30,6 @@
 
 #include "mongo/util/net/sock.h"
 
-#include <boost/shared_ptr.hpp>
-#include <boost/thread.hpp>
-
 #ifndef _WIN32
 #include <netdb.h>
 #include <sys/socket.h>
@@ -40,6 +37,7 @@
 #endif
 
 #include "mongo/db/server_options.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/concurrency/synchronization.h"
 #include "mongo/util/fail_point_service.h"
@@ -47,9 +45,9 @@
 namespace {
 
     using namespace mongo;
-    using boost::shared_ptr;
+    using std::shared_ptr;
 
-    typedef boost::shared_ptr<Socket> SocketPtr;
+    typedef std::shared_ptr<Socket> SocketPtr;
     typedef std::pair<SocketPtr, SocketPtr> SocketPair;
 
     // On UNIX, make a connected pair of PF_LOCAL (aka PF_UNIX) sockets via the native 'socketpair'
@@ -148,12 +146,12 @@ namespace {
 
         Notification accepted;
         SOCKET acceptSock = INVALID_SOCKET;
-        boost::thread acceptor(
+        stdx::thread acceptor(
             stdx::bind(&detail::awaitAccept, &acceptSock, listenSock, boost::ref(accepted)));
 
         Notification connected;
         SOCKET connectSock = INVALID_SOCKET;
-        boost::thread connector(
+        stdx::thread connector(
             stdx::bind(&detail::awaitConnect, &connectSock, *connectRes, boost::ref(connected)));
 
         connected.waitToBeNotified();

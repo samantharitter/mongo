@@ -28,7 +28,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include <map>
 #include <string>
@@ -37,10 +36,12 @@
 #include "mongo/client/connpool.h"
 #include "mongo/db/commands.h"
 #include "mongo/s/client/shard.h"
+#include "mongo/s/client/shard_registry.h"
+#include "mongo/s/grid.h"
 
 namespace mongo {
 
-    using boost::scoped_ptr;
+    using std::unique_ptr;
     using std::map;
     using std::string;
     using std::vector;
@@ -86,15 +87,19 @@ namespace {
                          std::string& errmsg,
                          BSONObjBuilder& result) {
 
-            vector<Shard> shards;
-            Shard::getAllShards(shards);
-
             map<string, long long> sizes;
-            map<string, scoped_ptr<BSONObjBuilder> > dbShardInfo;
+            map<string, unique_ptr<BSONObjBuilder> > dbShardInfo;
 
-            for (vector<Shard>::iterator i = shards.begin(); i != shards.end(); i++) {
-                Shard s = *i;
-                BSONObj x = s.runCommand("admin", "listDatabases");
+            vector<ShardId> shardIds;
+            grid.shardRegistry()->getAllShardIds(&shardIds);
+
+            for (const ShardId& shardId : shardIds) {
+                const auto s = grid.shardRegistry()->getShard(shardId);
+                if (!s) {
+                    continue;
+                }
+
+                BSONObj x = s->runCommand("admin", "listDatabases");
 
                 BSONObjIterator j(x["databases"].Obj());
                 while (j.more()) {
@@ -113,12 +118,12 @@ namespace {
                         totalSize += size;
                     }
 
-                    scoped_ptr<BSONObjBuilder>& bb = dbShardInfo[name];
+                    unique_ptr<BSONObjBuilder>& bb = dbShardInfo[name];
                     if (!bb.get()) {
                         bb.reset(new BSONObjBuilder());
                     }
 
-                    bb->appendNumber(s.getName(), size);
+                    bb->appendNumber(s->getId(), size);
                 }
 
             }
@@ -151,19 +156,13 @@ namespace {
                 bb.append(temp.obj());
             }
 
-            // obtain cached config shard
-            Shard configShard = Shard::findIfExists("config");
-            if (!configShard.ok()) {
-                return appendCommandStatus(result,
-                                           Status(ErrorCodes::ShardNotFound,
-                                                  "Couldn't find shard "
-                                                  "representing config server"));
-            }
+            // Obtain the cached config shard
+            const auto configShard = grid.shardRegistry()->getShard("config");
 
             {
                 // get config db from the config servers (first one)
                 BSONObj x;
-                if (configShard.runCommand("config", "dbstats", x)) {
+                if (configShard->runCommand("config", "dbstats", x)) {
                     BSONObjBuilder b;
                     b.append("name", "config");
                     b.appendBool("empty", false);
@@ -181,7 +180,7 @@ namespace {
             {
                 // get admin db from the config servers (first one)
                 BSONObj x;
-                if (configShard.runCommand("admin", "dbstats", x)) {
+                if (configShard->runCommand("admin", "dbstats", x)) {
                     BSONObjBuilder b;
                     b.append("name", "admin");
                     b.appendBool("empty", false);

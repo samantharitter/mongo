@@ -104,7 +104,6 @@ namespace {
         case MatchExpression::MOD: return "mo"; break;
         case MatchExpression::EXISTS: return "ex"; break;
         case MatchExpression::MATCH_IN: return "in"; break;
-        case MatchExpression::NIN: return "ni"; break;
         case MatchExpression::TYPE_OPERATOR: return "ty"; break;
         case MatchExpression::GEO: return "go"; break;
         case MatchExpression::WHERE: return "wh"; break;
@@ -536,10 +535,18 @@ namespace {
         for (std::map<StringData, BSONElement>::const_iterator i = elements.begin();
              i != elements.end(); ++i) {
             const BSONElement& elt = (*i).second;
-            // BSONElement::toString() arguments
-            // includeFieldName - skip field name (appending after toString() result). false.
-            // full: choose less verbose representation of child/data values. false.
-            encodeUserString(elt.toString(false, false), keyBuilder);
+
+            if (elt.isSimpleType()) {
+                // For inclusion/exclusion projections, we encode as "i" or "e".
+                *keyBuilder << (elt.trueValue() ? "i" : "e");
+            }
+            else {
+                // For projection operators, we use the verbatim string encoding of the element.
+                encodeUserString(elt.toString(false, // includeFieldName
+                                              false), // full
+                                 keyBuilder);
+            }
+
             encodeUserString(elt.fieldName(), keyBuilder);
         }
     }
@@ -574,8 +581,8 @@ namespace {
         entry->sort = pq.getSort().getOwned();
         entry->projection = pq.getProj().getOwned();
 
-        boost::lock_guard<boost::mutex> cacheLock(_cacheMutex);
-        std::auto_ptr<PlanCacheEntry> evictedEntry = _cache.add(computeKey(query), entry);
+        stdx::lock_guard<stdx::mutex> cacheLock(_cacheMutex);
+        std::unique_ptr<PlanCacheEntry> evictedEntry = _cache.add(computeKey(query), entry);
 
         if (NULL != evictedEntry.get()) {
             LOG(1) << _ns << ": plan cache maximum size exceeded - "
@@ -590,7 +597,7 @@ namespace {
         PlanCacheKey key = computeKey(query);
         verify(crOut);
 
-        boost::lock_guard<boost::mutex> cacheLock(_cacheMutex);
+        stdx::lock_guard<stdx::mutex> cacheLock(_cacheMutex);
         PlanCacheEntry* entry;
         Status cacheStatus = _cache.get(key, &entry);
         if (!cacheStatus.isOK()) {
@@ -607,10 +614,10 @@ namespace {
         if (NULL == feedback) {
             return Status(ErrorCodes::BadValue, "feedback is NULL");
         }
-        std::auto_ptr<PlanCacheEntryFeedback> autoFeedback(feedback);
+        std::unique_ptr<PlanCacheEntryFeedback> autoFeedback(feedback);
         PlanCacheKey ck = computeKey(cq);
 
-        boost::lock_guard<boost::mutex> cacheLock(_cacheMutex);
+        stdx::lock_guard<stdx::mutex> cacheLock(_cacheMutex);
         PlanCacheEntry* entry;
         Status cacheStatus = _cache.get(ck, &entry);
         if (!cacheStatus.isOK()) {
@@ -627,12 +634,12 @@ namespace {
     }
 
     Status PlanCache::remove(const CanonicalQuery& canonicalQuery) {
-        boost::lock_guard<boost::mutex> cacheLock(_cacheMutex);
+        stdx::lock_guard<stdx::mutex> cacheLock(_cacheMutex);
         return _cache.remove(computeKey(canonicalQuery));
     }
 
     void PlanCache::clear() {
-        boost::lock_guard<boost::mutex> cacheLock(_cacheMutex);
+        stdx::lock_guard<stdx::mutex> cacheLock(_cacheMutex);
         _cache.clear();
         _writeOperations.store(0);
     }
@@ -649,7 +656,7 @@ namespace {
         PlanCacheKey key = computeKey(query);
         verify(entryOut);
 
-        boost::lock_guard<boost::mutex> cacheLock(_cacheMutex);
+        stdx::lock_guard<stdx::mutex> cacheLock(_cacheMutex);
         PlanCacheEntry* entry;
         Status cacheStatus = _cache.get(key, &entry);
         if (!cacheStatus.isOK()) {
@@ -663,7 +670,7 @@ namespace {
     }
 
     std::vector<PlanCacheEntry*> PlanCache::getAllEntries() const {
-        boost::lock_guard<boost::mutex> cacheLock(_cacheMutex);
+        stdx::lock_guard<stdx::mutex> cacheLock(_cacheMutex);
         std::vector<PlanCacheEntry*> entries;
         typedef std::list< std::pair<PlanCacheKey, PlanCacheEntry*> >::const_iterator ConstIterator;
         for (ConstIterator i = _cache.begin(); i != _cache.end(); i++) {
@@ -675,12 +682,12 @@ namespace {
     }
 
     bool PlanCache::contains(const CanonicalQuery& cq) const {
-        boost::lock_guard<boost::mutex> cacheLock(_cacheMutex);
+        stdx::lock_guard<stdx::mutex> cacheLock(_cacheMutex);
         return _cache.hasKey(computeKey(cq));
     }
 
     size_t PlanCache::size() const {
-        boost::lock_guard<boost::mutex> cacheLock(_cacheMutex);
+        stdx::lock_guard<stdx::mutex> cacheLock(_cacheMutex);
         return _cache.size();
     }
 

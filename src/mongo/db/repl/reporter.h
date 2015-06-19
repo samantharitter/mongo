@@ -69,6 +69,12 @@ namespace repl {
         void cancel();
 
         /**
+         * Waits for last/current executor handle to finish.
+         * Returns immediately if the handle is invalid.
+         */
+        void wait();
+
+        /**
          * Signals to the Reporter that there is new information to be sent to the "_target" server.
          * Returns the _status, indicating any error the Reporter has encountered.
          */
@@ -78,7 +84,7 @@ namespace repl {
          * Returns the previous return status so that the owner can decide whether the Reporter
          * needs a new target to whom it can report.
          */
-        Status previousReturnStatus() const;
+        Status getStatus() const;
 
     private:
         /**
@@ -89,7 +95,7 @@ namespace repl {
         /**
          * Callback for remote command.
          */
-        void _callback(const ReplicationExecutor::RemoteCommandCallbackData& rcbd);
+        void _callback(const ReplicationExecutor::RemoteCommandCallbackArgs& rcbd);
 
         // Not owned by us.
         ReplicationExecutor* _executor;
@@ -99,7 +105,7 @@ namespace repl {
         HostAndPort _target;
 
         // Protects member data of this Reporter.
-        mutable boost::mutex _mutex;
+        mutable stdx::mutex _mutex;
 
         // Stores the most recent Status returned from the ReplicationExecutor.
         Status _status;

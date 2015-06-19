@@ -30,7 +30,6 @@
 
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/base/disallow_copying.h"
 #include "mongo/base/status.h"
@@ -57,7 +56,7 @@ namespace mongo {
             EQ, LTE, LT, GT, GTE, REGEX, MOD, EXISTS, MATCH_IN,
 
             // Negations.
-            NOT, NIN, NOR,
+            NOT, NOR,
 
             // special types
             TYPE_OPERATOR, GEO, WHERE,
@@ -203,7 +202,7 @@ namespace mongo {
 
     private:
         MatchType _matchType;
-        boost::scoped_ptr<TagData> _tagData;
+        std::unique_ptr<TagData> _tagData;
     };
 
     /**

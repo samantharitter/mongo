@@ -35,7 +35,6 @@
 #include "mongo/db/jsobj.h"
 #include "mongo/db/repl/base_cloner_test_fixture.h"
 #include "mongo/db/repl/database_cloner.h"
-#include "mongo/db/repl/network_interface_mock.h"
 #include "mongo/unittest/unittest.h"
 
 namespace {
@@ -44,10 +43,6 @@ namespace {
     using namespace mongo::repl;
 
     const std::string dbname("db");
-
-    CollectionCloner::StorageInterface* createStorageInterface() {
-        return new StorageInterfaceMock();
-    }
 
     class DatabaseClonerTest : public BaseClonerTest {
     public:
@@ -79,7 +74,7 @@ namespace {
                                                 dbname,
                                                 BSONObj(),
                                                 DatabaseCloner::ListCollectionsPredicateFn(),
-                                                createStorageInterface,
+                                                storageInterface.get(),
                                                 stdx::bind(&DatabaseClonerTest::collectionWork,
                                                            this,
                                                            stdx::placeholders::_1,
@@ -107,7 +102,7 @@ namespace {
 
         const BSONObj filter;
         DatabaseCloner::ListCollectionsPredicateFn pred;
-        const DatabaseCloner::CreateStorageInterfaceFn& csi = createStorageInterface;
+        CollectionCloner::StorageInterface* si = storageInterface.get();
         namespace stdxph = stdx::placeholders;
         const DatabaseCloner::CollectionCallbackFn ccb =
             stdx::bind(&DatabaseClonerTest::collectionWork, this, stdxph::_1, stdxph::_2);
@@ -115,31 +110,31 @@ namespace {
         const auto& cb = [](const Status&) { FAIL("should not reach here"); };
 
         // Null executor.
-        ASSERT_THROWS(DatabaseCloner(nullptr, target, dbname, filter, pred, csi, ccb, cb),
+        ASSERT_THROWS(DatabaseCloner(nullptr, target, dbname, filter, pred, si, ccb, cb),
                       UserException);
 
         // Empty database name
-        ASSERT_THROWS(DatabaseCloner(&executor, target, "", filter, pred, csi, ccb, cb),
+        ASSERT_THROWS(DatabaseCloner(&executor, target, "", filter, pred, si, ccb, cb),
                       UserException);
 
         // Callback function cannot be null.
         {
             DatabaseCloner::CallbackFn ncb;
-            ASSERT_THROWS(DatabaseCloner(&executor, target, dbname, filter, pred, csi, ccb, ncb),
+            ASSERT_THROWS(DatabaseCloner(&executor, target, dbname, filter, pred, si, ccb, ncb),
                           UserException);
         }
 
-        // CreateStorageInterfaceFn function cannot be null.
+        // Storage interface cannot be null.
         {
-            DatabaseCloner::CreateStorageInterfaceFn ncsi;
-            ASSERT_THROWS(DatabaseCloner(&executor, target, dbname, filter, pred, ncsi, ccb, cb),
+            CollectionCloner::StorageInterface* nsi = nullptr;
+            ASSERT_THROWS(DatabaseCloner(&executor, target, dbname, filter, pred, nsi, ccb, cb),
                           UserException);
         }
 
         // CollectionCallbackFn function cannot be null.
         {
             DatabaseCloner::CollectionCallbackFn nccb;
-            ASSERT_THROWS(DatabaseCloner(&executor, target, dbname, filter, pred, csi, nccb, cb),
+            ASSERT_THROWS(DatabaseCloner(&executor, target, dbname, filter, pred, si, nccb, cb),
                           UserException);
         }
     }
@@ -170,7 +165,7 @@ namespace {
                                                 dbname,
                                                 listCollectionsFilter,
                                                 DatabaseCloner::ListCollectionsPredicateFn(),
-                                                createStorageInterface,
+                                                storageInterface.get(),
                                                 stdx::bind(&DatabaseClonerTest::collectionWork,
                                                            this,
                                                            stdx::placeholders::_1,
@@ -230,7 +225,7 @@ namespace {
                                                 dbname,
                                                 BSONObj(),
                                                 pred,
-                                                createStorageInterface,
+                                                storageInterface.get(),
                                                 stdx::bind(&DatabaseClonerTest::collectionWork,
                                                            this,
                                                            stdx::placeholders::_1,
@@ -352,14 +347,13 @@ namespace {
         ASSERT_FALSE(databaseCloner->isActive());
     }
 
-    TEST_F(DatabaseClonerTest, InvalidStorageInterface) {
-        auto invalidCreateStorageInterface = []() { return nullptr; };
+    TEST_F(DatabaseClonerTest, ListCollectionsReturnsEmptyCollectionName) {
         databaseCloner.reset(new DatabaseCloner(&getExecutor(),
                                                 target,
                                                 dbname,
                                                 BSONObj(),
                                                 DatabaseCloner::ListCollectionsPredicateFn(),
-                                                invalidCreateStorageInterface,
+                                                storageInterface.get(),
                                                 stdx::bind(&DatabaseClonerTest::collectionWork,
                                                            this,
                                                            stdx::placeholders::_1,
@@ -370,10 +364,10 @@ namespace {
         ASSERT_OK(databaseCloner->start());
 
         processNetworkResponse(createListCollectionsResponse(0, BSON_ARRAY(
-            BSON("name" << "a" << "options" << BSONObj()))));
+            BSON("name" << "" << "options" << BSONObj()))));
 
         ASSERT_EQUALS(ErrorCodes::BadValue, getStatus().code());
-        ASSERT_STRING_CONTAINS(getStatus().reason(), "null storage interface");
+        ASSERT_STRING_CONTAINS(getStatus().reason(), "invalid collection namespace: db.");
         ASSERT_FALSE(databaseCloner->isActive());
     }
 

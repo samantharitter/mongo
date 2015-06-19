@@ -28,7 +28,6 @@
 
 #include "mongo/db/query/plan_executor.h"
 
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/concurrency/write_conflict_exception.h"
@@ -49,7 +48,7 @@
 
 namespace mongo {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::string;
     using std::vector;
 
@@ -130,7 +129,7 @@ namespace mongo {
                               const std::string& ns,
                               YieldPolicy yieldPolicy,
                               PlanExecutor** out) {
-        std::auto_ptr<PlanExecutor> exec(new PlanExecutor(opCtx, ws, rt, qs, cq, collection, ns));
+        std::unique_ptr<PlanExecutor> exec(new PlanExecutor(opCtx, ws, rt, qs, cq, collection, ns));
 
         // Perform plan selection, if necessary.
         Status status = exec->pickBestPlan(yieldPolicy);
@@ -312,21 +311,28 @@ namespace mongo {
 
     PlanExecutor::ExecState PlanExecutor::getNextSnapshotted(Snapshotted<BSONObj>* objOut,
                                                              RecordId* dlOut) {
-        if (killed()) { 
+        if (killed()) {
             if (NULL != objOut) {
                 Status status(ErrorCodes::OperationFailed,
                               str::stream() << "Operation aborted because: " << *_killReason);
                 *objOut = Snapshotted<BSONObj>(SnapshotId(),
                                                WorkingSetCommon::buildMemberStatusObject(status));
             }
-            return PlanExecutor::DEAD; 
+            return PlanExecutor::DEAD;
+        }
+
+        if (!_stash.empty()) {
+            invariant(objOut && !dlOut);
+            *objOut = {SnapshotId(), _stash.front()};
+            _stash.pop();
+            return PlanExecutor::ADVANCED;
         }
 
         // When a stage requests a yield for document fetch, it gives us back a RecordFetcher*
         // to use to pull the record into memory. We take ownership of the RecordFetcher here,
         // deleting it after we've had a chance to do the fetch. For timing-based yields, we
         // just pass a NULL fetcher.
-        boost::scoped_ptr<RecordFetcher> fetcher;
+        std::unique_ptr<RecordFetcher> fetcher;
 
         // Incremented on every writeConflict, reset to 0 on any successful call to _root->work.
         size_t writeConflictsInARow = 0;
@@ -342,8 +348,8 @@ namespace mongo {
 
                 if (killed()) {
                     if (NULL != objOut) {
-                        Status status(ErrorCodes::OperationFailed, 
-                                      str::stream() << "Operation aborted because: " 
+                        Status status(ErrorCodes::OperationFailed,
+                                      str::stream() << "Operation aborted because: "
                                                     << *_killReason);
                         *objOut = Snapshotted<BSONObj>(
                             SnapshotId(),
@@ -439,28 +445,22 @@ namespace mongo {
             else if (PlanStage::IS_EOF == code) {
                 return PlanExecutor::IS_EOF;
             }
-            else if (PlanStage::DEAD == code) {
-                if (NULL != objOut) {
-                    BSONObj statusObj;
-                    WorkingSetCommon::getStatusMemberObject(*_workingSet, id, &statusObj);
-                    *objOut = Snapshotted<BSONObj>(SnapshotId(), statusObj);
-                }
-                return PlanExecutor::DEAD;
-            }
             else {
-                verify(PlanStage::FAILURE == code);
+                invariant(PlanStage::DEAD == code || PlanStage::FAILURE == code);
+
                 if (NULL != objOut) {
                     BSONObj statusObj;
                     WorkingSetCommon::getStatusMemberObject(*_workingSet, id, &statusObj);
                     *objOut = Snapshotted<BSONObj>(SnapshotId(), statusObj);
                 }
-                return PlanExecutor::FAILURE;
+
+                return (PlanStage::DEAD == code) ? PlanExecutor::DEAD : PlanExecutor::FAILURE;
             }
         }
     }
 
     bool PlanExecutor::isEOF() {
-        return killed() || _root->isEOF();
+        return killed() || (_stash.empty() && _root->isEOF());
     }
 
     void PlanExecutor::registerExec() {
@@ -506,13 +506,10 @@ namespace mongo {
             state = this->getNext(&obj, NULL);
         }
 
-        if (PlanExecutor::DEAD == state) {
-            return Status(ErrorCodes::OperationFailed, "Exec error: PlanExecutor killed");
-        }
-        else if (PlanExecutor::FAILURE == state) {
+        if (PlanExecutor::DEAD == state || PlanExecutor::FAILURE == state) {
             return Status(ErrorCodes::OperationFailed,
-                          str::stream() << "Exec error: "
-                                        << WorkingSetCommon::toStatusString(obj));
+                          str::stream() << "Exec error: " << WorkingSetCommon::toStatusString(obj)
+                                        << ", state: " << PlanExecutor::statestr(state));
         }
 
         invariant(PlanExecutor::IS_EOF == state);
@@ -535,6 +532,10 @@ namespace mongo {
                 this->registerExec();
             }
         }
+    }
+
+    void PlanExecutor::enqueue(const BSONObj& obj) {
+        _stash.push(obj.getOwned());
     }
 
     //

@@ -30,11 +30,10 @@
 
 #include "mongo/client/connection_pool.h"
 
-#include <boost/thread/lock_guard.hpp>
-
 #include "mongo/client/connpool.h"
 #include "mongo/db/auth/authorization_manager_global.h"
 #include "mongo/db/auth/internal_user_auth.h"
+#include "mongo/stdx/mutex.h"
 
 namespace mongo {
 namespace {
@@ -56,7 +55,7 @@ namespace {
     }
 
     void ConnectionPool::cleanUpOlderThan(Date_t now) {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         _cleanUpOlderThan_inlock(now);
     }
 
@@ -95,7 +94,7 @@ namespace {
     }
 
     void ConnectionPool::closeAllInUseConnections() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         for (ConnectionList::iterator iter = _inUseConnections.begin();
              iter != _inUseConnections.end();
              ++iter) {
@@ -126,7 +125,7 @@ namespace {
                                                                 const HostAndPort& target,
                                                                 Date_t now,
                                                                 Milliseconds timeout) {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
 
         // Clean up connections on stale/unused hosts
         _cleanUpStaleHosts_inlock(now);
@@ -169,7 +168,7 @@ namespace {
 
         // No idle connection in the pool; make a new one.
         lk.unlock();
-        std::auto_ptr<DBClientConnection> conn(new DBClientConnection);
+        std::unique_ptr<DBClientConnection> conn(new DBClientConnection);
 
         // setSoTimeout takes a double representing the number of seconds for send and receive
         // timeouts.  Thus, we must take count() and divide by 1000.0 to get the number
@@ -196,7 +195,7 @@ namespace {
     }
 
     void ConnectionPool::releaseConnection(ConnectionList::iterator iter, const Date_t now) {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         if (!_shouldKeepConnection(now, *iter)) {
             _destroyConnection_inlock(&_inUseConnections, iter);
             return;
@@ -209,7 +208,7 @@ namespace {
     }
 
     void ConnectionPool::destroyConnection(ConnectionList::iterator iter) {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         _destroyConnection_inlock(&_inUseConnections, iter);
     }
 
@@ -239,8 +238,12 @@ namespace {
         }
     }
 
-    void ConnectionPool::ConnectionPtr::done(Date_t now) {
-        _pool->releaseConnection(_connInfo, now);
+    void ConnectionPool::ConnectionPtr::done(Date_t now, bool destroy) {
+        if (destroy) {
+            _pool->destroyConnection(_connInfo);
+        } else {
+            _pool->releaseConnection(_connInfo, now);
+        }
         _pool = NULL;
     }
 

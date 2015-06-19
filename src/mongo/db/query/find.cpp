@@ -32,13 +32,14 @@
 
 #include "mongo/db/query/find.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/client/dbclientinterface.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/database_holder.h"
+#include "mongo/db/client.h"
 #include "mongo/db/clientcursor.h"
 #include "mongo/db/commands.h"
+#include "mongo/db/curop.h"
 #include "mongo/db/db_raii.h"
 #include "mongo/db/exec/filter.h"
 #include "mongo/db/exec/working_set_common.h"
@@ -60,8 +61,8 @@
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
 
-using boost::scoped_ptr;
-using std::auto_ptr;
+using std::unique_ptr;
+using std::unique_ptr;
 using std::endl;
 
 namespace mongo {
@@ -148,7 +149,7 @@ namespace mongo {
             return false;
         }
 
-        if (!pq.fromFindCommand() && pq.getBatchSize() && *pq.getBatchSize() == 1) {
+        if (!pq.isFromFindCommand() && pq.getBatchSize() && *pq.getBatchSize() == 1) {
             return false;
         }
 
@@ -179,25 +180,27 @@ namespace mongo {
         return !exec->isEOF();
     }
 
-    void beginQueryOp(const NamespaceString& nss,
+    void beginQueryOp(OperationContext* txn,
+                      const NamespaceString& nss,
                       const BSONObj& queryObj,
                       int ntoreturn,
-                      int ntoskip,
-                      CurOp* curop) {
+                      int ntoskip) {
+        auto curop = CurOp::get(txn);
         curop->debug().ns = nss.ns();
         curop->debug().query = queryObj;
         curop->debug().ntoreturn = ntoreturn;
         curop->debug().ntoskip = ntoskip;
-        curop->setQuery(queryObj);
+        stdx::lock_guard<Client> lk(*txn->getClient());
+        curop->setQuery_inlock(queryObj);
     }
 
-    void endQueryOp(PlanExecutor* exec,
+    void endQueryOp(OperationContext* txn,
+                    PlanExecutor* exec,
                     int dbProfilingLevel,
                     int numResults,
-                    CursorId cursorId,
-                    CurOp* curop) {
+                    CursorId cursorId) {
+        auto curop = CurOp::get(txn);
         invariant(exec);
-        invariant(curop);
 
         // Fill out basic curop query exec properties.
         curop->debug().nreturned = numResults;
@@ -226,7 +229,7 @@ namespace mongo {
         // Set debug information for consumption by the profiler only.
         if (dbProfilingLevel > 0) {
             // Get BSON stats.
-            scoped_ptr<PlanStageStats> execStats(exec->getStats());
+            unique_ptr<PlanStageStats> execStats(exec->getStats());
             BSONObjBuilder statsBob;
             Explain::statsToBSON(*execStats, &statsBob);
             curop->debug().execStats.set(statsBob.obj());
@@ -251,10 +254,11 @@ namespace mongo {
                               const char* ns,
                               int ntoreturn,
                               long long cursorid,
-                              CurOp& curop,
                               int pass,
                               bool& exhaust,
                               bool* isCursorAuthorized) {
+
+        CurOp& curop = *CurOp::get(txn);
 
         // For testing, we may want to fail if we receive a getmore.
         if (MONGO_FAIL_POINT(failReceivedGetmore)) {
@@ -281,9 +285,9 @@ namespace mongo {
         // Note that we declare our locks before our ClientCursorPin, in order to ensure that the
         // pin's destructor is called before the lock destructors (so that the unpin occurs under
         // the lock).
-        boost::scoped_ptr<AutoGetCollectionForRead> ctx;
-        boost::scoped_ptr<Lock::DBLock> unpinDBLock;
-        boost::scoped_ptr<Lock::CollectionLock> unpinCollLock;
+        std::unique_ptr<AutoGetCollectionForRead> ctx;
+        std::unique_ptr<Lock::DBLock> unpinDBLock;
+        std::unique_ptr<Lock::CollectionLock> unpinCollLock;
 
         CursorManager* cursorManager;
         CursorManager* globalCursorManager = CursorManager::getGlobalCursorManager();
@@ -322,7 +326,7 @@ namespace mongo {
         // has a valid RecoveryUnit.  As such, we use RAII to accomplish this.
         //
         // This must be destroyed before the ClientCursor is destroyed.
-        std::auto_ptr<ScopedRecoveryUnitSwapper> ruSwapper;
+        std::unique_ptr<ScopedRecoveryUnitSwapper> ruSwapper;
 
         // These are set in the QueryResult msg we return.
         int resultFlags = ResultFlag_AwaitCapable;
@@ -376,7 +380,10 @@ namespace mongo {
             // Ensure that the original query or command object is available in the slow query log,
             // profiler, and currentOp.
             curop.debug().query = cc->getQuery();
-            curop.setQuery(cc->getQuery());
+            {
+                stdx::lock_guard<Client> lk(*txn->getClient());
+                curop.setQuery_inlock(cc->getQuery());
+            }
 
             if (0 == pass) { 
                 cc->updateSlaveLocation(txn); 
@@ -424,23 +431,11 @@ namespace mongo {
 
             if (PlanExecutor::DEAD == state || PlanExecutor::FAILURE == state) {
                 // Propagate this error to caller.
-                if (PlanExecutor::FAILURE == state) {
-                    scoped_ptr<PlanStageStats> stats(exec->getStats());
-                    error() << "Plan executor error, stats: "
-                            << Explain::statsToBSON(*stats);
-                    uasserted(17406, "getMore executor error: " +
-                              WorkingSetCommon::toStatusString(obj));
-                }
-
-                // In the old system tailable capped cursors would be killed off at the
-                // cursorid level.  If a tailable capped cursor is nuked the cursorid
-                // would vanish.
-                //
-                // In the new system they die and are cleaned up later (or time out).
-                // So this is where we get to remove the cursorid.
-                if (0 == numResults) {
-                    resultFlags = ResultFlag_CursorNotFound;
-                }
+                const std::unique_ptr<PlanStageStats> stats(exec->getStats());
+                error() << "getMore executor error, stats: "
+                        << Explain::statsToBSON(*stats);
+                uasserted(17406, "getMore executor error: " +
+                          WorkingSetCommon::toStatusString(obj));
             }
 
             const bool shouldSaveCursor =
@@ -524,17 +519,17 @@ namespace mongo {
     std::string runQuery(OperationContext* txn,
                          QueryMessage& q,
                          const NamespaceString& nss,
-                         CurOp& curop,
                          Message &result) {
+        CurOp& curop = *CurOp::get(txn);
         // Validate the namespace.
         uassert(16256, str::stream() << "Invalid ns [" << nss.ns() << "]", nss.isValid());
         invariant(!nss.isCommand());
 
         // Set curop information.
-        beginQueryOp(nss, q.query, q.ntoreturn, q.ntoskip, &curop);
+        beginQueryOp(txn, nss, q.query, q.ntoreturn, q.ntoskip);
 
         // Parse the qm into a CanonicalQuery.
-        std::auto_ptr<CanonicalQuery> cq;
+        std::unique_ptr<CanonicalQuery> cq;
         {
             CanonicalQuery* cqRaw;
             Status canonStatus = CanonicalQuery::canonicalize(q,
@@ -671,10 +666,10 @@ namespace mongo {
         exec->deregisterExec();
 
         // Caller expects exceptions thrown in certain cases.
-        if (PlanExecutor::FAILURE == state) {
-            scoped_ptr<PlanStageStats> stats(exec->getStats());
-            error() << "Plan executor error, stats: "
-                    << Explain::statsToBSON(*stats);
+        if (PlanExecutor::FAILURE == state || PlanExecutor::DEAD == state) {
+            const std::unique_ptr<PlanStageStats> stats(exec->getStats());
+            error() << "Plan executor error during find: " << PlanExecutor::statestr(state)
+                    << ", stats: " << Explain::statsToBSON(*stats);
             uasserted(17144, "Executor error: " + WorkingSetCommon::toStatusString(obj));
         }
 
@@ -743,11 +738,11 @@ namespace mongo {
             // use by future getmore ops).
             cc->setLeftoverMaxTimeMicros(curop.getRemainingMaxTimeMicros());
 
-            endQueryOp(cc->getExecutor(), dbProfilingLevel, numResults, ccId, &curop);
+            endQueryOp(txn, cc->getExecutor(), dbProfilingLevel, numResults, ccId);
         }
         else {
             LOG(5) << "Not caching executor but returning " << numResults << " results.\n";
-            endQueryOp(exec.get(), dbProfilingLevel, numResults, ccId, &curop);
+            endQueryOp(txn, exec.get(), dbProfilingLevel, numResults, ccId);
         }
 
         // Add the results from the query into the output buffer.

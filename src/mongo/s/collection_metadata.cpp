@@ -38,7 +38,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::make_pair;
     using std::string;
@@ -104,7 +104,7 @@ namespace mongo {
             return NULL;
         }
 
-        auto_ptr<CollectionMetadata> metadata( new CollectionMetadata );
+        unique_ptr<CollectionMetadata> metadata( new CollectionMetadata );
         metadata->_keyPattern = this->_keyPattern;
         metadata->_keyPattern.getOwned();
         metadata->fillKeyPatternFields();
@@ -157,7 +157,7 @@ namespace mongo {
             return NULL;
         }
 
-        auto_ptr<CollectionMetadata> metadata( new CollectionMetadata );
+        unique_ptr<CollectionMetadata> metadata( new CollectionMetadata );
         metadata->_keyPattern = this->_keyPattern;
         metadata->_keyPattern.getOwned();
         metadata->fillKeyPatternFields();
@@ -201,7 +201,7 @@ namespace mongo {
             return NULL;
         }
 
-        auto_ptr<CollectionMetadata> metadata( new CollectionMetadata );
+        unique_ptr<CollectionMetadata> metadata( new CollectionMetadata );
         metadata->_keyPattern = this->_keyPattern;
         metadata->_keyPattern.getOwned();
         metadata->fillKeyPatternFields();
@@ -237,7 +237,7 @@ namespace mongo {
             return NULL;
         }
 
-        auto_ptr<CollectionMetadata> metadata( new CollectionMetadata );
+        unique_ptr<CollectionMetadata> metadata( new CollectionMetadata );
         metadata->_keyPattern = this->_keyPattern;
         metadata->_keyPattern.getOwned();
         metadata->fillKeyPatternFields();
@@ -338,7 +338,7 @@ namespace mongo {
             }
         }
 
-        auto_ptr<CollectionMetadata> metadata(new CollectionMetadata);
+        unique_ptr<CollectionMetadata> metadata(new CollectionMetadata);
         metadata->_keyPattern = this->_keyPattern;
         metadata->_keyPattern.getOwned();
         metadata->fillKeyPatternFields();
@@ -427,7 +427,7 @@ namespace mongo {
             return NULL;
         }
 
-        auto_ptr<CollectionMetadata> metadata( new CollectionMetadata );
+        unique_ptr<CollectionMetadata> metadata( new CollectionMetadata );
         metadata->_keyPattern = this->_keyPattern;
         metadata->_keyPattern.getOwned();
         metadata->fillKeyPatternFields();
@@ -498,22 +498,25 @@ namespace mongo {
     }
 
     bool CollectionMetadata::getNextChunk( const BSONObj& lookupKey, ChunkType* chunk ) const {
-
-        RangeMap::const_iterator upperChunkIt = _chunksMap.upper_bound( lookupKey );
+        RangeMap::const_iterator upperChunkIt = _chunksMap.upper_bound(lookupKey);
         RangeMap::const_iterator lowerChunkIt = upperChunkIt;
-        if ( upperChunkIt != _chunksMap.begin() ) --lowerChunkIt;
-        else lowerChunkIt = _chunksMap.end();
 
-        if ( lowerChunkIt != _chunksMap.end() &&
-             lowerChunkIt->second.woCompare( lookupKey ) > 0 ) {
-            chunk->setMin( lowerChunkIt->first );
-            chunk->setMax( lowerChunkIt->second );
+        if (upperChunkIt != _chunksMap.begin()) {
+            --lowerChunkIt;
+        }
+        else {
+            lowerChunkIt = _chunksMap.end();
+        }
+
+        if (lowerChunkIt != _chunksMap.end() && lowerChunkIt->second.woCompare(lookupKey) > 0) {
+            chunk->setMin(lowerChunkIt->first);
+            chunk->setMax(lowerChunkIt->second);
             return true;
         }
 
-        if ( upperChunkIt != _chunksMap.end() ) {
-            chunk->setMin( upperChunkIt->first );
-            chunk->setMax( upperChunkIt->second );
+        if (upperChunkIt != _chunksMap.end()) {
+            chunk->setMin(upperChunkIt->first);
+            chunk->setMax(upperChunkIt->second);
             return true;
         }
 

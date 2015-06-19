@@ -29,7 +29,6 @@
 
 #pragma once
 
-#include "mongo/base/data_type_validated.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/platform/cstdint.h"
@@ -44,10 +43,5 @@ namespace mongo {
      *                    this is NOT the bson size, but how far we know the buffer is valid
      */
     Status validateBSON( const char* buf, uint64_t maxLength );
-
-    template<> struct Validator<BSONObj> {
-        static Status validateLoad(const char* ptr, size_t length);
-        static Status validateStore(const BSONObj& toStore);
-    };
 
 }  // namespace mongo

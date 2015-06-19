@@ -31,9 +31,8 @@
 
 #include <list>
 #include <boost/filesystem/path.hpp>
-#include <boost/noncopyable.hpp>
-#include <boost/thread/condition.hpp>
 
+#include "mongo/stdx/condition_variable.h"
 #include "mongo/util/concurrency/mutex.h"
 
 namespace mongo {
@@ -43,7 +42,8 @@ namespace mongo {
      * requested asynchronously or synchronously.
      * singleton
      */
-    class FileAllocator : boost::noncopyable {
+    class FileAllocator {
+        MONGO_DISALLOW_COPYING(FileAllocator);
         /*
          * The public functions may not be called concurrently.  The allocation
          * functions may be called multiple times per file, but only the first
@@ -92,7 +92,7 @@ namespace mongo {
         std::string makeTempFileName( boost::filesystem::path root );
 
         mutable mongo::mutex _pendingMutex;
-        mutable boost::condition _pendingUpdated;
+        mutable stdx::condition_variable _pendingUpdated;
 
         std::list< std::string > _pending;
         mutable std::map< std::string, long > _pendingSize;

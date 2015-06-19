@@ -30,8 +30,9 @@
 
 #include "mongo/db/repl/replication_executor_test_fixture.h"
 
-#include "mongo/db/repl/network_interface_mock.h"
 #include "mongo/db/repl/replication_executor.h"
+#include "mongo/db/repl/storage_interface_mock.h"
+#include "mongo/executor/network_interface_mock.h"
 
 namespace mongo {
 namespace repl {
@@ -45,20 +46,25 @@ namespace {
     void ReplicationExecutorTest::launchExecutorThread() {
         ASSERT(!_executorThread);
         _executorThread.reset(
-                new boost::thread(stdx::bind(&ReplicationExecutor::run, _executor.get())));
+                new stdx::thread(stdx::bind(&ReplicationExecutor::run, _executor.get())));
+        postExecutorThreadLaunch();
+    }
+
+    void ReplicationExecutorTest::postExecutorThreadLaunch() {
         _net->enterNetwork();
     }
 
     void ReplicationExecutorTest::joinExecutorThread() {
         ASSERT(_executorThread);
-        _net->exitNetwork();
+        getNet()->exitNetwork();
         _executorThread->join();
         _executorThread.reset();
     }
 
     void ReplicationExecutorTest::setUp() {
-        _net = new NetworkInterfaceMock;
-        _executor.reset(new ReplicationExecutor(_net, prngSeed));
+        _net = new executor::NetworkInterfaceMock;
+        _storage = new StorageInterfaceMock;
+        _executor.reset(new ReplicationExecutor(_net, _storage, prngSeed));
     }
 
     void ReplicationExecutorTest::tearDown() {

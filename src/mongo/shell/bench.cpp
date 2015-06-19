@@ -35,20 +35,17 @@
 #include "mongo/shell/bench.h"
 
 #include <pcrecpp.h>
-
-#include <boost/noncopyable.hpp>
-#include <boost/shared_ptr.hpp>
-#include <boost/thread/thread.hpp>
 #include <iostream>
 
-#include "mongo/db/namespace_string.h"
 #include "mongo/client/dbclientcursor.h"
+#include "mongo/db/namespace_string.h"
 #include "mongo/scripting/bson_template_evaluator.h"
 #include "mongo/scripting/engine.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/log.h"
 #include "mongo/util/md5.h"
-#include "mongo/util/timer.h"
 #include "mongo/util/time_support.h"
+#include "mongo/util/timer.h"
 #include "mongo/util/version.h"
 
 // ---------------------------------
@@ -75,7 +72,7 @@ namespace {
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::cout;
     using std::endl;
     using std::map;
@@ -105,13 +102,14 @@ namespace mongo {
     void BenchRunStats::reset() {
         error = false;
         errCount = 0;
+        opCount = 0;
 
         findOneCounter.reset();
         updateCounter.reset();
         insertCounter.reset();
         deleteCounter.reset();
         queryCounter.reset();
-
+        commandCounter.reset();
         trappedErrors.clear();
     }
 
@@ -119,12 +117,14 @@ namespace mongo {
         if (other.error)
             error = true;
         errCount += other.errCount;
+        opCount += other.opCount;
 
         findOneCounter.updateFrom(other.findOneCounter);
         updateCounter.updateFrom(other.updateCounter);
         insertCounter.updateFrom(other.insertCounter);
         deleteCounter.updateFrom(other.deleteCounter);
         queryCounter.updateFrom(other.queryCounter);
+        commandCounter.updateFrom(other.commandCounter);
 
         for (size_t i = 0; i < other.trappedErrors.size(); ++i)
             trappedErrors.push_back(other.trappedErrors[i]);
@@ -141,7 +141,7 @@ namespace mongo {
         password = "";
 
         parallel = 1;
-        seconds = 1;
+        seconds = 1.0;
         hideResults = true;
         handleErrors = false;
         hideErrors = false;
@@ -155,6 +155,7 @@ namespace mongo {
 
         throwGLE = false;
         breakOnTrap = true;
+        randomSeed = 1314159265358979323;
     }
 
     BenchRunConfig *BenchRunConfig::createFromBson( const BSONObj &args ) {
@@ -177,6 +178,8 @@ namespace mongo {
 
         if ( args["parallel"].isNumber() )
             this->parallel = args["parallel"].numberInt();
+        if ( args["randomSeed"].isNumber() )
+            this->randomSeed = args["randomSeed"].numberInt();
         if ( args["seconds"].isNumber() )
             this->seconds = args["seconds"].number();
         if ( ! args["hideResults"].eoo() )
@@ -195,25 +198,25 @@ namespace mongo {
         if ( ! args["trapPattern"].eoo() ){
             const char* regex = args["trapPattern"].regex();
             const char* flags = args["trapPattern"].regexFlags();
-            this->trapPattern = boost::shared_ptr< pcrecpp::RE >( new pcrecpp::RE( regex, flags2options( flags ) ) );
+            this->trapPattern = std::shared_ptr< pcrecpp::RE >( new pcrecpp::RE( regex, flags2options( flags ) ) );
         }
 
         if ( ! args["noTrapPattern"].eoo() ){
             const char* regex = args["noTrapPattern"].regex();
             const char* flags = args["noTrapPattern"].regexFlags();
-            this->noTrapPattern = boost::shared_ptr< pcrecpp::RE >( new pcrecpp::RE( regex, flags2options( flags ) ) );
+            this->noTrapPattern = std::shared_ptr< pcrecpp::RE >( new pcrecpp::RE( regex, flags2options( flags ) ) );
         }
 
         if ( ! args["watchPattern"].eoo() ){
             const char* regex = args["watchPattern"].regex();
             const char* flags = args["watchPattern"].regexFlags();
-            this->watchPattern = boost::shared_ptr< pcrecpp::RE >( new pcrecpp::RE( regex, flags2options( flags ) ) );
+            this->watchPattern = std::shared_ptr< pcrecpp::RE >( new pcrecpp::RE( regex, flags2options( flags ) ) );
         }
 
         if ( ! args["noWatchPattern"].eoo() ){
             const char* regex = args["noWatchPattern"].regex();
             const char* flags = args["noWatchPattern"].regexFlags();
-            this->noWatchPattern = boost::shared_ptr< pcrecpp::RE >( new pcrecpp::RE( regex, flags2options( flags ) ) );
+            this->noWatchPattern = std::shared_ptr< pcrecpp::RE >( new pcrecpp::RE( regex, flags2options( flags ) ) );
         }
 
         this->ops = args["ops"].Obj().getOwned();
@@ -233,7 +236,8 @@ namespace mongo {
         : _mutex(),
           _numUnstartedWorkers( numWorkers ),
           _numActiveWorkers( 0 ),
-          _isShuttingDown( 0 ) {
+          _isShuttingDown( 0 ), 
+          _isCollectingStats( 0 ) {
     }
 
     BenchRunState::~BenchRunState() {
@@ -241,18 +245,18 @@ namespace mongo {
     }
 
     void BenchRunState::waitForState(State awaitedState) {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
 
         switch ( awaitedState ) {
         case BRS_RUNNING:
             while ( _numUnstartedWorkers > 0 ) {
                 massert( 16147, "Already finished.", _numUnstartedWorkers + _numActiveWorkers > 0 );
-                _stateChangeCondition.wait( _mutex );
+                _stateChangeCondition.wait( lk );
             }
             break;
         case BRS_FINISHED:
             while ( _numUnstartedWorkers + _numActiveWorkers > 0 ) {
-                _stateChangeCondition.wait( _mutex );
+                _stateChangeCondition.wait( lk );
             }
             break;
         default:
@@ -264,8 +268,12 @@ namespace mongo {
         _isShuttingDown.store( 1 );
     }
 
+    void BenchRunState::tellWorkersToCollectStats() {
+        _isCollectingStats.store( 1 );
+    }
+
     void BenchRunState::assertFinished() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         verify(0 == _numUnstartedWorkers + _numActiveWorkers);
     }
 
@@ -273,8 +281,12 @@ namespace mongo {
         return (_isShuttingDown.loadRelaxed() == 1);
     }
 
+    bool BenchRunState::shouldWorkerCollectStats() {
+        return (_isCollectingStats.loadRelaxed() == 1);
+    }
+
     void BenchRunState::onWorkerStarted() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         verify( _numUnstartedWorkers > 0 );
         --_numUnstartedWorkers;
         ++_numActiveWorkers;
@@ -284,7 +296,7 @@ namespace mongo {
     }
 
     void BenchRunState::onWorkerFinished() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         verify( _numActiveWorkers > 0 );
         --_numActiveWorkers;
         if (_numActiveWorkers + _numUnstartedWorkers == 0) {
@@ -320,18 +332,23 @@ namespace mongo {
         return b.obj();
     }
 
-    BenchRunWorker::BenchRunWorker(size_t id, const BenchRunConfig *config, BenchRunState *brState)
-        : _id(id), _config(config), _brState(brState) {
+    BenchRunWorker::BenchRunWorker(size_t id, const BenchRunConfig *config, BenchRunState *brState,
+                                   int64_t randomSeed)
+        : _id(id), _config(config), _brState(brState), _randomSeed(randomSeed) {
     }
 
     BenchRunWorker::~BenchRunWorker() {}
 
     void BenchRunWorker::start() {
-        boost::thread(stdx::bind(&BenchRunWorker::run, this));
+        stdx::thread(stdx::bind(&BenchRunWorker::run, this));
     }
 
     bool BenchRunWorker::shouldStop() const {
         return _brState->shouldWorkerFinish();
+    }
+
+    bool BenchRunWorker::shouldCollectStats() const {
+        return _brState->shouldWorkerCollectStats();
     }
 
     void doNothing(const BSONObj&) { }
@@ -341,7 +358,7 @@ namespace mongo {
         long long count = 0;
         mongo::Timer timer;
 
-        BsonTemplateEvaluator bsonTemplateEvaluator;
+        BsonTemplateEvaluator bsonTemplateEvaluator(_randomSeed);
         invariant(bsonTemplateEvaluator.setId(_id) == BsonTemplateEvaluator::StatusSuccess);
 
         if (_config->username != "") {
@@ -356,7 +373,7 @@ namespace mongo {
             while ( i.more() ) {
 
                 if ( shouldStop() ) break;
-
+                auto& stats = shouldCollectStats() ? _stats : _statsBlackHole;
                 BSONElement e = i.next();
 
                 string ns = e["ns"].String();
@@ -370,7 +387,7 @@ namespace mongo {
 
                 BSONObj context = e["context"].eoo() ? BSONObj() : e["context"].Obj();
 
-                auto_ptr<Scope> scope;
+                unique_ptr<Scope> scope;
                 ScriptingFunction scopeFunc = 0;
                 BSONObj scopeObj;
 
@@ -405,7 +422,7 @@ namespace mongo {
 
                         BSONObj result;
                         {
-                            BenchRunEventTrace _bret(&_stats.findOneCounter);
+                            BenchRunEventTrace _bret(&stats.findOneCounter);
                             result = conn->findOne( ns , fixQuery( e["query"].Obj(),
                                                                    bsonTemplateEvaluator ) );
                         }
@@ -415,7 +432,7 @@ namespace mongo {
                             if( err ){
                                 log() << "Error checking in benchRun thread [findOne]" << causedBy( scope->getError() ) << endl;
 
-                                _stats.errCount++;
+                                stats.errCount++;
 
                                 return;
                             }
@@ -426,16 +443,25 @@ namespace mongo {
                     }
                     else if ( op == "command" ) {
 
+                        bool ok;
                         BSONObj result;
-                        conn->runCommand( ns, fixQuery( e["command"].Obj(), bsonTemplateEvaluator ),
-                                          result, e["options"].numberInt() );
-
-                        if( check ){
+                        {
+                            BenchRunEventTrace _bret(&stats.commandCounter);
+                            ok = conn->runCommand( ns,
+                                                   fixQuery( e["command"].Obj(),
+                                                             bsonTemplateEvaluator ),
+                                                   result,
+                                                   e["options"].numberInt());
+                        }
+                        if (!ok) {
+                            stats.errCount++;
+                        }
+                        else if( check ){
                             int err = scope->invoke( scopeFunc , 0 , &result,  1000 * 60 , false );
                             if( err ){
                                 log() << "Error checking in benchRun thread [command]" << causedBy( scope->getError() ) << endl;
 
-                                _stats.errCount++;
+                                stats.errCount++;
 
                                 return;
                             }
@@ -453,19 +479,19 @@ namespace mongo {
                         BSONObj filter = e["filter"].eoo() ? BSONObj() : e["filter"].Obj();
                         int expected = e["expected"].eoo() ? -1 : e["expected"].Int();
 
-                        auto_ptr<DBClientCursor> cursor;
+                        unique_ptr<DBClientCursor> cursor;
                         int count;
 
                         BSONObj fixedQuery = fixQuery(e["query"].Obj(), bsonTemplateEvaluator);
 
                         // use special query function for exhaust query option
                         if (options & QueryOption_Exhaust) {
-                            BenchRunEventTrace _bret(&_stats.queryCounter);
+                            BenchRunEventTrace _bret(&stats.queryCounter);
                             stdx::function<void (const BSONObj&)> castedDoNothing(doNothing);
                             count =  conn->query(castedDoNothing, ns, fixedQuery, &filter, options);
                         }
                         else {
-                            BenchRunEventTrace _bret(&_stats.queryCounter);
+                            BenchRunEventTrace _bret(&stats.queryCounter);
                             cursor = conn->query(ns, fixedQuery, limit, skip, &filter, options,
                                                  batchSize);
                             count = cursor->itcount();
@@ -482,7 +508,7 @@ namespace mongo {
                             if( err ){
                                 log() << "Error checking in benchRun thread [find]" << causedBy( scope->getError() ) << endl;
 
-                                _stats.errCount++;
+                                stats.errCount++;
 
                                 return;
                             }
@@ -501,7 +527,7 @@ namespace mongo {
                         bool safe = e["safe"].trueValue();
 
                         {
-                            BenchRunEventTrace _bret(&_stats.updateCounter);
+                            BenchRunEventTrace _bret(&stats.updateCounter);
                             BSONObj query = fixQuery(queryOrginal, bsonTemplateEvaluator);
                             BSONObj update = fixQuery(updateOriginal, bsonTemplateEvaluator);
 
@@ -535,7 +561,7 @@ namespace mongo {
                                 if( err ){
                                     log() << "Error checking in benchRun thread [update]" << causedBy( scope->getError() ) << endl;
 
-                                    _stats.errCount++;
+                                    stats.errCount++;
 
                                     return;
                                 }
@@ -553,7 +579,7 @@ namespace mongo {
                         BSONObj result;
 
                         {
-                            BenchRunEventTrace _bret(&_stats.insertCounter);
+                            BenchRunEventTrace _bret(&stats.insertCounter);
 
                             BSONObj insertDoc = fixQuery(e["doc"].Obj(), bsonTemplateEvaluator);
 
@@ -582,7 +608,7 @@ namespace mongo {
                                 if( err ){
                                     log() << "Error checking in benchRun thread [insert]" << causedBy( scope->getError() ) << endl;
 
-                                    _stats.errCount++;
+                                    stats.errCount++;
 
                                     return;
                                 }
@@ -602,7 +628,7 @@ namespace mongo {
                         bool safe = e["safe"].trueValue();
                         BSONObj result;
                         {
-                            BenchRunEventTrace _bret(&_stats.deleteCounter);
+                            BenchRunEventTrace _bret(&stats.deleteCounter);
                             BSONObj predicate = fixQuery(query, bsonTemplateEvaluator);
                             if (useWriteCmd) {
 
@@ -634,7 +660,7 @@ namespace mongo {
                                 if( err ){
                                     log() << "Error checking in benchRun thread [delete]" << causedBy( scope->getError() ) << endl;
 
-                                    _stats.errCount++;
+                                    stats.errCount++;
 
                                     return;
                                 }
@@ -664,9 +690,11 @@ namespace mongo {
                     }
                     else {
                         log() << "don't understand op: " << op << endl;
-                        _stats.error = true;
+                        stats.error = true;
                         return;
                     }
+                    // Count 1 for total ops. Successfully got through the try phrase
+                    stats.opCount++;
                 }
                 catch( DBException& ex ){
                     if( ! _config->hideErrors || e["showError"].trueValue() ){
@@ -687,19 +715,19 @@ namespace mongo {
                         ( ! _config->noTrapPattern && _config->trapPattern && yesTrap ) ||
                         ( _config->trapPattern && _config->noTrapPattern && yesTrap && ! noTrap ) ){
                         {
-                            _stats.trappedErrors.push_back( BSON( "error" << ex.what() << "op" << e << "count" << count ) );
+                            stats.trappedErrors.push_back( BSON( "error" << ex.what() << "op" << e << "count" << count ) );
                         }
                         if( _config->breakOnTrap ) return;
                     }
                     if( ! _config->handleErrors && ! e["handleError"].trueValue() ) return;
 
-                    _stats.errCount++;
+                    stats.errCount++;
                 }
                 catch( ... ){
                     if( ! _config->hideErrors || e["showError"].trueValue() ) log() << "Error in benchRun thread caused by unknown error for op " << e << endl;
                     if( ! _config->handleErrors && ! e["handleError"].trueValue() ) return;
 
-                    _stats.errCount++;
+                    stats.errCount++;
                 }
 
                 if (++count % 100 == 0 && !useWriteCmd) {
@@ -716,7 +744,8 @@ namespace mongo {
     }
 
     namespace {
-        class BenchRunWorkerStateGuard : private boost::noncopyable {
+        class BenchRunWorkerStateGuard {
+            MONGO_DISALLOW_COPYING(BenchRunWorkerStateGuard);
         public:
             explicit BenchRunWorkerStateGuard( BenchRunState *brState ) : _brState( brState ) {
                 _brState->onWorkerStarted();
@@ -733,8 +762,7 @@ namespace mongo {
 
     void BenchRunWorker::run() {
         try {
-            BenchRunWorkerStateGuard _workerStateGuard( _brState );
-            boost::scoped_ptr<DBClientBase> conn( _config->createConnection() );
+            std::unique_ptr<DBClientBase> conn( _config->createConnection() );
             if ( !_config->username.empty() ) {
                 string errmsg;
                 if (!conn->auth("admin", _config->username, _config->password, errmsg)) {
@@ -742,6 +770,7 @@ namespace mongo {
                               "Authenticating to connection for benchThread failed: " + errmsg);
                 }
             }
+            BenchRunWorkerStateGuard _workerStateGuard( _brState );
             generateLoadOnConnection( conn.get() );
         }
         catch( DBException& e ){
@@ -760,7 +789,7 @@ namespace mongo {
           _config(config) {
 
         _oid.init();
-        boost::lock_guard<boost::mutex> lk(_staticMutex);
+        stdx::lock_guard<stdx::mutex> lk(_staticMutex);
          _activeRuns[_oid] = this;
      }
 
@@ -772,7 +801,7 @@ namespace mongo {
      void BenchRunner::start( ) {
 
          {
-             boost::scoped_ptr<DBClientBase> conn( _config->createConnection() );
+             std::unique_ptr<DBClientBase> conn( _config->createConnection() );
              // Must authenticate to admin db in order to run serverStatus command
              if (_config->username != "") {
                  string errmsg;
@@ -785,8 +814,11 @@ namespace mongo {
              }
 
              // Start threads
-             for ( unsigned i = 0; i < _config->parallel; i++ ) {
-                 BenchRunWorker *worker = new BenchRunWorker(i, _config.get(), &_brState);
+             for ( int64_t i = 0; i < _config->parallel; i++ ) {
+                 // Make a unique random seed for the worker. 
+                 int64_t seed = _config->randomSeed +  i;
+                 BenchRunWorker *worker = new BenchRunWorker(i, _config.get(),
+                                                             &_brState, seed);
                  worker->start();
                  _workers.push_back(worker);
              }
@@ -794,8 +826,7 @@ namespace mongo {
              _brState.waitForState(BenchRunState::BRS_RUNNING);
 
              // initial stats
-             conn->simpleCommand( "admin" , &before , "serverStatus" );
-             before = before.getOwned();
+             _brState.tellWorkersToCollectStats();
              _brTimer = new mongo::Timer();
          }
      }
@@ -807,7 +838,7 @@ namespace mongo {
          delete _brTimer;
 
          {
-             boost::scoped_ptr<DBClientBase> conn( _config->createConnection() );
+             std::unique_ptr<DBClientBase> conn( _config->createConnection() );
              if (_config->username != "") {
                  string errmsg;
                  // this can only fail if admin access was revoked since start of run
@@ -818,13 +849,10 @@ namespace mongo {
                                "still required to use benchRun with auth enabled");
                  }
              }
-             // Get final stats
-             conn->simpleCommand( "admin" , &after , "serverStatus" );
-             after = after.getOwned();
          }
 
          {
-             boost::lock_guard<boost::mutex> lk(_staticMutex);
+             stdx::lock_guard<stdx::mutex> lk(_staticMutex);
              _activeRuns.erase( _oid );
          }
      }
@@ -835,7 +863,7 @@ namespace mongo {
      }
 
      BenchRunner* BenchRunner::get( OID oid ) {
-         boost::lock_guard<boost::mutex> lk(_staticMutex);
+         stdx::lock_guard<stdx::mutex> lk(_staticMutex);
          return _activeRuns[ oid ];
      }
 
@@ -844,17 +872,6 @@ namespace mongo {
         stats->reset();
         for ( size_t i = 0; i < _workers.size(); ++i )
             stats->updateFrom( _workers[i]->stats() );
-        BSONObj before = this->before["opcounters"].Obj();
-        BSONObj after = this->after["opcounters"].Obj();
-        {
-             BSONObjIterator i( after );
-             while ( i.more() ) {
-                 BSONElement e = i.next();
-                 long long delta = e.numberLong();
-                 delta -= before[e.fieldName()].numberLong();
-                 stats->opcounters[e.fieldName()] = delta;
-             }
-        }
     }
 
      static void appendAverageMicrosIfAvailable(
@@ -878,30 +895,30 @@ namespace mongo {
          if ( error )
              return BSON( "err" << 1 );
 
-         // compute actual ops/sec
-         BSONObj before = runner->before["opcounters"].Obj();
-         BSONObj after = runner->after["opcounters"].Obj();
-
          BSONObjBuilder buf;
          buf.append( "note" , "values per second" );
-         buf.append( "errCount", (long long) stats.errCount );
+         buf.append( "errCount", static_cast<long long>(stats.errCount) );
          buf.append( "trapped", "error: not implemented" );
          appendAverageMicrosIfAvailable(buf, "findOneLatencyAverageMicros", stats.findOneCounter);
          appendAverageMicrosIfAvailable(buf, "insertLatencyAverageMicros", stats.insertCounter);
          appendAverageMicrosIfAvailable(buf, "deleteLatencyAverageMicros", stats.deleteCounter);
          appendAverageMicrosIfAvailable(buf, "updateLatencyAverageMicros", stats.updateCounter);
          appendAverageMicrosIfAvailable(buf, "queryLatencyAverageMicros", stats.queryCounter);
+         appendAverageMicrosIfAvailable(buf, "commandsLatencyAverageMicros", stats.commandCounter);
 
-         {
-             BSONObjIterator i( after );
-             while ( i.more() ) {
-                 BSONElement e = i.next();
-                 double x = e.number();
-                 x -= before[e.fieldName()].number();
-                 std::string s = e.fieldName();
-                 buf.append( s, x / (runner->_microsElapsed / 1000000.0) );
-             }
-         }
+         buf.append("totalOps", static_cast<long long>(stats.opCount));
+
+         auto appendPerSec = [&buf, runner](StringData name, double total) {
+             buf.append(name, total / (runner->_microsElapsed / 1000000.0));
+         };
+
+         appendPerSec("totalOps/s", stats.opCount);
+         appendPerSec("findOne", stats.findOneCounter.getNumEvents());
+         appendPerSec("insert", stats.insertCounter.getNumEvents());
+         appendPerSec("delete", stats.deleteCounter.getNumEvents());
+         appendPerSec("update", stats.updateCounter.getNumEvents());
+         appendPerSec("query", stats.queryCounter.getNumEvents());
+         appendPerSec("command", stats.commandCounter.getNumEvents());
 
          BSONObj zoo = buf.obj();
 
@@ -909,7 +926,7 @@ namespace mongo {
          return zoo;
      }
 
-     boost::mutex BenchRunner::_staticMutex;
+     stdx::mutex BenchRunner::_staticMutex;
      map< OID, BenchRunner* > BenchRunner::_activeRuns;
 
      /**

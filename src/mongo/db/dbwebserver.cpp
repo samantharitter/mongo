@@ -259,15 +259,14 @@ namespace {
 
             requestBuilder.setDatabase("admin")
                           .setCommandName(cmd)
-                          .setMetadata(rpc::metadata::empty())
+                          .setMetadata(rpc::makeEmptyMetadata())
                           .setCommandArgs(cmdObj);
 
             auto cmdRequestMsg = requestBuilder.done();
             rpc::CommandRequest cmdRequest{cmdRequestMsg.get()};
             rpc::CommandReplyBuilder cmdReplyBuilder{};
 
-            // TODO: remove cmdObj from parameters (SERVER-18236)
-            Command::execCommand(txn, c, cmdObj, cmdRequest, &cmdReplyBuilder);
+            Command::execCommand(txn, c, cmdRequest, &cmdReplyBuilder);
 
             auto cmdReplyMsg = cmdReplyBuilder.done();
             rpc::CommandReply cmdReply{cmdReplyMsg.get()};
@@ -314,7 +313,8 @@ namespace {
                                 vector<string>& headers,
                                 const SockAddr &from) {
 
-        boost::scoped_ptr<OperationContext> txn(getGlobalServiceContext()->newOpCtx());
+        Client* client = &cc();
+        auto txn = client->makeOperationContext();
 
         if (url.size() > 1) {
 
@@ -438,7 +438,7 @@ namespace {
                                vector<string>& headers,
                                const SockAddr &from) {
 
-        AuthorizationSession* authSess = AuthorizationSession::get(cc());
+        AuthorizationSession* authSess = AuthorizationSession::get(txn->getClient());
         if (!authSess->getAuthorizationManager().isAuthEnabled()) {
             return true;
         }
@@ -465,8 +465,7 @@ namespace {
             // Only users in the admin DB are visible by the webserver
             UserName userName(parms["username"], "admin");
             User* user;
-            AuthorizationManager& authzManager =
-                AuthorizationSession::get(cc())->getAuthorizationManager();
+            AuthorizationManager& authzManager = authSess->getAuthorizationManager();
             Status status = authzManager.acquireUser(txn, userName, &user);
             if (!status.isOK()) {
                 if (status.code() != ErrorCodes::UserNotFound) {
@@ -605,7 +604,7 @@ namespace {
 
     vector<DbWebHandler*> * DbWebHandler::_handlers = 0;
 
-    void webServerListenThread(boost::shared_ptr<DbWebServer> dbWebServer) {
+    void webServerListenThread(std::shared_ptr<DbWebServer> dbWebServer) {
         Client::initThread("websvr");
 
         dbWebServer->initAndListen();

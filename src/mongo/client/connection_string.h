@@ -28,11 +28,11 @@
 
 #pragma once
 
-#include <boost/thread/lock_guard.hpp>
-#include <boost/thread/mutex.hpp>
 #include <string>
 #include <vector>
 
+#include "mongo/base/string_data.h"
+#include "mongo/stdx/mutex.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/net/hostandport.h"
 
@@ -64,6 +64,15 @@ namespace mongo {
 
         ConnectionString() = default;
 
+        /**
+         * Constructs a connection string representing a replica set.
+         */
+        static ConnectionString forReplicaSet(StringData setName,
+                                              std::vector<HostAndPort> servers);
+
+        /**
+         * Creates a MASTER connection string with the specified server.
+         */
         explicit ConnectionString(const HostAndPort& server);
 
         ConnectionString(ConnectionType type, const std::string& s, const std::string& setName);
@@ -112,12 +121,12 @@ namespace mongo {
         };
 
         static void setConnectionHook( ConnectionHook* hook ){
-            boost::lock_guard<boost::mutex> lk( _connectHookMutex );
+            stdx::lock_guard<stdx::mutex> lk( _connectHookMutex );
             _connectHook = hook;
         }
 
         static ConnectionHook* getConnectionHook() {
-            boost::lock_guard<boost::mutex> lk( _connectHookMutex );
+            stdx::lock_guard<stdx::mutex> lk( _connectHookMutex );
             return _connectHook;
         }
 
@@ -127,6 +136,12 @@ namespace mongo {
         }
 
     private:
+        /**
+         * Creates a SET connection string with the specified set name and servers.
+         */
+        ConnectionString(StringData setName, std::vector<HostAndPort> servers);
+
+
         void _fillServers( std::string s );
         void _finishInit();
 
@@ -135,7 +150,7 @@ namespace mongo {
         std::string _string;
         std::string _setName;
 
-        static boost::mutex _connectHookMutex;
+        static stdx::mutex _connectHookMutex;
         static ConnectionHook* _connectHook;
     };
 } // namespace mongo

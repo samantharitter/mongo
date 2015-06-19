@@ -28,9 +28,6 @@
 
 #pragma once
 
-#include <boost/noncopyable.hpp>
-#include <boost/scoped_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/client/connection_string.h"
 #include "mongo/client/read_preference.h"
@@ -38,6 +35,8 @@
 #include "mongo/platform/atomic_word.h"
 #include "mongo/platform/cstdint.h"
 #include "mongo/rpc/protocol.h"
+#include "mongo/rpc/metadata.h"
+#include "mongo/rpc/unique_message.h"
 #include "mongo/stdx/functional.h"
 #include "mongo/util/mongoutils/str.h"
 #include "mongo/util/net/message.h"
@@ -371,9 +370,10 @@ namespace mongo {
     /**
        The interface that any db connection should implement
      */
-    class DBClientInterface : boost::noncopyable {
+    class DBClientInterface {
+        MONGO_DISALLOW_COPYING(DBClientInterface);
     public:
-        virtual std::auto_ptr<DBClientCursor> query(const std::string &ns, Query query, int nToReturn = 0, int nToSkip = 0,
+        virtual std::unique_ptr<DBClientCursor> query(const std::string &ns, Query query, int nToReturn = 0, int nToSkip = 0,
                                                const BSONObj *fieldsToReturn = 0, int queryOptions = 0 , int batchSize = 0 ) = 0;
 
         virtual void insert( const std::string &ns, BSONObj obj , int flags=0) = 0;
@@ -407,7 +407,10 @@ namespace mongo {
         virtual std::string getServerAddress() const = 0;
 
         /** don't use this - called automatically by DBClientCursor for you */
-        virtual std::auto_ptr<DBClientCursor> getMore( const std::string &ns, long long cursorId, int nToReturn = 0, int options = 0 ) = 0;
+        virtual std::unique_ptr<DBClientCursor> getMore( const std::string &ns, long long cursorId, int nToReturn = 0, int options = 0 ) = 0;
+
+    protected:
+        DBClientInterface() = default;
     };
 
     /**
@@ -436,9 +439,44 @@ namespace mongo {
 
         void setClientRPCProtocols(rpc::ProtocolSet clientProtocols);
 
-        // TODO: add variant of runCommand that takes a RequestInterface when we have
-        // an owned Reply type
-        // virtual StatusWith<OwnedReply> runCommand(const RequestInterface& request);
+        /**
+         * Sets a RequestMetadataWriter on this connection.
+         *
+         * TODO: support multiple metadata writers.
+         */
+        virtual void setRequestMetadataWriter(rpc::RequestMetadataWriter writer);
+
+        /**
+         * Gets the RequestMetadataWriter that is set on this connection. This may
+         * be an uninitialized stdx::function, so it should be checked for validity
+         * with operator bool() first.
+         */
+        const rpc::RequestMetadataWriter& getRequestMetadataWriter();
+
+        /**
+         * Sets a ReplyMetadataReader on this connection.
+         *
+         * TODO: support multiple metadata readers.
+         */
+        virtual void setReplyMetadataReader(rpc::ReplyMetadataReader reader);
+
+        /**
+         * Gets the ReplyMetadataReader that is set on this connection. This may
+         * be an uninitialized stdx::function, so it should be checked for validity
+         * with operator bool() first.
+         */
+        const rpc::ReplyMetadataReader& getReplyMetadataReader();
+
+        /**
+         * Runs a database command. This variant allows the caller to manually specify the metadata
+         * for the request, and receive it for the reply.
+         *
+         * TODO: rename this to runCommand, and change the old one to runCommandLegacy.
+         */
+        virtual rpc::UniqueReply runCommandWithMetadata(StringData database,
+                                                        StringData command,
+                                                        const BSONObj& metadata,
+                                                        const BSONObj& commandArgs);
 
         /** Run a database command.  Database commands are represented as BSON objects.  Common database
             commands have prebuilt helper functions -- see below.  If a helper is not available you can
@@ -748,29 +786,6 @@ namespace mongo {
         virtual std::string toString() const = 0;
 
         /**
-         * A function type for runCommand hooking; the function takes a pointer
-         * to a BSONObjBuilder and returns nothing.  The builder contains a
-         * runCommand BSON object.
-         * Once such a function is set as the runCommand hook, every time the DBClient
-         * processes a runCommand, the hook will be called just prior to sending it to the server. 
-         */
-        typedef stdx::function<void(BSONObjBuilder*)> RunCommandHookFunc;
-        virtual void setRunCommandHook(RunCommandHookFunc func);
-        RunCommandHookFunc getRunCommandHook() const {
-            return _runCommandHook;
-        }
-
-        /** 
-         * Similar to above, but for running a function on a command response after a command
-         * has been run.
-         */
-        typedef stdx::function<void(const BSONObj&, const std::string&)> PostRunCommandHookFunc;
-        virtual void setPostRunCommandHook(PostRunCommandHookFunc func);
-        PostRunCommandHookFunc getPostRunCommandHook() const {
-            return _postRunCommandHook;
-        }
-
-        /**
          * Run a pseudo-command such as sys.inprog/currentOp, sys.killop/killOp
          * or sys.unlock/fsyncUnlock
          *
@@ -828,12 +843,6 @@ namespace mongo {
                        const std::string &username,
                        BSONObj *info);
 
-        /**
-         * These functions will be executed by the driver on runCommand calls.
-         */
-        RunCommandHookFunc _runCommandHook;
-        PostRunCommandHookFunc _postRunCommandHook;
-
         // should be set by subclasses during connection.
         void _setServerRPCProtocols(rpc::ProtocolSet serverProtocols);
 
@@ -854,6 +863,9 @@ namespace mongo {
          * is implemented in mongos (SERVER-18292).
          */
         rpc::ProtocolSet _serverRPCProtocols{rpc::supports::kAll};
+
+        rpc::RequestMetadataWriter _metadataWriter;
+        rpc::ReplyMetadataReader _metadataReader;
 
         enum QueryOptions _cachedAvailableOptions;
         bool _haveCachedAvailableOptions;
@@ -900,7 +912,7 @@ namespace mongo {
          @return    cursor.   0 if error (connection failure)
          @throws AssertionException
         */
-        virtual std::auto_ptr<DBClientCursor> query(const std::string &ns, Query query, int nToReturn = 0, int nToSkip = 0,
+        virtual std::unique_ptr<DBClientCursor> query(const std::string &ns, Query query, int nToReturn = 0, int nToSkip = 0,
                                                const BSONObj *fieldsToReturn = 0, int queryOptions = 0 , int batchSize = 0 );
 
 
@@ -930,7 +942,7 @@ namespace mongo {
             @return an handle to a previously allocated cursor
             @throws AssertionException
          */
-        virtual std::auto_ptr<DBClientCursor> getMore( const std::string &ns, long long cursorId, int nToReturn = 0, int options = 0 );
+        virtual std::unique_ptr<DBClientCursor> getMore( const std::string &ns, long long cursorId, int nToReturn = 0, int options = 0 );
 
         /**
            insert an object into the database
@@ -1041,7 +1053,7 @@ namespace mongo {
          */
         virtual void logout(const std::string& dbname, BSONObj& info);
 
-        virtual std::auto_ptr<DBClientCursor> query(const std::string &ns, Query query=Query(), int nToReturn = 0, int nToSkip = 0,
+        virtual std::unique_ptr<DBClientCursor> query(const std::string &ns, Query query=Query(), int nToReturn = 0, int nToSkip = 0,
                                                const BSONObj *fieldsToReturn = 0, int queryOptions = 0 , int batchSize = 0 ) {
             checkConnection();
             return DBClientBase::query( ns, query, nToReturn, nToSkip, fieldsToReturn, queryOptions , batchSize );
@@ -1111,8 +1123,8 @@ namespace mongo {
         virtual void _auth(const BSONObj& params);
         virtual void sayPiggyBack( Message &toSend );
 
-        boost::scoped_ptr<MessagingPort> p;
-        boost::scoped_ptr<SockAddr> server;
+        std::unique_ptr<MessagingPort> p;
+        std::unique_ptr<SockAddr> server;
         bool _failed;
         const bool autoReconnect;
         Backoff autoReconnectBackoff;
@@ -1151,6 +1163,14 @@ namespace mongo {
     inline std::ostream& operator<<( std::ostream &s, const Query &q ) {
         return s << q.toString();
     }
+
+    void assembleQueryRequest(const std::string &ns,
+                              BSONObj query,
+                              int nToReturn,
+                              int nToSkip,
+                              const BSONObj *fieldsToReturn,
+                              int queryOptions,
+                              Message &toSend);
 
 } // namespace mongo
 

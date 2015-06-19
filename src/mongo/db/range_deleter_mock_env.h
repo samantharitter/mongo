@@ -59,8 +59,6 @@ namespace mongo {
     public:
         RangeDeleterMockEnv();
 
-        void initThread() {}
-
         //
         // Environment modification methods.
         //
@@ -149,13 +147,13 @@ namespace mongo {
 
         // Protects _pauseDelete & _pausedCount
         mutex _pauseDeleteMutex;
-        boost::condition _pausedCV;
+        stdx::condition_variable _pausedCV;
         bool _pauseDelete;
 
         // Number of times a delete gets paused.
         uint64_t _pausedCount;
         // _pausedCount < nthPause (used by waitForNthPausedDelete)
-        boost::condition _pausedDeleteChangeCV;
+        stdx::condition_variable _pausedDeleteChangeCV;
 
         // Protects all variables below this line.
         mutex _envStatMutex;
@@ -163,6 +161,6 @@ namespace mongo {
         // Keeps track of the number of times getCursorIds was called.
         uint64_t _getCursorsCallCount;
         // _getCursorsCallCount < nthCall (used by waitForNthGetCursor)
-        boost::condition _cursorsCallCountUpdatedCV;
+        stdx::condition_variable _cursorsCallCountUpdatedCV;
     };
 }

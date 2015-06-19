@@ -29,7 +29,6 @@
 #include "mongo/db/exec/and_hash.h"
 
 #include "mongo/db/exec/and_common-inl.h"
-#include "mongo/db/exec/filter.h"
 #include "mongo/db/exec/scoped_timer.h"
 #include "mongo/db/exec/working_set_common.h"
 #include "mongo/db/exec/working_set.h"
@@ -45,7 +44,7 @@ namespace {
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::vector;
 
     const size_t AndHashStage::kLookAheadWorks = 10;
@@ -53,25 +52,20 @@ namespace mongo {
     // static
     const char* AndHashStage::kStageType = "AND_HASH";
 
-    AndHashStage::AndHashStage(WorkingSet* ws, 
-                               const MatchExpression* filter,
-                               const Collection* collection)
+    AndHashStage::AndHashStage(WorkingSet* ws, const Collection* collection)
         : _collection(collection),
           _ws(ws),
-          _filter(filter),
           _hashingChildren(true),
           _currentChild(0),
           _commonStats(kStageType),
           _memUsage(0),
           _maxMemUsage(kDefaultMaxMemUsageBytes) {}
 
-    AndHashStage::AndHashStage(WorkingSet* ws, 
-                               const MatchExpression* filter,
+    AndHashStage::AndHashStage(WorkingSet* ws,
                                const Collection* collection,
                                size_t maxMemUsage)
         : _collection(collection),
           _ws(ws),
-          _filter(filter),
           _hashingChildren(true),
           _currentChild(0),
           _commonStats(kStageType),
@@ -135,7 +129,7 @@ namespace mongo {
                 for (size_t j = 0; j < kLookAheadWorks; ++j) {
                     StageState childStatus = child->work(&_lookAheadResults[i]);
 
-                    if (PlanStage::IS_EOF == childStatus || PlanStage::DEAD == childStatus) {
+                    if (PlanStage::IS_EOF == childStatus) {
 
                         // A child went right to EOF.  Bail out.
                         _hashingChildren = false;
@@ -147,7 +141,7 @@ namespace mongo {
                         // child.
                         break;
                     }
-                    else if (PlanStage::FAILURE == childStatus) {
+                    else if (PlanStage::FAILURE == childStatus || PlanStage::DEAD == childStatus) {
                         // Propage error to parent.
                         *out = _lookAheadResults[i];
                         // If a stage fails, it may create a status WSM to indicate why it
@@ -156,14 +150,15 @@ namespace mongo {
                         if (WorkingSet::INVALID_ID == *out) {
                             mongoutils::str::stream ss;
                             ss << "hashed AND stage failed to read in look ahead results "
-                               << "from child " << i;
+                               << "from child " << i
+                               << ", childStatus: " << PlanStage::stateStr(childStatus);
                             Status status(ErrorCodes::InternalError, ss);
                             *out = WorkingSetCommon::allocateStatusMember( _ws, status);
                         }
 
                         _hashingChildren = false;
                         _dataMap.clear();
-                        return PlanStage::FAILURE;
+                        return childStatus;
                     }
                     // We ignore NEED_TIME. TODO: what do we want to do if we get NEED_YIELD here?
                 }
@@ -245,18 +240,9 @@ namespace mongo {
             AndCommon::mergeFrom(olderMember, *member);
             _ws->free(*out);
 
-            // We should check for matching at the end so the matcher can use information in the
-            // indices of all our children.
-            if (Filter::passes(olderMember, _filter)) {
-                *out = hashID;
-                ++_commonStats.advanced;
-                return PlanStage::ADVANCED;
-            }
-            else {
-                _ws->free(hashID);
-                ++_commonStats.needTime;
-                return PlanStage::NEED_TIME;
-            }
+            ++_commonStats.advanced;
+            *out = hashID;
+            return PlanStage::ADVANCED;
         }
     }
 
@@ -317,7 +303,7 @@ namespace mongo {
 
             return PlanStage::NEED_TIME;
         }
-        else if (PlanStage::FAILURE == childStatus) {
+        else if (PlanStage::FAILURE == childStatus || PlanStage::DEAD == childStatus) {
             *out = id;
             // If a stage fails, it may create a status WSM to indicate why it
             // failed, in which case 'id' is valid.  If ID is invalid, we
@@ -419,7 +405,7 @@ namespace mongo {
             ++_commonStats.needTime;
             return PlanStage::NEED_TIME;
         }
-        else if (PlanStage::FAILURE == childStatus) {
+        else if (PlanStage::FAILURE == childStatus || PlanStage::DEAD == childStatus) {
             *out = id;
             // If a stage fails, it may create a status WSM to indicate why it
             // failed, in which case 'id' is valid.  If ID is invalid, we
@@ -527,14 +513,7 @@ namespace mongo {
         _specificStats.memLimit = _maxMemUsage;
         _specificStats.memUsage = _memUsage;
 
-        // Add a BSON representation of the filter to the stats tree, if there is one.
-        if (NULL != _filter) {
-            BSONObjBuilder bob;
-            _filter->toBSON(&bob);
-            _commonStats.filter = bob.obj();
-        }
-
-        auto_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_AND_HASH));
+        unique_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_AND_HASH));
         ret->specific.reset(new AndHashStats(_specificStats));
         for (size_t i = 0; i < _children.size(); ++i) {
             ret->children.push_back(_children[i]->getStats());

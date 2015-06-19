@@ -28,7 +28,6 @@
 
 #include "mongo/db/geo/big_polygon.h"
 
-#include <boost/scoped_ptr.hpp>
 #include <map>
 
 #include "mongo/base/owned_pointer_vector.h"
@@ -36,8 +35,8 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::unique_ptr;
     using std::vector;
 
 
@@ -165,7 +164,7 @@ namespace mongo {
         if (_borderPoly)
             return *_borderPoly;
 
-        auto_ptr<S2Loop> cloned(_loop->Clone());
+        unique_ptr<S2Loop> cloned(_loop->Clone());
 
         // Any loop in polygon should be than a hemisphere (2*Pi).
         cloned->Normalize();

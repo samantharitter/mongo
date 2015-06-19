@@ -157,7 +157,7 @@ namespace {
             }
 
             vector<Strategy::CommandResult> countResult;
-            STRATEGY->commandOp(dbname,
+            Strategy::commandOp(dbname,
                                 countCmdBuilder.done(),
                                 options,
                                 fullns,
@@ -171,7 +171,7 @@ namespace {
                  iter != countResult.end();
                  ++iter) {
 
-                const string& shardName = iter->shardTarget.getName();
+                const string& shardName = iter->shardTargetId;
 
                 if (iter->result["ok"].trueValue()) {
                     long long shardCount = iter->result["n"].numberLong();
@@ -223,7 +223,7 @@ namespace {
             Timer timer;
 
             vector<Strategy::CommandResult> shardResults;
-            STRATEGY->commandOp(dbname,
+            Strategy::commandOp(dbname,
                 explainCmdBob.obj(),
                 0,
                 fullns,

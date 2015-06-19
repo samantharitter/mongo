@@ -30,7 +30,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/db/background.h"
 #include "mongo/db/catalog/capped_utils.h"
@@ -47,7 +46,7 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
+    using std::unique_ptr;
     using std::string;
     using std::stringstream;
 
@@ -96,7 +95,8 @@ namespace mongo {
             ScopedTransaction transaction(txn, MODE_IX);
             AutoGetDb autoDb(txn, dbname, MODE_X);
 
-            if (!repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(dbname)) {
+            NamespaceString nss(dbname, to);
+            if (!repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nss)) {
                 return appendCommandStatus(result, Status(ErrorCodes::NotMaster, str::stream()
                     << "Not primary while cloning collection " << from << " to " << to
                     << " (as capped)"));
@@ -134,18 +134,6 @@ namespace mongo {
             ActionSet actions;
             actions.addAction(ActionType::convertToCapped);
             out->push_back(Privilege(parseResourcePattern(dbname, cmdObj), actions));
-        }
-
-        std::vector<BSONObj> stopIndexBuilds(OperationContext* opCtx,
-                                             Database* db,
-                                             const NamespaceString& ns) {
-            IndexCatalog::IndexKillCriteria criteria;
-            criteria.ns = ns;
-            Collection* coll = db->getCollection(ns);
-            if (coll) {
-                return IndexBuilder::killMatchingIndexBuilds(coll, criteria);
-            }
-            return std::vector<BSONObj>();
         }
 
         bool run(OperationContext* txn,

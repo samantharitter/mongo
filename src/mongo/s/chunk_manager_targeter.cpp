@@ -33,6 +33,7 @@
 #include "mongo/s/chunk_manager_targeter.h"
 
 #include "mongo/s/chunk_manager.h"
+#include "mongo/s/client/shard_registry.h"
 #include "mongo/s/config.h"
 #include "mongo/s/grid.h"
 #include "mongo/util/log.h"
@@ -40,7 +41,7 @@
 
 namespace mongo {
 
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using mongoutils::str::stream;
     using std::map;
     using std::set;
@@ -246,7 +247,7 @@ namespace {
         }
 
         dassert(NULL != primaryA.get());
-        return primaryA->getName() != primaryB->getName();
+        return primaryA->getId() != primaryB->getId();
     }
 
     /**
@@ -334,7 +335,7 @@ namespace {
                                             << getNS().ns() << "; no metadata found");
             }
 
-            *endpoint = new ShardEndpoint(_primary->getName(), ChunkVersion::UNSHARDED());
+            *endpoint = new ShardEndpoint(_primary->getId(), ChunkVersion::UNSHARDED());
             return Status::OK();
         }
     }
@@ -508,23 +509,22 @@ namespace {
                                    << getNS().ns() << "; no metadata found");
         }
 
-        set<Shard> shards;
+        set<ShardId> shardIds;
         if ( _manager ) {
             try {
-                _manager->getShardsForQuery( shards, query );
+                _manager->getShardIdsForQuery(shardIds, query);
             } catch ( const DBException& ex ) {
                 return ex.toStatus();
             }
         }
         else {
-            shards.insert( *_primary );
+            shardIds.insert(_primary->getId());
         }
 
-        for ( set<Shard>::iterator it = shards.begin(); it != shards.end(); ++it ) {
-            endpoints->push_back(new ShardEndpoint(it->getName(),
-                                                   _manager ?
-                                                       _manager->getVersion(it->getName()) :
-                                                       ChunkVersion::UNSHARDED()));
+        for (const ShardId& shardId : shardIds) {
+            endpoints->push_back(new ShardEndpoint(shardId,
+                                                   _manager ? _manager->getVersion(shardId) :
+                                                              ChunkVersion::UNSHARDED()));
         }
 
         return Status::OK();
@@ -543,9 +543,8 @@ namespace {
             _stats.chunkSizeDelta[chunk->getMin()] += estDataSize;
         }
 
-        Shard shard = chunk->getShard();
-        *endpoint = new ShardEndpoint(shard.getName(),
-                                      _manager->getVersion(shard.getName()));
+        *endpoint = new ShardEndpoint(chunk->getShardId(),
+                                      _manager->getVersion(chunk->getShardId()));
 
         return Status::OK();
     }
@@ -559,19 +558,18 @@ namespace {
                                          << "; metadata not found" );
         }
 
-        set<Shard> shards;
+        set<ShardId> shardIds;
         if ( _manager ) {
-            _manager->getAllShards( shards );
+            _manager->getAllShardIds(&shardIds);
         }
         else {
-            shards.insert( *_primary );
+            shardIds.insert(_primary->getId());
         }
 
-        for ( set<Shard>::iterator it = shards.begin(); it != shards.end(); ++it ) {
-            endpoints->push_back(new ShardEndpoint(it->getName(),
-                                                   _manager ?
-                                                       _manager->getVersion(it->getName()) :
-                                                       ChunkVersion::UNSHARDED()));
+        for (const ShardId& shardId : shardIds) {
+            endpoints->push_back(new ShardEndpoint(shardId,
+                                                   _manager ? _manager->getVersion(shardId) :
+                                                              ChunkVersion::UNSHARDED()));
         }
 
         return Status::OK();
@@ -586,13 +584,13 @@ namespace {
                                          << "; metadata not found" );
         }
 
-        vector<Shard> shards;
-        Shard::getAllShards( shards );
+        vector<ShardId> shardIds;
+        grid.shardRegistry()->getAllShardIds(&shardIds);
 
-        for ( vector<Shard>::iterator it = shards.begin(); it != shards.end(); ++it ) {
-            endpoints->push_back(new ShardEndpoint(it->getName(),
+        for (const ShardId& shardId : shardIds) {
+            endpoints->push_back(new ShardEndpoint(shardId,
                                                    _manager ?
-                                                       _manager->getVersion(it->getName()) :
+                                                   _manager->getVersion(shardId) :
                                                        ChunkVersion::UNSHARDED()));
         }
 

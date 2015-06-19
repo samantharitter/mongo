@@ -34,27 +34,27 @@
 
 #include "mongo/db/catalog/index_create.h"
 
-#include <boost/make_shared.hpp>
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/base/error_codes.h"
 #include "mongo/client/dbclientinterface.h"
 #include "mongo/db/audit.h"
 #include "mongo/db/background.h"
 #include "mongo/db/catalog/collection.h"
+#include "mongo/db/client.h"
 #include "mongo/db/clientcursor.h"
 #include "mongo/db/concurrency/write_conflict_exception.h"
 #include "mongo/db/curop.h"
 #include "mongo/db/query/internal_plans.h"
 #include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/operation_context.h"
+#include "mongo/stdx/mutex.h"
 #include "mongo/util/log.h"
 #include "mongo/util/processinfo.h"
 #include "mongo/util/progress_meter.h"
 
 namespace mongo {
 
-    using boost::scoped_ptr;
+    using std::unique_ptr;
     using std::string;
     using std::endl;
 
@@ -222,31 +222,20 @@ namespace mongo {
         return Status::OK();
     }
 
-    IndexDescriptor* MultiIndexBlock::registerIndexBuild() {
-        // Register background index build so that it can be found and killed when necessary
-        invariant(_collection);
-        invariant(_indexes.size() == 1);
-        invariant(_buildInBackground);
-        IndexDescriptor* descriptor = _indexes[0].block->getEntry()->descriptor();
-        _collection->getIndexCatalog()->registerIndexBuild(descriptor, CurOp::get(_txn)->opNum());
-        return descriptor;
-    }
-
-    void MultiIndexBlock::unregisterIndexBuild(IndexDescriptor* descriptor) {
-        _collection->getIndexCatalog()->unregisterIndexBuild(descriptor);
-    }
-
     Status MultiIndexBlock::insertAllDocumentsInCollection(std::set<RecordId>* dupsOut) {
         const char* curopMessage = _buildInBackground ? "Index Build (background)" : "Index Build";
-        ProgressMeterHolder progress(*_txn->setMessage(curopMessage,
-                                                       curopMessage,
-                                                       _collection->numRecords(_txn)));
+        const auto numRecords = _collection->numRecords(_txn);
+        stdx::unique_lock<Client> lk(*_txn->getClient());
+        ProgressMeterHolder progress(*_txn->setMessage_inlock(curopMessage,
+                                                              curopMessage,
+                                                              numRecords));
+        lk.unlock();
 
         Timer t;
 
         unsigned long long n = 0;
 
-        scoped_ptr<PlanExecutor> exec(InternalPlanner::collectionScan(_txn,
+        unique_ptr<PlanExecutor> exec(InternalPlanner::collectionScan(_txn,
                                                                       _collection->ns().ns(),
                                                                       _collection));
         if (_buildInBackground) {

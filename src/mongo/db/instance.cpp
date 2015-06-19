@@ -32,8 +32,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread/thread.hpp>
 #include <fstream>
 #include <memory>
 
@@ -52,6 +50,7 @@
 #include "mongo/db/concurrency/d_concurrency.h"
 #include "mongo/db/concurrency/lock_state.h"
 #include "mongo/db/concurrency/write_conflict_exception.h"
+#include "mongo/db/curop_metrics.h"
 #include "mongo/db/db.h"
 #include "mongo/db/db_raii.h"
 #include "mongo/db/dbdirectclient.h"
@@ -59,7 +58,6 @@
 #include "mongo/db/dbmessage.h"
 #include "mongo/db/exec/delete.h"
 #include "mongo/db/exec/update.h"
-#include "mongo/db/service_context.h"
 #include "mongo/db/global_timestamp.h"
 #include "mongo/db/instance.h"
 #include "mongo/db/introspect.h"
@@ -81,6 +79,7 @@
 #include "mongo/db/query/get_executor.h"
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/repl/replication_coordinator_global.h"
+#include "mongo/db/service_context.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/db/storage/storage_engine.h"
 #include "mongo/db/storage_options.h"
@@ -93,12 +92,14 @@
 #include "mongo/rpc/legacy_request.h"
 #include "mongo/rpc/legacy_request_builder.h"
 #include "mongo/rpc/metadata.h"
+#include "mongo/rpc/request_interface.h"
 #include "mongo/s/catalog/catalog_manager.h"
 #include "mongo/s/d_state.h"
 #include "mongo/s/grid.h"
 #include "mongo/s/stale_exception.h" // for SendStaleConfigException
 #include "mongo/scripting/engine.h"
 #include "mongo/stdx/memory.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/fail_point_service.h"
 #include "mongo/util/log.h"
@@ -108,9 +109,9 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
+    using std::unique_ptr;
     using logger::LogComponent;
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::hex;
     using std::ios;
@@ -172,11 +173,10 @@ namespace {
         return Status::OK();
     }
 
-    // TODO: need a version of this that can return an OP_COMMANDREPLY
-    void generateErrorResponse(const AssertionException* exception,
-                               const QueryMessage& queryMessage,
-                               CurOp* curop,
-                               Message* response) {
+    void generateLegacyQueryErrorResponse(const AssertionException* exception,
+                                          const QueryMessage& queryMessage,
+                                          CurOp* curop,
+                                          Message* response) {
         curop->debug().exceptionInfo = exception->getInfo();
 
         log(LogComponent::kQuery) << "assertion " << exception->toString()
@@ -240,46 +240,36 @@ namespace {
         DbMessage dbMessage(message);
         QueryMessage queryMessage(dbMessage);
 
-        rpc::LegacyRequest request{&message};
-
         CurOp* op = CurOp::get(txn);
 
-        std::unique_ptr<Message> response(new Message());
+        rpc::LegacyReplyBuilder builder{};
 
         try {
-            // Do the namespace validity check under the try/catch block so it does not cause the
-            // connection to be terminated.
-            uassert(ErrorCodes::InvalidNamespace,
-                    str::stream() << "Invalid ns [" << request.getDatabase() << ".$cmd" << "]",
-                    NamespaceString::validDBName(request.getDatabase()));
-
-            rpc::LegacyReplyBuilder builder{std::move(response)};
-
+            // This will throw if the request is on an invalid namespace.
+            rpc::LegacyRequest request{&message};
             // Auth checking for Commands happens later.
             int nToReturn = queryMessage.ntoreturn;
-            beginQueryOp(nss, queryMessage.query, nToReturn, queryMessage.ntoskip, op);
-            op->markCommand();
+            beginQueryOp(txn, nss, queryMessage.query, nToReturn, queryMessage.ntoskip);
+            {
+                stdx::lock_guard<Client> lk(*txn->getClient());
+                op->markCommand_inlock();
+            }
 
             uassert(16979, str::stream() << "bad numberToReturn (" << nToReturn
                                          << ") for $cmd type ns - can only be 1 or -1",
                     nToReturn == 1 || nToReturn == -1);
 
-            if (!runCommands(txn, request, &builder)) {
-                uasserted(13530, "bad or malformed command request?");
-            }
+            runCommands(txn, request, &builder);
 
             op->debug().iscommand = true;
             // TODO: Does this get overwritten/do we really need to set this twice?
             op->debug().query = request.getCommandArgs();
-
-            response = builder.done();
-
-            invariant(!response->empty());
         }
-        catch (const AssertionException& exception) {
-            response.reset(new Message());
-            generateErrorResponse(&exception, queryMessage, op, response.get());
+        catch (const DBException& exception) {
+            Command::generateErrorResponse(txn, &builder, exception);
         }
+
+        auto response = builder.done();
 
         op->debug().responseLength = response->header().dataLen();
 
@@ -309,22 +299,20 @@ namespace {
             // We construct a legacy $cmd namespace so we can fill in curOp using
             // the existing logic that existed for OP_QUERY commands
             NamespaceString nss(request.getDatabase(), "$cmd");
-            beginQueryOp(nss, request.getCommandArgs(), 1, 0, curOp);
-            curOp->markCommand();
-
-            if (!runCommands(txn, request, &replyBuilder)) {
-                uasserted(28654, "bad or malformed command request?");
+            beginQueryOp(txn, nss, request.getCommandArgs(), 1, 0);
+            {
+                stdx::lock_guard<Client> lk(*txn->getClient());
+                curOp->markCommand_inlock();
             }
+
+            runCommands(txn, request, &replyBuilder);
 
             curOp->debug().iscommand = true;
             curOp->debug().query = request.getCommandArgs();
 
         }
-        catch (...) {
-            // TODO handle SendStaleConfigException here when OP_COMMAND
-            // is implemented in mongos (SERVER-18292).
-            replyBuilder.setMetadata(rpc::metadata::empty())
-                        .setCommandReply(exceptionToStatus());
+        catch (const DBException& exception) {
+            Command::generateErrorResponse(txn, &replyBuilder, exception);
         }
 
         auto response = replyBuilder.done();
@@ -396,7 +384,7 @@ namespace {
 
         DbMessage d(m);
         QueryMessage q(d);
-        auto_ptr< Message > resp( new Message() );
+        unique_ptr< Message > resp( new Message() );
 
         CurOp& op = *CurOp::get(txn);
 
@@ -406,12 +394,12 @@ namespace {
             audit::logQueryAuthzCheck(client, nss, q.query, status.code());
             uassertStatusOK(status);
 
-            dbResponse.exhaustNS = runQuery(txn, q, nss, op, *resp);
+            dbResponse.exhaustNS = runQuery(txn, q, nss, *resp);
             verify( !resp->empty() );
         }
         catch (const AssertionException& exception) {
             resp.reset(new Message());
-            generateErrorResponse(&exception, q, &op, resp.get());
+            generateLegacyQueryErrorResponse(&exception, q, &op, resp.get());
         }
 
         op.debug().responseLength = resp->header().dataLen();
@@ -516,13 +504,11 @@ namespace {
             break;
         }
 
-        scoped_ptr<CurOp> nestedOp;
-        if (CurOp::get(txn)->active()) {
-            nestedOp.reset(new CurOp(&c));
-        }
-
         CurOp& currentOp = *CurOp::get(txn);
-        currentOp.reset(op);
+        {
+            stdx::lock_guard<Client> lk(*txn->getClient());
+            currentOp.setOp_inlock(op);
+        }
 
         OpDebug& debug = currentOp.debug();
         debug.op = op;
@@ -591,7 +577,8 @@ namespace {
                 }
                 else {
                     if (remote != DBDirectClient::dummyHost) {
-                        const ShardedConnectionInfo* connInfo = ShardedConnectionInfo::get(false);
+                        const ShardedConnectionInfo* connInfo =
+                            ShardedConnectionInfo::get(&c, false);
                         uassert(18663,
                                 str::stream() << "legacy writeOps not longer supported for "
                                               << "versioned connections, ns: " << nsString.ns()
@@ -661,7 +648,7 @@ namespace {
             }
         }
 
-        debug.recordStats();
+        recordCurOpMetrics(txn);
         debug.reset();
     }
 
@@ -718,7 +705,10 @@ namespace {
         uassertStatusOK(status);
 
         op.debug().query = query;
-        op.setQuery(query);
+        {
+            stdx::lock_guard<Client> lk(*txn->getClient());
+            op.setQuery_inlock(query);
+        }
 
         UpdateRequest request(nsString);
         request.setUpsert(upsert);
@@ -756,7 +746,7 @@ namespace {
                                                       &parsedUpdate,
                                                       &op.debug(),
                                                       &rawExec));
-                    boost::scoped_ptr<PlanExecutor> exec(rawExec);
+                    std::unique_ptr<PlanExecutor> exec(rawExec);
 
                     // Run the plan and get stats out.
                     uassertStatusOK(exec->executePlan());
@@ -790,8 +780,7 @@ namespace {
             OldClientContext ctx(txn, nsString);
             uassert(ErrorCodes::NotMaster,
                     str::stream() << "Not primary while performing update on " << nsString.ns(),
-                    repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(
-                        nsString.db()));
+                    repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nsString));
 
             Database* db = ctx.db();
             if (db->getCollection(nsString)) {
@@ -811,7 +800,7 @@ namespace {
                                               &parsedUpdate,
                                               &op.debug(),
                                               &rawExec));
-            boost::scoped_ptr<PlanExecutor> exec(rawExec);
+            std::unique_ptr<PlanExecutor> exec(rawExec);
 
             // Run the plan and get stats out.
             uassertStatusOK(exec->executePlan());
@@ -841,7 +830,10 @@ namespace {
         uassertStatusOK(status);
 
         op.debug().query = pattern;
-        op.setQuery(pattern);
+        {
+            stdx::lock_guard<Client> lk(*txn->getClient());
+            op.setQuery_inlock(pattern);
+        }
 
         DeleteRequest request(nsString);
         request.setQuery(pattern);
@@ -871,7 +863,7 @@ namespace {
                                                   ctx.db()->getCollection(nsString),
                                                   &parsedDelete,
                                                   &rawExec));
-                boost::scoped_ptr<PlanExecutor> exec(rawExec);
+                std::unique_ptr<PlanExecutor> exec(rawExec);
 
                 // Run the plan and get the number of docs deleted.
                 uassertStatusOK(exec->executePlan());
@@ -906,8 +898,8 @@ namespace {
         curop.debug().ntoreturn = ntoreturn;
         curop.debug().cursorid = cursorid;
 
-        scoped_ptr<AssertionException> ex;
-        scoped_ptr<Timer> timer;
+        unique_ptr<AssertionException> ex;
+        unique_ptr<Timer> timer;
         int pass = 0;
         bool exhaust = false;
         QueryResult::View msgdata = 0;
@@ -932,7 +924,7 @@ namespace {
                         last = getLastSetTimestamp();
                     }
                     else {
-                        repl::waitForTimestampChange(last, Seconds(1));
+                        repl::waitUpToOneSecondForTimestampChange(last);
                     }
                 }
 
@@ -940,7 +932,6 @@ namespace {
                                   ns,
                                   ntoreturn,
                                   cursorid,
-                                  curop,
                                   pass,
                                   exhaust,
                                   &isCursorAuthorized);
@@ -1136,13 +1127,12 @@ namespace {
                 auto indexNs = NamespaceString(d.getns());
                 auto cmdRequestMsg = requestBuilder.setDatabase(indexNs.db())
                                                    .setCommandName("createIndexes")
-                                                   .setMetadata(rpc::metadata::empty())
+                                                   .setMetadata(rpc::makeEmptyMetadata())
                                                    .setCommandArgs(cmdObj).done();
                 rpc::LegacyRequest cmdRequest{cmdRequestMsg.get()};
                 rpc::LegacyReplyBuilder cmdReplyBuilder{};
                 Command::execCommand(txn,
                                      createIndexesCmd,
-                                     cmdObj, // TODO remove (SERVER-18236)
                                      cmdRequest,
                                      &cmdReplyBuilder);
                 auto cmdReplyMsg = cmdReplyBuilder.done();
@@ -1198,7 +1188,7 @@ namespace {
             // CONCURRENCY TODO: is being read locked in big log sufficient here?
             // writelock is used to synchronize stepdowns w/ writes
             uassert(notMasterCodeForInsert, "not master",
-                    repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(nsString.db()));
+                    repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nsString));
 
             // OldClientContext may implicitly create a database, so check existence
             if (dbHolder().get(txn, nsString.db()) != NULL) {
@@ -1225,7 +1215,7 @@ namespace {
         // CONCURRENCY TODO: is being read locked in big log sufficient here?
         // writelock is used to synchronize stepdowns w/ writes
         uassert(notMasterCodeForInsert, "not master",
-                repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(nsString.db()));
+                repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nsString));
 
         OldClientContext ctx(txn, ns);
 
@@ -1258,7 +1248,7 @@ namespace {
 
         /* must do this before unmapping mem or you may get a seg fault */
         log(LogComponent::kNetwork) << "shutdown: going to close sockets..." << endl;
-        boost::thread close_socket_thread( stdx::bind(MessagingPort::closeAllSockets, 0) );
+        stdx::thread close_socket_thread( stdx::bind(MessagingPort::closeAllSockets, 0) );
 
         getGlobalServiceContext()->shutdownGlobalStorageEngineCleanly();
     }
@@ -1269,7 +1259,7 @@ namespace {
     //  Ensures shutdown is single threaded.
     // Lock Ordering:
     //  No restrictions
-    boost::mutex shutdownLock;
+    stdx::mutex shutdownLock;
 
     void signalShutdown() {
         // Notify all threads shutdown has started
@@ -1281,7 +1271,7 @@ namespace {
         shutdownInProgress.fetchAndAdd(1);
 
         // Grab the shutdown lock to prevent concurrent callers
-        boost::lock_guard<boost::mutex> lockguard(shutdownLock);
+        stdx::lock_guard<stdx::mutex> lockguard(shutdownLock);
 
         // Global storage engine may not be started in all cases before we exit
         if (getGlobalServiceContext()->getGlobalStorageEngine() == NULL) {
@@ -1376,37 +1366,37 @@ namespace {
     }
 
     int DiagLog::setLevel( int newLevel ) {
-        boost::lock_guard<boost::mutex> lk(mutex);
+        stdx::lock_guard<stdx::mutex> lk(mutex);
         int old = level;
         log() << "diagLogging level=" << newLevel << endl;
-        if( f == 0 ) { 
+        if( f == 0 ) {
             openFile();
         }
         level = newLevel; // must be done AFTER f is set
         return old;
     }
-    
+
     void DiagLog::flush() {
         if ( level ) {
             log() << "flushing diag log" << endl;
-            boost::lock_guard<boost::mutex> lk(mutex);
+            stdx::lock_guard<stdx::mutex> lk(mutex);
             f->flush();
         }
     }
-    
+
     void DiagLog::writeop(char *data,int len) {
         if ( level & 1 ) {
-            boost::lock_guard<boost::mutex> lk(mutex);
+            stdx::lock_guard<stdx::mutex> lk(mutex);
             f->write(data,len);
         }
     }
-    
+
     void DiagLog::readop(char *data, int len) {
         if ( level & 2 ) {
             bool log = (level & 4) == 0;
             OCCASIONALLY log = true;
             if ( log ) {
-                boost::lock_guard<boost::mutex> lk(mutex);
+                stdx::lock_guard<stdx::mutex> lk(mutex);
                 verify( f );
                 f->write(data,len);
             }

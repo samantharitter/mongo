@@ -40,7 +40,7 @@
 namespace mongo {
 
     using boost::intrusive_ptr;
-    using boost::shared_ptr;
+    using std::shared_ptr;
     using std::pair;
     using std::vector;
 
@@ -241,6 +241,8 @@ namespace mongo {
         {"$max", AccumulatorMinMax::createMax},
         {"$min", AccumulatorMinMax::createMin},
         {"$push", AccumulatorPush::create},
+        {"$stdDevPop", AccumulatorStdDev::createPop},
+        {"$stdDevSamp", AccumulatorStdDev::createSamp},
         {"$sum", AccumulatorSum::create},
     };
 

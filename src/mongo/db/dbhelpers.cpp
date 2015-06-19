@@ -37,7 +37,6 @@
 #include <boost/filesystem/operations.hpp>
 #include <fstream>
 
-#include "mongo/client/dbclientinterface.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/index_create.h"
 #include "mongo/db/db.h"
@@ -69,7 +68,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::ios_base;
     using std::ofstream;
@@ -146,7 +145,7 @@ namespace mongo {
                             &rawExec,
                             options).isOK());
 
-        auto_ptr<PlanExecutor> exec(rawExec);
+        unique_ptr<PlanExecutor> exec(rawExec);
         PlanExecutor::ExecState state;
         RecordId loc;
         if (PlanExecutor::ADVANCED == (state = exec->getNext(NULL, &loc))) {
@@ -201,7 +200,7 @@ namespace mongo {
 
     bool Helpers::getSingleton(OperationContext* txn, const char *ns, BSONObj& result) {
         AutoGetCollectionForRead ctx(txn, ns);
-        auto_ptr<PlanExecutor> exec(InternalPlanner::collectionScan(txn, ns, ctx.getCollection()));
+        unique_ptr<PlanExecutor> exec(InternalPlanner::collectionScan(txn, ns, ctx.getCollection()));
         PlanExecutor::ExecState state = exec->getNext(&result, NULL);
 
         CurOp::get(txn)->done();
@@ -215,7 +214,7 @@ namespace mongo {
 
     bool Helpers::getLast(OperationContext* txn, const char *ns, BSONObj& result) {
         AutoGetCollectionForRead autoColl(txn, ns);
-        auto_ptr<PlanExecutor> exec(InternalPlanner::collectionScan(txn,
+        unique_ptr<PlanExecutor> exec(InternalPlanner::collectionScan(txn,
                                                                     ns,
                                                                     autoColl.getCollection(),
                                                                     InternalPlanner::BACKWARD));
@@ -367,7 +366,7 @@ namespace mongo {
                     collection->getIndexCatalog()->findIndexByKeyPattern( txn,
                                                                           indexKeyPattern.toBSON() );
 
-                auto_ptr<PlanExecutor> exec(InternalPlanner::indexScan(txn, collection, desc,
+                unique_ptr<PlanExecutor> exec(InternalPlanner::indexScan(txn, collection, desc,
                                                                        min, max,
                                                                        maxInclusive,
                                                                        InternalPlanner::FORWARD,
@@ -382,18 +381,14 @@ namespace mongo {
                 exec.reset();
                 if (PlanExecutor::IS_EOF == state) { break; }
 
-                if (PlanExecutor::DEAD == state) {
-                    warning(LogComponent::kSharding) << "cursor died: aborting deletion for "
-                              << min << " to " << max << " in " << ns
-                              << endl;
-                    break;
-                }
-
-                if (PlanExecutor::FAILURE == state) {
-                    warning(LogComponent::kSharding) << "cursor error while trying to delete "
+                if (PlanExecutor::FAILURE == state || PlanExecutor::DEAD == state) {
+                    const std::unique_ptr<PlanStageStats> stats(exec->getStats());
+                    warning(LogComponent::kSharding) << PlanExecutor::statestr(state)
+                              << " - cursor error while trying to delete "
                               << min << " to " << max
                               << " in " << ns << ": "
-                              << WorkingSetCommon::toStatusString(obj) << endl;
+                              << WorkingSetCommon::toStatusString(obj) << ", stats: "
+                              << Explain::statsToBSON(*stats) << endl;
                     break;
                 }
 
@@ -433,7 +428,8 @@ namespace mongo {
                     }
                 }
 
-                if (!repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(ns)) {
+                NamespaceString nss(ns);
+                if (!repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nss)) {
                     warning() << "stepped down from primary while deleting chunk; "
                               << "orphaning data in " << ns
                               << " in range [" << min << ", " << max << ")";
@@ -543,7 +539,7 @@ namespace mongo {
         bool isLargeChunk = false;
         long long docCount = 0;
 
-        auto_ptr<PlanExecutor> exec(
+        unique_ptr<PlanExecutor> exec(
             InternalPlanner::indexScan(txn, collection, idx, min, max, false));
         // we can afford to yield here because any change to the base data that we might miss  is
         // already being queued and will be migrated in the 'transferMods' stage

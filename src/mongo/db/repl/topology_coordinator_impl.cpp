@@ -350,7 +350,7 @@ namespace {
     }
 
     void TopologyCoordinatorImpl::prepareSyncFromResponse(
-            const ReplicationExecutor::CallbackData& data,
+            const ReplicationExecutor::CallbackArgs& data,
             const HostAndPort& target,
             const OpTime& lastOpApplied,
             BSONObjBuilder* response,
@@ -750,7 +750,6 @@ namespace {
             const OpTime& lastOpApplied,
             ReplSetHeartbeatResponse* response) {
 
-        response->setProtocolVersion(1);
         // Verify that replica set names match
         const std::string rshb = args.getSetName();
         if (ourSetName != rshb) {
@@ -1425,7 +1424,7 @@ namespace {
     }
 
     void TopologyCoordinatorImpl::prepareStatusResponse(
-            const ReplicationExecutor::CallbackData& data,
+            const ReplicationExecutor::CallbackArgs& data,
             Date_t now,
             unsigned selfUptime,
             const OpTime& lastOpApplied,
@@ -2170,6 +2169,14 @@ namespace {
         return _maintenanceModeCalls;
     }
 
+    bool TopologyCoordinatorImpl::updateTerm(long long term) {
+        if (term <= _term) {
+            return false;
+        }
+        _term = term;
+        return true;
+    }
+
     long long TopologyCoordinatorImpl::getTerm() const {
         return _term;
     }
@@ -2246,10 +2253,6 @@ namespace {
             const ReplSetRequestVotesArgs& args,
             ReplSetRequestVotesResponse* response,
             const OpTime& lastAppliedOpTime) {
-        if (args.getTerm() > _term) {
-            _term = args.getTerm();
-        }
-
         response->setOk(true);
         response->setTerm(_term);
 
@@ -2269,13 +2272,15 @@ namespace {
             response->setVoteGranted(false);
             response->setReason("candidate's data is staler than mine");
         }
-        else if (_lastVote.getTerm() == args.getTerm()) {
+        else if (!args.isADryRun() && _lastVote.getTerm() == args.getTerm()) {
             response->setVoteGranted(false);
             response->setReason("already voted for another candidate this term");
         }
         else {
-            _lastVote.setTerm(args.getTerm());
-            _lastVote.setCandidateId(args.getCandidateId());
+            if (!args.isADryRun()) {
+                _lastVote.setTerm(args.getTerm());
+                _lastVote.setCandidateId(args.getCandidateId());
+            }
             response->setVoteGranted(true);
         }
 
@@ -2291,14 +2296,9 @@ namespace {
         else if (args.getTerm() < _term) {
             return {ErrorCodes::BadValue, "term has already passed"};
         }
-        else if (args.getTerm() == _term &&
+        else if (args.getTerm() == _term && _currentPrimaryIndex > -1 && 
                  args.getWinnerId() != _rsConfig.getMemberAt(_currentPrimaryIndex).getId()) {
             return {ErrorCodes::BadValue, "term already has a primary"};
-        }
-
-        if (args.getTerm() > _term) {
-            _term = args.getTerm();
-            *responseTerm = _term;
         }
 
         _currentPrimaryIndex = _rsConfig.findMemberIndexByConfigId(args.getWinnerId());

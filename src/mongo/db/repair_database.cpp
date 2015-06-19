@@ -32,7 +32,6 @@
 
 #include "mongo/db/repair_database.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/db/background.h"
 #include "mongo/base/status.h"
@@ -85,8 +84,8 @@ namespace {
         // Skip the rest if there are no indexes to rebuild.
         if (indexSpecs.empty()) return Status::OK();
 
-        boost::scoped_ptr<Collection> collection;
-        boost::scoped_ptr<MultiIndexBlock> indexer;
+        std::unique_ptr<Collection> collection;
+        std::unique_ptr<MultiIndexBlock> indexer;
         {
             // These steps are combined into a single WUOW to ensure there are no commits without
             // the indexes.
@@ -127,22 +126,21 @@ namespace {
         long long dataSize = 0;
 
         RecordStore* rs = collection->getRecordStore();
-        boost::scoped_ptr<RecordIterator> it(rs->getIterator(txn));
-        while (!it->isEOF()) {
-            RecordId id = it->curr();
-            RecordData data = it->dataFor(id);
-            invariant(id == it->getNext());
+        auto cursor = rs->getCursor(txn);
+        while (auto record = cursor->next()) {
+            RecordId id = record->id;
+            RecordData& data = record->data;
 
             Status status = validateBSON(data.data(), data.size());
             if (!status.isOK()) {
                 log() << "Invalid BSON detected at " << id << ": " << status << ". Deleting.";
-                it->saveState();
+                cursor->savePositioned(); // 'data' is no longer valid.
                 {
                     WriteUnitOfWork wunit(txn);
                     rs->deleteRecord(txn, id);
                     wunit.commit();
                 }
-                it->restoreState(txn);
+                cursor->restore(txn);
                 continue;
             }
 

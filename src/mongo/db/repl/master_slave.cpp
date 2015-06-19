@@ -43,9 +43,6 @@
 #include "mongo/db/repl/master_slave.h"
 
 #include <pcrecpp.h>
-#include <boost/scoped_ptr.hpp>
-#include <boost/shared_ptr.hpp>
-#include <boost/thread/thread.hpp>
 
 #include "mongo/db/auth/authorization_manager.h"
 #include "mongo/db/auth/authorization_session.h"
@@ -57,24 +54,24 @@
 #include "mongo/db/db_raii.h"
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/dbhelpers.h"
-#include "mongo/db/service_context.h"
 #include "mongo/db/op_observer.h"
 #include "mongo/db/operation_context_impl.h"
 #include "mongo/db/ops/update.h"
 #include "mongo/db/query/internal_plans.h"
-#include "mongo/db/repl/repl_client_info.h"
 #include "mongo/db/repl/handshake_args.h"
 #include "mongo/db/repl/oplog.h"
+#include "mongo/db/repl/repl_client_info.h"
 #include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/repl/sync_tail.h"
 #include "mongo/db/server_parameters.h"
+#include "mongo/db/service_context.h"
 #include "mongo/db/storage_options.h"
-#include "mongo/util/concurrency/thread_pool.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/log.h"
 
-using boost::scoped_ptr;
-using std::auto_ptr;
+using std::unique_ptr;
+using std::unique_ptr;
 using std::cout;
 using std::endl;
 using std::max;
@@ -251,7 +248,7 @@ namespace repl {
             }
         }
 
-        v.push_back( boost::shared_ptr< ReplSource >( new ReplSource( s ) ) );
+        v.push_back( std::shared_ptr< ReplSource >( new ReplSource( s ) ) );
     }
 
     /* we reuse our existing objects so that we can keep our existing connection
@@ -269,7 +266,7 @@ namespace repl {
             // check that no items are in sources other than that
             // add if missing
             int n = 0;
-            auto_ptr<PlanExecutor> exec(
+            unique_ptr<PlanExecutor> exec(
                 InternalPlanner::collectionScan(txn,
                                                 localSources,
                                                 ctx.db()->getCollection(localSources)));
@@ -314,7 +311,7 @@ namespace repl {
             }
         }
 
-        auto_ptr<PlanExecutor> exec(
+        unique_ptr<PlanExecutor> exec(
             InternalPlanner::collectionScan(txn,
                                             localSources,
                                             ctx.db()->getCollection(localSources)));
@@ -428,7 +425,7 @@ namespace repl {
             invariant(txn->lockState()->isW());
             Lock::TempRelease tempRelease(txn->lockState());
 
-            if (!_connect(&oplogReader, HostAndPort(hostName), 
+            if (!_connect(&oplogReader, HostAndPort(hostName),
                           getGlobalReplicationCoordinator()->getMyRID())) {
                 msgassertedNoTrace( 14051 , "unable to connect to resync");
             }
@@ -506,12 +503,12 @@ namespace repl {
 
         log() << "resync: done with initial clone for db: " << db << endl;
     }
-    
+
     static DatabaseIgnorer ___databaseIgnorer;
-    
+
     void DatabaseIgnorer::doIgnoreUntilAfter( const string &db, const Timestamp &futureOplogTime ) {
         if ( futureOplogTime > _ignores[ db ] ) {
-            _ignores[ db ] = futureOplogTime;   
+            _ignores[ db ] = futureOplogTime;
         }
     }
 
@@ -535,19 +532,19 @@ namespace repl {
         // We are already locked at this point
         if (dbHolder().get(txn, ns) != NULL) {
             // Database is already present.
-            return true;   
+            return true;
         }
         BSONElement ts = op.getField( "ts" );
         if ( ( ts.type() == Date || ts.type() == bsonTimestamp ) && ___databaseIgnorer.ignoreAt( db, ts.timestamp() ) ) {
             // Database is ignored due to a previous indication that it is
             // missing from master after optime "ts".
-            return false;   
+            return false;
         }
         if (Database::duplicateUncasedName(db).empty()) {
             // No duplicate database names are present.
             return true;
         }
-        
+
         Timestamp lastTime;
         bool dbOk = false;
         {
@@ -558,7 +555,7 @@ namespace repl {
             // We always log an operation after executing it (never before), so
             // a database list will always be valid as of an oplog entry generated
             // before it was retrieved.
-            
+
             BSONObj last = oplogReader.findOne( this->ns().c_str(), Query().sort( BSON( "$natural" << -1 ) ) );
             if ( !last.isEmpty() ) {
                     BSONElement ts = last.getField( "ts" );
@@ -573,34 +570,34 @@ namespace repl {
             BSONObjIterator i( info.getField( "databases" ).embeddedObject() );
             while( i.more() ) {
                 BSONElement e = i.next();
-            
+
                 const char * name = e.embeddedObject().getField( "name" ).valuestr();
                 if ( strcasecmp( name, db ) != 0 )
                     continue;
-                
+
                 if ( strcmp( name, db ) == 0 ) {
                     // The db exists on master, still need to check that no conflicts exist there.
                     dbOk = true;
                     continue;
                 }
-                
+
                 // The master has a db name that conflicts with the requested name.
                 dbOk = false;
                 break;
             }
         }
-        
+
         if ( !dbOk ) {
             ___databaseIgnorer.doIgnoreUntilAfter( db, lastTime );
             incompleteCloneDbs.erase(db);
             addDbNextPass.erase(db);
-            return false;   
+            return false;
         }
-        
+
         // Check for duplicates again, since we released the lock above.
         set< string > duplicates;
         Database::duplicateUncasedName(db, &duplicates);
-        
+
         // The database is present on the master and no conflicting databases
         // are present on the master.  Drop any local conflicts.
         for( set< string >::const_iterator i = duplicates.begin(); i != duplicates.end(); ++i ) {
@@ -611,7 +608,7 @@ namespace repl {
             OldClientContext ctx(txn, *i);
             dropDatabase(txn, ctx.db());
         }
-        
+
         massert(14034, "Duplicate database names present after attempting to delete duplicates",
                 Database::duplicateUncasedName(db).empty());
         return true;
@@ -695,6 +692,9 @@ namespace repl {
         if ( !only.empty() && only != clientName )
             return;
 
+        // Push the CurOp stack for "txn" so each individual oplog entry application is separately
+        // reported.
+        CurOp individualOp(txn);
         txn->setReplicatedWrites(false);
         const ReplSettings& replSettings = getGlobalReplicationCoordinator()->getSettings();
         if (replSettings.pretouch &&
@@ -711,7 +711,7 @@ namespace repl {
                     if( tp.get() == 0 ) {
                         int nthr = min(8, replSettings.pretouch);
                         nthr = max(nthr, 1);
-                        tp.reset( new ThreadPool(nthr) );
+                        tp.reset( new OldThreadPool(nthr) );
                     }
                     vector<BSONObj> v;
                     oplogReader.peek(v, replSettings.pretouch);
@@ -735,7 +735,7 @@ namespace repl {
             }
         }
 
-        scoped_ptr<Lock::GlobalWrite> lk(alreadyLocked ? 0 : new Lock::GlobalWrite(txn->lockState()));
+        unique_ptr<Lock::GlobalWrite> lk(alreadyLocked ? 0 : new Lock::GlobalWrite(txn->lockState()));
 
         if ( replAllDead ) {
             // hmmm why is this check here and not at top of this function? does it get set between top and here?
@@ -744,7 +744,7 @@ namespace repl {
         }
 
         if (!handleDuplicateDbName(txn, op, ns, clientName)) {
-            return;   
+            return;
         }
 
         // special case apply for commands to avoid implicit database creation
@@ -757,7 +757,6 @@ namespace repl {
         // mongos will not send requests there. That's why the last argument is false (do not do
         // version checking).
         OldClientContext ctx(txn, ns, false);
-        CurOp::get(txn)->reset();
 
         bool empty = !ctx.db()->getDatabaseCatalogEntry()->hasUserData();
         bool incompleteClone = incompleteCloneDbs.count( clientName ) != 0;
@@ -892,7 +891,7 @@ namespace repl {
                         }
                     }
                 }
-                // obviously global isn't ideal, but non-repl set is old so 
+                // obviously global isn't ideal, but non-repl set is old so
                 // keeping it simple
                 ScopedTransaction transaction(txn, MODE_X);
                 Lock::GlobalWrite lk(txn->lockState());
@@ -1021,7 +1020,7 @@ namespace repl {
                 if ( moreInitialSyncsPending || !oplogReader.more() ) {
                     ScopedTransaction transaction(txn, MODE_X);
                     Lock::GlobalWrite lk(txn->lockState());
-                    
+
                     if (tailing) {
                         okResultCode = 0; // don't sleep
                     }
@@ -1049,7 +1048,7 @@ namespace repl {
 
                 int b = replApplyBatchSize.get();
                 bool justOne = b == 1;
-                scoped_ptr<Lock::GlobalWrite> lk(justOne ? 0 : new Lock::GlobalWrite(txn->lockState()));
+                unique_ptr<Lock::GlobalWrite> lk(justOne ? 0 : new Lock::GlobalWrite(txn->lockState()));
                 while( 1 ) {
 
                     BSONElement ts = op.getField("ts");
@@ -1132,8 +1131,8 @@ namespace repl {
             return -1;
         }
 
-        if ( !_connect(&oplogReader, 
-                       HostAndPort(hostName), 
+        if ( !_connect(&oplogReader,
+                       HostAndPort(hostName),
                        getGlobalReplicationCoordinator()->getMyRID()) ) {
             LOG(4) << "can't connect to sync source" << endl;
             return -1;
@@ -1364,13 +1363,13 @@ namespace repl {
         if ( replSettings.slave ) {
             verify( replSettings.slave == SimpleSlave );
             LOG(1) << "slave=true" << endl;
-            boost::thread repl_thread(replSlaveThread);
+            stdx::thread repl_thread(replSlaveThread);
         }
 
         if ( replSettings.master ) {
             LOG(1) << "master=true" << endl;
             createOplog(txn);
-            boost::thread t(replMasterThread);
+            stdx::thread t(replMasterThread);
         }
 
         if (replSettings.fastsync) {

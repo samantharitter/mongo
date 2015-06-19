@@ -32,6 +32,7 @@
 
 #include "mongo/db/operation_context_noop.h"
 #include "mongo/db/op_observer.h"
+#include "mongo/stdx/memory.h"
 
 namespace mongo {
 
@@ -39,7 +40,7 @@ namespace mongo {
         return NULL;
     }
 
-    void ServiceContextNoop::setGlobalStorageEngine(const std::string& name) {
+    void ServiceContextNoop::initializeGlobalStorageEngine() {
     }
 
     void ServiceContextNoop::shutdownGlobalStorageEngineCleanly() {
@@ -81,8 +82,8 @@ namespace mongo {
     void ServiceContextNoop::registerKillOpListener(KillOpListenerInterface* listener) {
     }
 
-    OperationContext* ServiceContextNoop::newOpCtx() {
-        return new OperationContextNoop();
+    std::unique_ptr<OperationContext> ServiceContextNoop::_newOpCtx(Client* client) {
+        return stdx::make_unique<OperationContextNoop>(client, _nextOpId.fetchAndAdd(1));
     }
 
     void ServiceContextNoop::setOpObserver(std::unique_ptr<OpObserver> opObserver) {

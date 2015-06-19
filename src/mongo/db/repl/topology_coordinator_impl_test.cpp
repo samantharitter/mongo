@@ -28,12 +28,12 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
 #include <iostream>
 
 #include "mongo/db/repl/heartbeat_response_action.h"
 #include "mongo/db/repl/member_heartbeat_data.h"
 #include "mongo/db/repl/repl_set_heartbeat_args.h"
+#include "mongo/db/repl/repl_set_heartbeat_args_v1.h"
 #include "mongo/db/repl/repl_set_heartbeat_response.h"
 #include "mongo/db/repl/repl_set_declare_election_winner_args.h"
 #include "mongo/db/repl/repl_set_request_votes_args.h"
@@ -47,7 +47,7 @@
 #define ASSERT_NO_ACTION(EXPRESSION) \
     ASSERT_EQUALS(mongo::repl::HeartbeatResponseAction::NoAction, (EXPRESSION))
 
-using boost::scoped_ptr;
+using std::unique_ptr;
 
 namespace mongo {
 namespace repl {
@@ -69,7 +69,7 @@ namespace {
             _topo.reset(new TopologyCoordinatorImpl(Seconds(100)));
             _now = Date_t();
             _selfIndex = -1;
-            _cbData.reset(new ReplicationExecutor::CallbackData(
+            _cbData.reset(new ReplicationExecutor::CallbackArgs(
                         NULL, ReplicationExecutor::CallbackHandle(), Status::OK()));
         }
 
@@ -80,7 +80,7 @@ namespace {
 
     protected:
         TopologyCoordinatorImpl& getTopoCoord() {return *_topo;}
-        ReplicationExecutor::CallbackData cbData() {return *_cbData;}
+        ReplicationExecutor::CallbackArgs cbData() {return *_cbData;}
         Date_t& now() {return _now;}
 
         int64_t countLogLinesContaining(const std::string& needle) {
@@ -186,17 +186,18 @@ namespace {
                                                         const OpTime& lastOpTimeSender,
                                                         const OpTime& lastOpTimeReceiver,
                                                         Milliseconds roundTripTime) {
+
+            ReplSetHeartbeatResponse hb;
+            hb.setConfigVersion(1);
+            hb.setState(memberState);
+            hb.setOpTime(lastOpTimeSender);
+            hb.setElectionTime(electionTime);
+
             StatusWith<ReplSetHeartbeatResponse> hbResponse =
+                responseStatus.isOK() ?
+                    StatusWith<ReplSetHeartbeatResponse>(hb) :
                     StatusWith<ReplSetHeartbeatResponse>(responseStatus);
 
-            if (responseStatus.isOK()) {
-                ReplSetHeartbeatResponse hb;
-                hb.setConfigVersion(1);
-                hb.setState(memberState);
-                hb.setOpTime(lastOpTimeSender);
-                hb.setElectionTime(electionTime);
-                hbResponse = StatusWith<ReplSetHeartbeatResponse>(hb);
-            }
             getTopoCoord().prepareHeartbeatRequest(now(),
                                                    setName,
                                                    member);
@@ -209,8 +210,8 @@ namespace {
         }
 
     private:
-        scoped_ptr<TopologyCoordinatorImpl> _topo;
-        scoped_ptr<ReplicationExecutor::CallbackData> _cbData;
+        unique_ptr<TopologyCoordinatorImpl> _topo;
+        unique_ptr<ReplicationExecutor::CallbackArgs> _cbData;
         Date_t _now;
         int _selfIndex;
     };
@@ -1249,7 +1250,7 @@ namespace {
                         _upRequestDate,
                         Milliseconds(0),
                         _target,
-                        StatusWith<ReplSetHeartbeatResponse>(Status::OK()),
+                        makeStatusWith<ReplSetHeartbeatResponse>(),
                         OpTime(Timestamp(0, 0), 0));  // We've never applied anything.
             ASSERT_EQUALS(HeartbeatResponseAction::NoAction, upAction.getAction());
             ASSERT_TRUE(TopologyCoordinator::Role::follower == getTopoCoord().getRole());
@@ -2068,7 +2069,7 @@ namespace {
                                                           "rs0",
                                                           election,
                                                           &hbResp));
-        ASSERT(!hbResp.hasIsElectable() || hbResp.isElectable()) << hbResp.toBSON().toString();
+        ASSERT(!hbResp.hasIsElectable() || hbResp.isElectable()) << hbResp.toString();
     }
 
     TEST_F(HeartbeatResponseTest, UpdateHeartbeatDataDoNotStepDownSelfForHighPriorityStaleNode) {
@@ -2879,7 +2880,7 @@ namespace {
     protected:
         Date_t now;
         OID round;
-        ReplicationExecutor::CallbackData cbData;
+        ReplicationExecutor::CallbackArgs cbData;
     };
 
     TEST_F(PrepareElectResponseTest, ElectResponseIncorrectReplSetName) {
@@ -3303,10 +3304,10 @@ namespace {
                       ReplicationExecutor::CallbackHandle(),
                       Status(ErrorCodes::CallbackCanceled, "")) {}
 
-        virtual ReplicationExecutor::CallbackData cbData() { return ourCbData; }
+        virtual ReplicationExecutor::CallbackArgs cbData() { return ourCbData; }
 
     private:
-        ReplicationExecutor::CallbackData ourCbData;
+        ReplicationExecutor::CallbackArgs ourCbData;
     };
 
     TEST_F(ShutdownInProgressTest, ShutdownInProgressWhenCallbackCanceledSyncFrom) {
@@ -3362,6 +3363,243 @@ namespace {
         }
 
     };
+
+    class PrepareHeartbeatResponseV1Test : public TopoCoordTest {
+    public:
+
+        virtual void setUp() {
+            TopoCoordTest::setUp();
+            updateConfig(BSON("_id" << "rs0" <<
+                              "version" << 1 <<
+                              "members" << BSON_ARRAY(
+                                  BSON("_id" << 10 << "host" << "hself") <<
+                                  BSON("_id" << 20 << "host" << "h2") <<
+                                  BSON("_id" << 30 << "host" << "h3")) <<
+                              "protocolVersion" << 1),
+                         0);
+            setSelfMemberState(MemberState::RS_SECONDARY);
+        }
+
+        void prepareHeartbeatResponseV1(const ReplSetHeartbeatArgsV1& args,
+                                        OpTime lastOpApplied,
+                                        ReplSetHeartbeatResponse* response,
+                                        Status* result) {
+            *result = getTopoCoord().prepareHeartbeatResponseV1(now()++,
+                                                                args,
+                                                                "rs0",
+                                                                lastOpApplied,
+                                                                response);
+        }
+
+    };
+
+    TEST_F(PrepareHeartbeatResponseV1Test, PrepareHeartbeatResponseBadSetName) {
+        // set up args with incorrect replset name
+        ReplSetHeartbeatArgsV1 args;
+        args.setSetName("rs1");
+        ReplSetHeartbeatResponse response;
+        Status result(ErrorCodes::InternalError, "prepareHeartbeatResponse didn't set result");
+
+        startCapturingLogMessages();
+        prepareHeartbeatResponseV1(args, OpTime(), &response, &result);
+        stopCapturingLogMessages();
+        ASSERT_EQUALS(ErrorCodes::InconsistentReplicaSetNames, result);
+        ASSERT(result.reason().find("repl set names do not match")) << "Actual string was \"" <<
+               result.reason() << '"';
+        ASSERT_EQUALS(1,
+                      countLogLinesContaining("replSet set names do not match, ours: rs0; remote "
+                            "node's: rs1"));
+        // only protocolVersion should be set in this failure case
+        ASSERT_EQUALS("", response.getReplicaSetName());
+    }
+
+    TEST_F(PrepareHeartbeatResponseV1Test, PrepareHeartbeatResponseWhenOutOfSet) {
+        // reconfig self out of set
+        updateConfig(BSON("_id" << "rs0" <<
+                          "version" << 3 <<
+                          "members" << BSON_ARRAY(
+                              BSON("_id" << 20 << "host" << "h2") <<
+                              BSON("_id" << 30 << "host" << "h3")) <<
+                          "protocolVersion" << 1),
+                     -1);
+        ReplSetHeartbeatArgsV1 args;
+        args.setSetName("rs0");
+        args.setSenderId(20);
+        ReplSetHeartbeatResponse response;
+        Status result(ErrorCodes::InternalError, "prepareHeartbeatResponse didn't set result");
+        prepareHeartbeatResponseV1(args, OpTime(), &response, &result);
+        ASSERT_EQUALS(ErrorCodes::InvalidReplicaSetConfig, result);
+        ASSERT(result.reason().find("replica set configuration is invalid or does not include us"))
+            << "Actual string was \"" << result.reason() << '"';
+        // only protocolVersion should be set in this failure case
+        ASSERT_EQUALS("", response.getReplicaSetName());
+    }
+
+    TEST_F(PrepareHeartbeatResponseV1Test, PrepareHeartbeatResponseFromSelf) {
+        // set up args with our id as the senderId
+        ReplSetHeartbeatArgsV1 args;
+        args.setSetName("rs0");
+        args.setSenderId(10);
+        ReplSetHeartbeatResponse response;
+        Status result(ErrorCodes::InternalError, "prepareHeartbeatResponse didn't set result");
+        prepareHeartbeatResponseV1(args, OpTime(), &response, &result);
+        ASSERT_EQUALS(ErrorCodes::BadValue, result);
+        ASSERT(result.reason().find("from member with the same member ID as our self")) <<
+                "Actual string was \"" << result.reason() << '"';
+        // only protocolVersion should be set in this failure case
+        ASSERT_EQUALS("", response.getReplicaSetName());
+    }
+
+    TEST_F(TopoCoordTest, PrepareHeartbeatResponseV1NoConfigYet) {
+        // set up args and acknowledge sender
+        ReplSetHeartbeatArgsV1 args;
+        args.setSetName("rs0");
+        args.setSenderId(20);
+        ReplSetHeartbeatResponse response;
+        // prepare response and check the results
+        Status result = getTopoCoord().prepareHeartbeatResponseV1(now()++,
+                                                                  args,
+                                                                  "rs0",
+                                                                  OpTime(),
+                                                                  &response);
+        ASSERT_OK(result);
+        // this change to true because we can now see a majority, unlike in the previous cases
+        ASSERT_EQUALS("rs0", response.getReplicaSetName());
+        ASSERT_EQUALS(MemberState::RS_STARTUP, response.getState().s);
+        ASSERT_EQUALS(OpTime(), response.getOpTime());
+        ASSERT_EQUALS(0, response.getTerm());
+        ASSERT_EQUALS(-2, response.getConfigVersion());
+    }
+
+    TEST_F(PrepareHeartbeatResponseV1Test, PrepareHeartbeatResponseSenderIDMissing) {
+        // set up args without a senderID
+        ReplSetHeartbeatArgsV1 args;
+        args.setSetName("rs0");
+        args.setConfigVersion(1);
+        ReplSetHeartbeatResponse response;
+        Status result(ErrorCodes::InternalError, "prepareHeartbeatResponse didn't set result");
+
+        // prepare response and check the results
+        prepareHeartbeatResponseV1(args, OpTime(), &response, &result);
+        ASSERT_OK(result);
+        ASSERT_EQUALS("rs0", response.getReplicaSetName());
+        ASSERT_EQUALS(MemberState::RS_SECONDARY, response.getState().s);
+        ASSERT_EQUALS(OpTime(), response.getOpTime());
+        ASSERT_EQUALS(0, response.getTerm());
+        ASSERT_EQUALS(1, response.getConfigVersion());
+    }
+
+    TEST_F(PrepareHeartbeatResponseV1Test, PrepareHeartbeatResponseSenderIDNotInConfig) {
+        // set up args with a senderID which is not present in our config
+        ReplSetHeartbeatArgsV1 args;
+        args.setSetName("rs0");
+        args.setConfigVersion(1);
+        args.setSenderId(2);
+        ReplSetHeartbeatResponse response;
+        Status result(ErrorCodes::InternalError, "prepareHeartbeatResponse didn't set result");
+
+        // prepare response and check the results
+        prepareHeartbeatResponseV1(args, OpTime(), &response, &result);
+        ASSERT_OK(result);
+        ASSERT_EQUALS("rs0", response.getReplicaSetName());
+        ASSERT_EQUALS(MemberState::RS_SECONDARY, response.getState().s);
+        ASSERT_EQUALS(OpTime(), response.getOpTime());
+        ASSERT_EQUALS(0, response.getTerm());
+        ASSERT_EQUALS(1, response.getConfigVersion());
+    }
+
+    TEST_F(PrepareHeartbeatResponseV1Test, PrepareHeartbeatResponseConfigVersionLow) {
+        // set up args with a config version lower than ours
+        ReplSetHeartbeatArgsV1 args;
+        args.setConfigVersion(0);
+        args.setSetName("rs0");
+        args.setSenderId(20);
+        ReplSetHeartbeatResponse response;
+        Status result(ErrorCodes::InternalError, "prepareHeartbeatResponse didn't set result");
+
+        // prepare response and check the results
+        prepareHeartbeatResponseV1(args, OpTime(), &response, &result);
+        ASSERT_OK(result);
+        ASSERT_TRUE(response.hasConfig());
+        ASSERT_EQUALS("rs0", response.getReplicaSetName());
+        ASSERT_EQUALS(MemberState::RS_SECONDARY, response.getState().s);
+        ASSERT_EQUALS(OpTime(), response.getOpTime());
+        ASSERT_EQUALS(0, response.getTerm());
+        ASSERT_EQUALS(1, response.getConfigVersion());
+    }
+
+    TEST_F(PrepareHeartbeatResponseV1Test, PrepareHeartbeatResponseConfigVersionHigh) {
+        // set up args with a config version higher than ours
+        ReplSetHeartbeatArgsV1 args;
+        args.setConfigVersion(10);
+        args.setSetName("rs0");
+        args.setSenderId(20);
+        ReplSetHeartbeatResponse response;
+        Status result(ErrorCodes::InternalError, "prepareHeartbeatResponse didn't set result");
+
+        // prepare response and check the results
+        prepareHeartbeatResponseV1(args, OpTime(), &response, &result);
+        ASSERT_OK(result);
+        ASSERT_FALSE(response.hasConfig());
+        ASSERT_EQUALS("rs0", response.getReplicaSetName());
+        ASSERT_EQUALS(MemberState::RS_SECONDARY, response.getState().s);
+        ASSERT_EQUALS(OpTime(), response.getOpTime());
+        ASSERT_EQUALS(0, response.getTerm());
+        ASSERT_EQUALS(1, response.getConfigVersion());
+    }
+
+    TEST_F(PrepareHeartbeatResponseV1Test, PrepareHeartbeatResponseAsPrimary) {
+        makeSelfPrimary(Timestamp(10,0));
+
+        ReplSetHeartbeatArgsV1 args;
+        args.setConfigVersion(1);
+        args.setSetName("rs0");
+        args.setSenderId(20);
+        ReplSetHeartbeatResponse response;
+        Status result(ErrorCodes::InternalError, "prepareHeartbeatResponse didn't set result");
+
+        // prepare response and check the results
+        prepareHeartbeatResponseV1(args, OpTime(Timestamp(11,0), 0), &response, &result);
+        ASSERT_OK(result);
+        ASSERT_FALSE(response.hasConfig());
+        ASSERT_EQUALS("rs0", response.getReplicaSetName());
+        ASSERT_EQUALS(MemberState::RS_PRIMARY, response.getState().s);
+        ASSERT_EQUALS(OpTime(Timestamp(11,0), 0), response.getOpTime());
+        ASSERT_EQUALS(0, response.getTerm());
+        ASSERT_EQUALS(1, response.getConfigVersion());
+    }
+
+    TEST_F(PrepareHeartbeatResponseV1Test, PrepareHeartbeatResponseWithSyncSource) {
+        // get a sync source
+        heartbeatFromMember(HostAndPort("h3"), "rs0",
+                            MemberState::RS_SECONDARY, OpTime());
+        heartbeatFromMember(HostAndPort("h3"), "rs0",
+                            MemberState::RS_SECONDARY, OpTime());
+        heartbeatFromMember(HostAndPort("h2"), "rs0",
+                            MemberState::RS_SECONDARY, OpTime(Timestamp(1,0), 0));
+        heartbeatFromMember(HostAndPort("h2"), "rs0",
+                            MemberState::RS_SECONDARY, OpTime(Timestamp(1,0), 0));
+        getTopoCoord().chooseNewSyncSource(now()++, OpTime());
+
+        // set up args
+        ReplSetHeartbeatArgsV1 args;
+        args.setConfigVersion(1);
+        args.setSetName("rs0");
+        args.setSenderId(20);
+        ReplSetHeartbeatResponse response;
+        Status result(ErrorCodes::InternalError, "prepareHeartbeatResponse didn't set result");
+
+        // prepare response and check the results
+        prepareHeartbeatResponseV1(args, OpTime(Timestamp(100,0), 0), &response, &result);
+        ASSERT_OK(result);
+        ASSERT_FALSE(response.hasConfig());
+        ASSERT_EQUALS("rs0", response.getReplicaSetName());
+        ASSERT_EQUALS(MemberState::RS_SECONDARY, response.getState().s);
+        ASSERT_EQUALS(OpTime(Timestamp(100,0), 0), response.getOpTime());
+        ASSERT_EQUALS(0, response.getTerm());
+        ASSERT_EQUALS(1, response.getConfigVersion());
+        ASSERT_EQUALS(HostAndPort("h2"), response.getSyncingTo());
+    }
 
     TEST_F(PrepareHeartbeatResponseTest, PrepareHeartbeatResponseBadProtocolVersion) {
         // set up args with bad protocol version
@@ -4362,6 +4600,83 @@ namespace {
     
     }
 
+    TEST_F(TopoCoordTest, ProcessRequestVotesDryRunsDoNotDisallowFutureRequestVotes) {
+        updateConfig(BSON("_id" << "rs0" <<
+                          "version" << 1 <<
+                          "members" << BSON_ARRAY(
+                              BSON("_id" << 10 << "host" << "hself") <<
+                              BSON("_id" << 20 << "host" << "h2") <<
+                              BSON("_id" << 30 << "host" << "h3"))),
+                     0);
+        setSelfMemberState(MemberState::RS_SECONDARY);
+
+        // dry run
+        ReplSetRequestVotesArgs args;
+        args.initialize(BSON("replSetRequestVotes" << 1
+                          << "setName" << "rs0"
+                          << "dryRun" << true
+                          << "term" << 1LL
+                          << "candidateId" << 10LL
+                          << "configVersion" << 1LL
+                          << "lastCommittedOp" << BSON ("ts" << Timestamp(10, 0)
+                                                     << "term" << 0LL)));
+        ReplSetRequestVotesResponse response;
+        OpTime lastAppliedOpTime;
+
+        getTopoCoord().processReplSetRequestVotes(args, &response, lastAppliedOpTime);
+        ASSERT_EQUALS("", response.getReason());
+        ASSERT_TRUE(response.getVoteGranted());
+    
+        // second dry run fine
+        ReplSetRequestVotesArgs args2;
+        args2.initialize(BSON("replSetRequestVotes" << 1
+                           << "setName" << "rs0"
+                           << "dryRun" << true
+                           << "term" << 1LL
+                           << "candidateId" << 10LL
+                           << "configVersion" << 1LL
+                           << "lastCommittedOp" << BSON ("ts" << Timestamp(10, 0)
+                                                      << "term" << 0LL)));
+        ReplSetRequestVotesResponse response2;
+
+        getTopoCoord().processReplSetRequestVotes(args2, &response2, lastAppliedOpTime);
+        ASSERT_EQUALS("", response2.getReason());
+        ASSERT_TRUE(response2.getVoteGranted());
+    
+        // real request fine
+        ReplSetRequestVotesArgs args3;
+        args3.initialize(BSON("replSetRequestVotes" << 1
+                           << "setName" << "rs0"
+                           << "dryRun" << false
+                           << "term" << 1LL
+                           << "candidateId" << 10LL
+                           << "configVersion" << 1LL
+                           << "lastCommittedOp" << BSON ("ts" << Timestamp(10, 0)
+                                                      << "term" << 0LL)));
+        ReplSetRequestVotesResponse response3;
+
+        getTopoCoord().processReplSetRequestVotes(args3, &response3, lastAppliedOpTime);
+        ASSERT_EQUALS("", response3.getReason());
+        ASSERT_TRUE(response3.getVoteGranted());
+
+        // dry post real, fails
+        ReplSetRequestVotesArgs args4;
+        args4.initialize(BSON("replSetRequestVotes" << 1
+                           << "setName" << "rs0"
+                           << "dryRun" << false
+                           << "term" << 1LL
+                           << "candidateId" << 10LL
+                           << "configVersion" << 1LL
+                           << "lastCommittedOp" << BSON ("ts" << Timestamp(10, 0)
+                                                      << "term" << 0LL)));
+        ReplSetRequestVotesResponse response4;
+
+        getTopoCoord().processReplSetRequestVotes(args4, &response4, lastAppliedOpTime);
+        ASSERT_EQUALS("already voted for another candidate this term", response4.getReason());
+        ASSERT_FALSE(response4.getVoteGranted());
+
+    }
+
     TEST_F(TopoCoordTest, ProcessRequestVotesBadCommands) {
         updateConfig(BSON("_id" << "rs0" <<
                           "version" << 1 <<
@@ -4410,6 +4725,7 @@ namespace {
                                 << "term" << 2
                                 << "winnerId" << 30));
         long long responseTerm;
+        ASSERT(getTopoCoord().updateTerm(winnerArgs.getTerm()));
         ASSERT_OK(getTopoCoord().processReplSetDeclareElectionWinner(winnerArgs, &responseTerm));
         ASSERT_EQUALS(2, responseTerm);
 
@@ -4446,6 +4762,123 @@ namespace {
         ASSERT_FALSE(response4.getVoteGranted());
     }
 
+    TEST_F(TopoCoordTest, ProcessRequestVotesBadCommandsDryRun) {
+        updateConfig(BSON("_id" << "rs0" <<
+                          "version" << 1 <<
+                          "members" << BSON_ARRAY(
+                              BSON("_id" << 10 << "host" << "hself") <<
+                              BSON("_id" << 20 << "host" << "h2") <<
+                              BSON("_id" << 30 << "host" << "h3"))),
+                     0);
+        setSelfMemberState(MemberState::RS_SECONDARY);
+        // set term to 1
+        ASSERT(getTopoCoord().updateTerm(1));
+        // and make sure we voted in term 1
+        ReplSetRequestVotesArgs argsForRealVote;
+        argsForRealVote.initialize(BSON("replSetRequestVotes" << 1
+                                     << "setName" << "rs0"
+                                     << "term" << 1LL
+                                     << "candidateId" << 10LL
+                                     << "configVersion" << 1LL
+                                     << "lastCommittedOp" << BSON ("ts" << Timestamp(10, 0)
+                                                                 << "term" << 0LL)));
+        ReplSetRequestVotesResponse responseForRealVote;
+        OpTime lastAppliedOpTime;
+
+        getTopoCoord().processReplSetRequestVotes(argsForRealVote,
+                                                  &responseForRealVote,
+                                                  lastAppliedOpTime);
+        ASSERT_EQUALS("", responseForRealVote.getReason());
+        ASSERT_TRUE(responseForRealVote.getVoteGranted());
+    
+
+        // mismatched setName
+        ReplSetRequestVotesArgs args;
+        args.initialize(BSON("replSetRequestVotes" << 1
+                          << "setName" << "wrongName"
+                          << "dryRun" << true
+                          << "term" << 2LL
+                          << "candidateId" << 10LL
+                          << "configVersion" << 1LL
+                          << "lastCommittedOp" << BSON ("ts" << Timestamp(10, 0)
+                                                     << "term" << 0LL)));
+        ReplSetRequestVotesResponse response;
+
+        getTopoCoord().processReplSetRequestVotes(args, &response, lastAppliedOpTime);
+        ASSERT_EQUALS("candidate's set name differs from mine", response.getReason());
+        ASSERT_EQUALS(1, response.getTerm());
+        ASSERT_FALSE(response.getVoteGranted());
+    
+        // mismatched configVersion
+        ReplSetRequestVotesArgs args2;
+        args2.initialize(BSON("replSetRequestVotes" << 1
+                           << "setName" << "rs0"
+                           << "dryRun" << true
+                           << "term" << 2LL
+                           << "candidateId" << 20LL
+                           << "configVersion" << 0LL
+                           << "lastCommittedOp" << BSON ("ts" << Timestamp(10, 0)
+                                                      << "term" << 0LL)));
+        ReplSetRequestVotesResponse response2;
+
+        getTopoCoord().processReplSetRequestVotes(args2, &response2, lastAppliedOpTime);
+        ASSERT_EQUALS("candidate's config version differs from mine", response2.getReason());
+        ASSERT_EQUALS(1, response2.getTerm());
+        ASSERT_FALSE(response2.getVoteGranted());
+    
+        // stale term
+        ReplSetRequestVotesArgs args3;
+        args3.initialize(BSON("replSetRequestVotes" << 1
+                           << "setName" << "rs0"
+                           << "dryRun" << true
+                           << "term" << 0LL
+                           << "candidateId" << 20LL
+                           << "configVersion" << 1LL
+                           << "lastCommittedOp" << BSON ("ts" << Timestamp(10, 0)
+                                                      << "term" << 0LL)));
+        ReplSetRequestVotesResponse response3;
+
+        getTopoCoord().processReplSetRequestVotes(args3, &response3, lastAppliedOpTime);
+        ASSERT_EQUALS("candidate's term is lower than mine", response3.getReason());
+        ASSERT_EQUALS(1, response3.getTerm());
+        ASSERT_FALSE(response3.getVoteGranted());
+    
+        // repeat term
+        ReplSetRequestVotesArgs args4;
+        args4.initialize(BSON("replSetRequestVotes" << 1
+                           << "setName" << "rs0"
+                           << "dryRun" << true
+                           << "term" << 1LL
+                           << "candidateId" << 20LL
+                           << "configVersion" << 1LL
+                           << "lastCommittedOp" << BSON ("ts" << Timestamp(10, 0)
+                                                      << "term" << 0LL)));
+        ReplSetRequestVotesResponse response4;
+
+        getTopoCoord().processReplSetRequestVotes(args4, &response4, lastAppliedOpTime);
+        ASSERT_EQUALS("", response4.getReason());
+        ASSERT_EQUALS(1, response4.getTerm());
+        ASSERT_TRUE(response4.getVoteGranted());
+    
+        // stale OpTime
+        ReplSetRequestVotesArgs args5;
+        args5.initialize(BSON("replSetRequestVotes" << 1
+                           << "setName" << "rs0"
+                           << "dryRun" << true
+                           << "term" << 3LL
+                           << "candidateId" << 20LL
+                           << "configVersion" << 1LL
+                           << "lastCommittedOp" << BSON ("ts" << Timestamp(10, 0)
+                                                      << "term" << 0LL)));
+        ReplSetRequestVotesResponse response5;
+        OpTime lastAppliedOpTime2 = {Timestamp(20, 0), 0};
+
+        getTopoCoord().processReplSetRequestVotes(args5, &response5, lastAppliedOpTime2);
+        ASSERT_EQUALS("candidate's data is staler than mine", response5.getReason());
+        ASSERT_EQUALS(1, response5.getTerm());
+        ASSERT_FALSE(response5.getVoteGranted());
+    }
+
     TEST_F(TopoCoordTest, ProcessDeclareElectionWinner) {
         updateConfig(BSON("_id" << "rs0" <<
                           "version" << 1 <<
@@ -4463,6 +4896,7 @@ namespace {
                                 << "term" << 2
                                 << "winnerId" << 30));
         long long responseTerm = -1;
+        ASSERT(getTopoCoord().updateTerm(winnerArgs.getTerm()));
         ASSERT_OK(getTopoCoord().processReplSetDeclareElectionWinner(winnerArgs, &responseTerm));
         ASSERT_EQUALS(2, responseTerm);
 

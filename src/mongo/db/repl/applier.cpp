@@ -30,8 +30,7 @@
 
 #include "mongo/db/repl/applier.h"
 
-#include <boost/thread/lock_guard.hpp>
-#include <boost/thread/lock_types.hpp>
+#include <algorithm>
 
 #include "mongo/db/operation_context.h"
 #include "mongo/db/repl/replication_executor.h"
@@ -71,7 +70,7 @@ namespace repl {
     }
 
     std::string Applier::getDiagnosticString() const {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         str::stream output;
         output << "Applier";
         output << " executor: " << _executor->getDiagnosticString();
@@ -80,12 +79,12 @@ namespace repl {
     }
 
     bool Applier::isActive() const {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         return _active;
     }
 
     Status Applier::start() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
 
         if (_active) {
             return Status(ErrorCodes::IllegalOperation, "applier already started");
@@ -106,7 +105,7 @@ namespace repl {
     void Applier::cancel() {
         ReplicationExecutor::CallbackHandle dbWorkCallbackHandle;
         {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
 
             if (!_active) {
                 return;
@@ -121,14 +120,14 @@ namespace repl {
     }
 
     void Applier::wait() {
-        boost::unique_lock<boost::mutex> lk(_mutex);
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
 
         while (_active) {
             _condition.wait(lk);
         }
     }
 
-    void Applier::_callback(const ReplicationExecutor::CallbackData& cbd) {
+    void Applier::_callback(const ReplicationExecutor::CallbackArgs& cbd) {
         if (!cbd.status.isOK()) {
             _finishCallback(cbd.status, _operations);
             return;
@@ -164,9 +163,75 @@ namespace repl {
     void Applier::_finishCallback(const StatusWith<Timestamp>& result,
                                   const Operations& operations) {
         _onCompletion(result, operations);
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         _active = false;
         _condition.notify_all();
+    }
+
+namespace {
+
+    void pauseBeforeCompletion(
+        const StatusWith<Timestamp>& result,
+        const Applier::Operations& operationsOnCompletion,
+        const PauseDataReplicatorFn& pauseDataReplicator,
+        const Applier::CallbackFn& onCompletion) {
+
+        if (result.isOK()) {
+            pauseDataReplicator();
+        }
+        onCompletion(result, operationsOnCompletion);
+    };
+
+} // namespace
+
+    StatusWith<std::pair<std::unique_ptr<Applier>, Applier::Operations> > applyUntilAndPause(
+        ReplicationExecutor* executor,
+        const Applier::Operations& operations,
+        const Applier::ApplyOperationFn& applyOperation,
+        const Timestamp& lastTimestampToApply,
+        const PauseDataReplicatorFn& pauseDataReplicator,
+        const Applier::CallbackFn& onCompletion) {
+
+        try {
+            auto comp = [](const BSONObj& left, const BSONObj& right) {
+                uassert(ErrorCodes::FailedToParse,
+                        str::stream() << "Operation missing 'ts' field': " << left,
+                        left.hasField("ts"));
+                uassert(ErrorCodes::FailedToParse,
+                        str::stream() << "Operation missing 'ts' field': " << right,
+                        right.hasField("ts"));
+                return left["ts"].timestamp() < right["ts"].timestamp();
+            };
+            auto wrapped = BSON("ts" << lastTimestampToApply);
+            auto i = std::lower_bound(operations.cbegin(), operations.cend(), wrapped, comp);
+            bool found = i != operations.cend() && !comp(wrapped, *i);
+            auto j = found ? i+1 : i;
+            Applier::Operations operationsInRange(operations.cbegin(), j);
+            Applier::Operations operationsNotInRange(j, operations.cend());
+            if (!found) {
+                return std::make_pair(
+                    std::unique_ptr<Applier>(
+                        new Applier(executor, operationsInRange, applyOperation, onCompletion)),
+                    operationsNotInRange);
+            }
+
+            return std::make_pair(
+                std::unique_ptr<Applier>(new Applier(
+                    executor,
+                    operationsInRange,
+                    applyOperation,
+                    stdx::bind(pauseBeforeCompletion,
+                               stdx::placeholders::_1,
+                               stdx::placeholders::_2,
+                               pauseDataReplicator,
+                               onCompletion))),
+                operationsNotInRange);
+        }
+        catch (...) {
+            return exceptionToStatus();
+        }
+        MONGO_UNREACHABLE;
+        return Status(ErrorCodes::InternalError, "unreachable");
     }
 
 } // namespace repl

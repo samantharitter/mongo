@@ -28,7 +28,6 @@
 
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/base/owned_pointer_vector.h"
 #include "mongo/db/exec/collection_scan.h"
@@ -77,12 +76,12 @@ namespace mongo {
 
         virtual std::vector<PlanStage*> getChildren() const;
 
+        // Returns empty PlanStageStats object
+        virtual PlanStageStats* getStats();
+
         //
         // Exec stats -- do not call these for the oplog start stage.
         //
-
-        virtual PlanStageStats* getStats() { return NULL; }
-
         virtual const CommonStats* getCommonStats() const { return NULL; }
 
         virtual const SpecificStats* getSpecificStats() const { return NULL; }
@@ -93,6 +92,9 @@ namespace mongo {
         void setBackwardsScanTime(int newTime) { _backwardsScanTime = newTime; }
         bool isExtentHopping() { return _extentHopping; }
         bool isBackwardsScanning() { return _backwardsScanning; }
+
+        static const char* kStageType;
+
     private:
         StageState workBackwardsScan(WorkingSetID* out);
 
@@ -104,11 +106,10 @@ namespace mongo {
         OperationContext* _txn;
 
         // If we're backwards scanning we just punt to a collscan.
-        boost::scoped_ptr<CollectionScan> _cs;
+        std::unique_ptr<CollectionScan> _cs;
 
         // This is only used for the extent hopping scan.
-        typedef OwnedPointerVector<RecordIterator> SubIterators;
-        SubIterators _subIterators;
+        std::vector<std::unique_ptr<RecordCursor>> _subIterators;
 
         // Have we done our heavy init yet?
         bool _needInit;

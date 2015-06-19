@@ -35,9 +35,6 @@
 
 #include <cctype>
 #include <boost/filesystem/operations.hpp>
-#include <boost/scoped_array.hpp>
-#include <boost/scoped_ptr.hpp>
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/client/dbclientcursor.h"
 #include "mongo/client/dbclientinterface.h"
@@ -50,9 +47,9 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
-    using boost::shared_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::shared_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::set;
     using std::string;
@@ -173,7 +170,7 @@ namespace {
             return false;
         }
         unsigned len = static_cast<unsigned>(fo);
-        boost::scoped_array<char> data (new char[len+1]);
+        std::unique_ptr<char[]> data (new char[len+1]);
         data[len] = 0;
         f.read(0, data.get(), len);
 
@@ -221,8 +218,8 @@ namespace {
         _loadedVersion = lastVersion;
         string coll = _localDBName + ".system.js";
 
-        scoped_ptr<DBClientBase> directDBClient(createDirectClient(txn));
-        auto_ptr<DBClientCursor> c = directDBClient->query(coll, Query(), 0, 0, NULL,
+        unique_ptr<DBClientBase> directDBClient(createDirectClient(txn));
+        unique_ptr<DBClientCursor> c = directDBClient->query(coll, Query(), 0, 0, NULL,
             QueryOption_SlaveOk, 0);
         massert(16669, "unable to get db client cursor from query", c.get());
 
@@ -316,8 +313,8 @@ namespace {
 namespace {
     class ScopeCache {
     public:
-        void release(const string& poolName, const boost::shared_ptr<Scope>& scope) {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+        void release(const string& poolName, const std::shared_ptr<Scope>& scope) {
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
 
             if (scope->hasOutOfMemoryException()) {
                 // make some room
@@ -342,12 +339,12 @@ namespace {
             _pools.push_front(toStore);
         }
 
-        boost::shared_ptr<Scope> tryAcquire(OperationContext* txn, const string& poolName) {
-            boost::lock_guard<boost::mutex> lk(_mutex);
+        std::shared_ptr<Scope> tryAcquire(OperationContext* txn, const string& poolName) {
+            stdx::lock_guard<stdx::mutex> lk(_mutex);
 
             for (Pools::iterator it = _pools.begin(); it != _pools.end(); ++it) {
                 if (it->poolName == poolName) {
-                    boost::shared_ptr<Scope> scope = it->scope;
+                    std::shared_ptr<Scope> scope = it->scope;
                     _pools.erase(it);
                     scope->incTimesUsed();
                     scope->reset();
@@ -356,12 +353,12 @@ namespace {
                 }
             }
 
-            return boost::shared_ptr<Scope>();
+            return std::shared_ptr<Scope>();
         }
 
     private:
         struct ScopeAndPool {
-            boost::shared_ptr<Scope> scope;
+            std::shared_ptr<Scope> scope;
             string poolName;
         };
 
@@ -379,7 +376,7 @@ namespace {
 
     class PooledScope : public Scope {
     public:
-        PooledScope(const std::string& pool, const boost::shared_ptr<Scope>& real)
+        PooledScope(const std::string& pool, const std::shared_ptr<Scope>& real)
             : _pool(pool)
             , _real(real) {
 
@@ -454,21 +451,21 @@ namespace {
 
     private:
         string _pool;
-        boost::shared_ptr<Scope> _real;
+        std::shared_ptr<Scope> _real;
     };
 
     /** Get a scope from the pool of scopes matching the supplied pool name */
-    auto_ptr<Scope> ScriptEngine::getPooledScope(OperationContext* txn,
+    unique_ptr<Scope> ScriptEngine::getPooledScope(OperationContext* txn,
                                                  const string& db,
                                                  const string& scopeType) {
         const string fullPoolName = db + scopeType;
-        boost::shared_ptr<Scope> s = scopeCache.tryAcquire(txn, fullPoolName);
+        std::shared_ptr<Scope> s = scopeCache.tryAcquire(txn, fullPoolName);
         if (!s) {
             s.reset(newScope());
             s->registerOperation(txn);
         }
 
-        auto_ptr<Scope> p;
+        unique_ptr<Scope> p;
         p.reset(new PooledScope(fullPoolName, s));
         p->setLocalDB(db);
         p->loadStored(txn, true);

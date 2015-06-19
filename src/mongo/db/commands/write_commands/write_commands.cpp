@@ -225,11 +225,7 @@ namespace mongo {
             AutoGetDb autoDb( txn, nsString.db(), MODE_IX );
             Lock::CollectionLock colLock( txn->lockState(), nsString.ns(), MODE_IX );
 
-            // We check the shard version explicitly here rather than using OldClientContext,
-            // as Context can do implicit database creation if the db does not exist. We want
-            // explain to be a no-op that reports a trivial EOF plan against non-existent dbs
-            // or collections.
-            ensureShardVersionOKOrThrow( nsString.ns() );
+            ensureShardVersionOKOrThrow( txn->getClient(), nsString.ns() );
 
             // Get a pointer to the (possibly NULL) collection.
             Collection* collection = NULL;
@@ -239,7 +235,7 @@ namespace mongo {
 
             PlanExecutor* rawExec;
             uassertStatusOK(getExecutorUpdate(txn, collection, &parsedUpdate, debug, &rawExec));
-            boost::scoped_ptr<PlanExecutor> exec(rawExec);
+            std::unique_ptr<PlanExecutor> exec(rawExec);
 
             // Explain the plan tree.
             Explain::explainStages( exec.get(), verbosity, out );
@@ -269,11 +265,7 @@ namespace mongo {
             AutoGetDb autoDb(txn, nsString.db(), MODE_IX);
             Lock::CollectionLock colLock(txn->lockState(), nsString.ns(), MODE_IX);
 
-            // We check the shard version explicitly here rather than using OldClientContext,
-            // as Context can do implicit database creation if the db does not exist. We want
-            // explain to be a no-op that reports a trivial EOF plan against non-existent dbs
-            // or collections.
-            ensureShardVersionOKOrThrow( nsString.ns() );
+            ensureShardVersionOKOrThrow( txn->getClient(), nsString.ns() );
 
             // Get a pointer to the (possibly NULL) collection.
             Collection* collection = NULL;
@@ -283,7 +275,7 @@ namespace mongo {
 
             PlanExecutor* rawExec;
             uassertStatusOK(getExecutorDelete(txn, collection, &parsedDelete, &rawExec));
-            boost::scoped_ptr<PlanExecutor> exec(rawExec);
+            std::unique_ptr<PlanExecutor> exec(rawExec);
 
             // Explain the plan tree.
             Explain::explainStages(exec.get(), verbosity, out);

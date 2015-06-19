@@ -1,0 +1,179 @@
+stepback: false
+
+pre:
+    - command: shell.track
+
+post:
+    - command: shell.cleanup
+
+functions:
+  "start server":
+    - command: shell.exec
+      params:
+        script: |
+          rm -rf ./*
+          mkdir src
+    - command: s3.get
+      params:
+        aws_key: ${aws_key}
+        aws_secret: ${aws_secret}
+        remote_file: perf/${build_variant}/${revision}/mongod-${build_id}
+        bucket: mciuploads
+        local_file: src/mongod
+    - command: s3.get
+      params:
+        aws_key: ${aws_key}
+        aws_secret: ${aws_secret}
+        remote_file: perf/${build_variant}/${revision}/mongo-${build_id}
+        bucket: mciuploads
+        local_file: src/mongo
+    - command: shell.exec
+      params:
+        working_dir: src
+        script: |
+          set -e 
+          set -v
+          chmod +x mongod
+          chmod +x mongo
+          git clone https://github.com/mongodb/mongo-perf perf
+          cd perf
+          git checkout evergreen
+    - command: shell.exec
+      params:
+        background: true
+        working_dir: src
+        script: |
+          set -e 
+          set -o verbose
+          mkdir -p ./dbdata
+          ${mongod_exec_wrapper} ./mongod --dbpath ./dbdata ${mongod_flags}
+          sleep 5
+          # if we started a replset, initiate it and wait for it to become primary
+          ./mongo --eval "if(db.isMaster().isreplicaset){rs.initiate(); assert.soon(function(){return db.isMaster().ismaster}, 'no primary')}"
+          echo "MONGOD STARTED."
+  "run perf tests":
+    - command: shell.exec
+      params:
+        working_dir: src
+        script: |
+          set -e
+          set -v
+          virtualenv ./venv
+          source ./venv/bin/activate
+          pip install argparse
+
+    - command: shell.exec
+      params:
+        working_dir: src
+        script: |
+          set -e 
+          set -v
+          source ./venv/bin/activate
+          cd perf
+          #  give mongod a few seconds to start up so that we can connect.
+          sleep 5
+          ${perf_exec_wrapper} python benchrun.py --shell ../mongo -t 1 2 4 8 16 --trialCount 7 -f testcases/*.js --testFilter '${filter}' --out perf.json
+    - command: "json.send"
+      params:
+        name: "perf"
+        file: "src/perf/perf.json"
+
+tasks:
+- name: compile
+  commands:
+    - command: git.get_project
+      params:
+        directory: src
+    - command: git.apply_patch
+      params:
+        directory: src
+    - command: shell.exec
+      params:
+        working_dir: src
+        script: |
+          set -o errexit
+          set -o verbose
+          ${scons|scons} ${compile_flags|} mongo
+          ${scons|scons} ${compile_flags|} mongod
+    - command: s3.put
+      params:
+        aws_key: ${aws_key}
+        aws_secret: ${aws_secret}
+        local_file: src/mongod
+        remote_file: perf/${build_variant}/${revision}/mongod-${build_id}
+        bucket: mciuploads
+        permissions: public-read
+        content_type: ${content_type|application/octet-stream}
+        display_name: mongod
+    - command: s3.put
+      params:
+        aws_key: ${aws_key}
+        aws_secret: ${aws_secret}
+        local_file: src/mongo
+        remote_file: perf/${build_variant}/${revision}/mongo-${build_id}
+        bucket: mciuploads
+        permissions: public-read
+        content_type: ${content_type|application/octet-stream}
+        display_name: mongo
+
+- name: query
+  depends_on:
+  - name: compile
+  commands:
+    - func: "start server"
+    - func: "run perf tests"
+      vars:
+        filter: "core-query"
+- name: update
+  depends_on:
+  - name: compile
+  commands:
+    - func: "start server"
+    - func: "run perf tests"
+      vars:
+        filter: "core-update"
+- name: insert
+  depends_on:
+  - name: compile
+  commands:
+    - func: "start server"
+    - func: "run perf tests"
+      vars:
+        filter: "core-insert"
+
+buildvariants:
+- name: linux-wt-standalone
+  display_name: Linux WT Standalone
+  expansions:
+    compile_flags: -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --release
+    mongod_exec_wrapper: "numactl --physcpubind=4,5,6,7 -i 1"
+    perf_exec_wrapper: "numactl --physcpubind=1,2,3 -i 0"
+    mongod_flags: "--storageEngine=wiredTiger --logpath ./mongod.log --fork --syncdelay 0 --nojournal --setParameter ttlMonitorEnabled=false --wiredTigerCacheSizeGB 16"
+
+  run_on:
+  - "centos6-perf"
+  tasks:
+  - name: compile
+    distros:
+    - rhel55
+  - name: query
+  - name: update
+  - name: insert
+
+- name: linux-wt-repl
+  display_name: Linux WT 1-Node ReplSet
+  expansions:
+    compile_flags: -j$(grep -c ^processor /proc/cpuinfo) CC=/opt/mongodbtoolchain/bin/gcc CXX=/opt/mongodbtoolchain/bin/g++ --release
+    mongod_exec_wrapper: "numactl --physcpubind=4,5,6,7 -i 1"
+    perf_exec_wrapper: "numactl --physcpubind=1,2,3 -i 0"
+    mongod_flags: "--replSet=test --storageEngine=wiredTiger --logpath ./mongod.log --fork --syncdelay 0 --nojournal --setParameter ttlMonitorEnabled=false --wiredTigerCacheSizeGB 16"
+
+  run_on:
+  - "centos6-perf"
+  tasks:
+  - name: compile
+    distros:
+    - rhel55
+  - name: query
+  - name: update
+  - name: insert

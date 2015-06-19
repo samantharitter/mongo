@@ -28,7 +28,6 @@
 
 #pragma once
 
-#include <boost/thread/mutex.hpp>
 #include <memory>
 #include <string>
 #include <vector>
@@ -36,12 +35,14 @@
 #include "mongo/base/disallow_copying.h"
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonobj.h"
+#include "mongo/client/fetcher.h"
 #include "mongo/db/catalog/collection_options.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/repl/base_cloner.h"
-#include "mongo/db/repl/fetcher.h"
 #include "mongo/db/repl/replication_executor.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/condition_variable.h"
+#include "mongo/stdx/mutex.h"
 #include "mongo/util/net/hostandport.h"
 
 namespace mongo {
@@ -71,9 +72,9 @@ namespace repl {
         /**
          * Creates CollectionCloner task in inactive state. Use start() to activate cloner.
          *
-         * The cloner calls 'work' when the collection cloning has completed or failed.
+         * The cloner calls 'onCompletion' when the collection cloning has completed or failed.
          *
-         * 'work' will be called exactly once.
+         * 'onCompletion' will be called exactly once.
          *
          * Takes ownership of the passed StorageInterface object.
          */
@@ -81,10 +82,10 @@ namespace repl {
                          const HostAndPort& source,
                          const NamespaceString& sourceNss,
                          const CollectionOptions& options,
-                         const CallbackFn& work,
+                         const CallbackFn& onCompletion,
                          StorageInterface* storageInterface);
 
-        virtual ~CollectionCloner() = default;
+        virtual ~CollectionCloner();
 
         const NamespaceString& getSourceNamespace() const;
 
@@ -96,11 +97,11 @@ namespace repl {
 
         void cancel() override;
 
+        void wait() override;
+
         //
         // Testing only functions below.
         //
-
-        void wait() override;
 
         /**
          * Waits for database worker to complete.
@@ -123,13 +124,15 @@ namespace repl {
          * Read index specs from listIndexes result.
          */
         void _listIndexesCallback(const StatusWith<Fetcher::BatchData>& fetchResult,
-                                  Fetcher::NextAction* nextAction);
+                                  Fetcher::NextAction* nextAction,
+                                  BSONObjBuilder* getMoreBob);
 
         /**
          * Read collection documents from find result.
          */
         void _findCallback(const StatusWith<Fetcher::BatchData>& fetchResult,
-                           Fetcher::NextAction* nextAction);
+                           Fetcher::NextAction* nextAction,
+                           BSONObjBuilder* getMoreBob);
 
         /**
          * Request storage interface to create collection.
@@ -140,7 +143,7 @@ namespace repl {
          * 'nextAction' is an in/out arg indicating the next action planned and to be taken
          *  by the fetcher.
          */
-        void _beginCollectionCallback(const ReplicationExecutor::CallbackData& callbackData);
+        void _beginCollectionCallback(const ReplicationExecutor::CallbackArgs& callbackData);
 
         /**
          * Called multiple times if there are more than one batch of documents from the fetcher.
@@ -149,8 +152,15 @@ namespace repl {
          * Each document returned will be inserted via the storage interfaceRequest storage
          * interface.
          */
-        void _insertDocumentsCallback(const ReplicationExecutor::CallbackData& callbackData,
+        void _insertDocumentsCallback(const ReplicationExecutor::CallbackArgs& callbackData,
                                       bool lastBatch);
+
+        /**
+         * Reports completion status.
+         * Commits/aborts collection building.
+         * Sets cloner to inactive.
+         */
+        void _finishCallback(OperationContext* txn, const Status& status);
 
         // Not owned by us.
         ReplicationExecutor* _executor;
@@ -161,13 +171,15 @@ namespace repl {
         CollectionOptions _options;
 
         // Invoked once when cloning completes or fails.
-        CallbackFn _work;
+        CallbackFn _onCompletion;
 
-        // Owned by us.
-        std::unique_ptr<StorageInterface> _storageInterface;
+        // Not owned by us.
+        StorageInterface* _storageInterface;
 
         // Protects member data of this collection cloner.
-        mutable boost::mutex _mutex;
+        mutable stdx::mutex _mutex;
+
+        mutable stdx::condition_variable _condition;
 
         // _active is true when Collection Cloner is started.
         bool _active;
@@ -202,9 +214,6 @@ namespace repl {
     class CollectionCloner::StorageInterface {
     public:
 
-        /**
-         * When the storage interface is destroyed, it will commit the index builder.
-         */
         virtual ~StorageInterface() = default;
 
         /**
@@ -227,6 +236,27 @@ namespace repl {
         virtual Status insertDocuments(OperationContext* txn,
                                        const NamespaceString& nss,
                                        const std::vector<BSONObj>& documents) = 0;
+
+        /**
+         * Commits changes to collection. No effect if collection building has not begun.
+         * Operation context could be null.
+         */
+        virtual Status commitCollection(OperationContext* txn,
+                                        const NamespaceString& nss) = 0;
+
+        /**
+         * Inserts missing document into a collection (not related to insertDocuments above),
+         * during initial sync retry logic
+         */
+        virtual Status insertMissingDoc(OperationContext* txn,
+                                        const NamespaceString& nss,
+                                        const BSONObj& doc) = 0;
+
+        /**
+         * Inserts missing document into a collection (not related to insertDocuments above),
+         * during initial sync retry logic
+         */
+        virtual Status dropUserDatabases(OperationContext* txn) = 0;
 
     };
 

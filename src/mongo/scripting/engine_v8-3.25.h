@@ -29,8 +29,6 @@
 
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/shared_ptr.hpp>
 #include <v8.h>
 #include <set>
 #include <string>
@@ -116,7 +114,7 @@ namespace mongo {
                 _objPtr(instance),
                 _tracker(tracker) { }
             v8::Persistent<v8::Value> _instanceHandle;
-            boost::shared_ptr<_ObjType> _objPtr;
+            std::shared_ptr<_ObjType> _objPtr;
             ObjTracker<_ObjType>* _tracker;
         };
 
@@ -126,7 +124,7 @@ namespace mongo {
          * @param  data        Weak callback data. Contains pointer to the TrackedPtr instance.
          */
         static void deleteOnCollect(const v8::WeakCallbackData<v8::Value, TrackedPtr>& data) {
-            boost::scoped_ptr<TrackedPtr> trackedPtr(data.GetParameter());
+            std::unique_ptr<TrackedPtr> trackedPtr(data.GetParameter());
             invariant(trackedPtr.get());
 
             trackedPtr->_tracker->_container.erase(trackedPtr.get());
@@ -339,10 +337,10 @@ namespace mongo {
         // Track both cursor and connection.
         // This ensures the connection outlives the cursor.
         struct DBConnectionAndCursor {
-            boost::shared_ptr<DBClientBase> conn;
-            boost::shared_ptr<DBClientCursor> cursor;
-            DBConnectionAndCursor(boost::shared_ptr<DBClientBase> conn,
-                                  boost::shared_ptr<DBClientCursor> cursor)
+            std::shared_ptr<DBClientBase> conn;
+            std::shared_ptr<DBClientCursor> cursor;
+            DBConnectionAndCursor(std::shared_ptr<DBClientBase> conn,
+                                  std::shared_ptr<DBClientCursor> cursor)
                 : conn(conn), cursor(cursor) { }
         };
         ObjTracker<DBConnectionAndCursor> dbConnectionAndCursor;

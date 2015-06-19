@@ -55,6 +55,7 @@ env.Library('authorization_manager_global',
             ],
             LIBDEPS=[
                 'authcore',
+                '$BUILD_DIR/mongo/db/server_options_core',
                 '$BUILD_DIR/mongo/db/service_context',
             ])
 
@@ -99,7 +100,8 @@ env.Library('saslauth',
 env.Library('authmongod',
             ['authz_manager_external_state_d.cpp',
              'authz_session_external_state_d.cpp',
-             'auth_index_d.cpp'],
+             'auth_index_d.cpp',
+             'impersonation_session.cpp'],
 
             LIBDEPS=[
                 'authservercommon',
@@ -114,10 +116,17 @@ env.Library('authmongos',
             LIBDEPS=['authservercommon',
                      '$BUILD_DIR/mongo/s/catalog/dist_lock_manager'])
 
-env.Library('authmocks',
-            ['authz_manager_external_state_mock.cpp'],
-            LIBDEPS=['$BUILD_DIR/mongo/db/ops/update_driver',
-                     '$BUILD_DIR/mongo/db/matcher/expressions'])
+env.Library(
+    target='authmocks',
+    source=[
+        'authz_manager_external_state_mock.cpp'
+    ],
+    LIBDEPS=[
+        '$BUILD_DIR/mongo/db/matcher/expressions',
+        '$BUILD_DIR/mongo/db/ops/update_driver',
+        '$BUILD_DIR/mongo/db/service_context',
+    ]
+)
 
 env.Library('sasltestcrutch',
             ['sasl_test_crutch.cpp'],

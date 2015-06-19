@@ -50,6 +50,7 @@
 #include "mongo/db/index/index_descriptor.h"
 #include "mongo/db/operation_context_impl.h"
 #include "mongo/db/ops/insert.h"
+#include "mongo/db/namespace_string.h"
 #include "mongo/db/query/internal_plans.h"
 #include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/server_parameters.h"
@@ -215,7 +216,8 @@ namespace mongo {
          */
         bool doTTLForIndex(OperationContext* txn, const string& dbName, BSONObj idx) {
             const string ns = idx["ns"].String();
-            if (!userAllowedWriteNS(ns).isOK()) {
+            NamespaceString nss(ns);
+            if (!userAllowedWriteNS(nss).isOK()) {
                 error() << "namespace '" << ns << "' doesn't allow deletes, skipping ttl job for: "
                         << idx;
                 return true;
@@ -251,7 +253,7 @@ namespace mongo {
                     return true;
                 }
 
-                if (!repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(dbName)) {
+                if (!repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(nss)) {
                     // We've stepped down since we started this function, so we should stop working
                     // as we only do deletes on the primary.
                     return false;
@@ -321,9 +323,9 @@ namespace mongo {
                             return true;
                         }
                     }
-                    if (PlanExecutor::IS_EOF != state) {
-                        if (PlanExecutor::FAILURE == state &&
-                                WorkingSetCommon::isValidStatusMemberObject(obj)) {
+
+                    if (PlanExecutor::FAILURE == state || PlanExecutor::DEAD == state) {
+                        if (WorkingSetCommon::isValidStatusMemberObject(obj)) {
                             error() << "ttl query execution for index " << idx << " failed with: "
                                     << WorkingSetCommon::getMemberObjectStatus(obj);
                             return true;
@@ -332,6 +334,8 @@ namespace mongo {
                                 << PlanExecutor::statestr(state);
                         return true;
                     }
+
+                    invariant(PlanExecutor::IS_EOF == state);
                     break;
                 }
                 catch (const WriteConflictException& dle) {

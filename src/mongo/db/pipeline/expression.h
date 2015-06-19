@@ -88,7 +88,7 @@ namespace mongo {
 
     private:
         Document _root;
-        const boost::scoped_array<Value> _rest;
+        const std::unique_ptr<Value[]> _rest;
         const size_t _numVars;
     };
 
@@ -362,6 +362,12 @@ namespace mongo {
     };
 
 
+    class ExpressionAbs final : public ExpressionFixedArity<ExpressionAbs, 1> {
+        Value evaluateInternal(Variables* vars) const final;
+        const char* getOpName() const final;
+    };
+
+
     class ExpressionAdd : public ExpressionVariadic<ExpressionAdd> {
     public:
         // virtuals from Expression
@@ -394,6 +400,13 @@ namespace mongo {
         // virtuals from ExpressionNary
         virtual Value evaluateInternal(Variables* vars) const;
         virtual const char* getOpName() const;
+    };
+
+
+    class ExpressionArrayElemAt final : public ExpressionFixedArity<ExpressionArrayElemAt, 2> {
+    public:
+        Value evaluateInternal(Variables* vars) const final;
+        const char* getOpName() const final;
     };
 
 
@@ -453,6 +466,13 @@ namespace mongo {
         // virtuals from ExpressionNary
         virtual Value evaluateInternal(Variables* vars) const;
         virtual const char* getOpName() const;
+    };
+
+
+    class ExpressionConcatArrays final : public ExpressionVariadic<ExpressionConcatArrays> {
+    public:
+        Value evaluateInternal(Variables* vars) const final;
+        const char* getOpName() const final;
     };
 
 

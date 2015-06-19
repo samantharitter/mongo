@@ -38,16 +38,14 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/shared_ptr.hpp>
-#include <boost/thread.hpp>
-
 #include "mongo/db/storage/mmap_v1/aligned_builder.h"
-#include "mongo/db/storage/mmap_v1/durable_mapped_file.h"
 #include "mongo/db/storage/mmap_v1/dur_commitjob.h"
 #include "mongo/db/storage/mmap_v1/dur_journal.h"
 #include "mongo/db/storage/mmap_v1/dur_journalimpl.h"
 #include "mongo/db/storage/mmap_v1/dur_stats.h"
+#include "mongo/db/storage/mmap_v1/durable_mapped_file.h"
 #include "mongo/db/storage_options.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
 #include "mongo/util/stacktrace.h"
@@ -137,7 +135,7 @@ namespace mongo {
             (although not assured) that it is journaled here once.
         */
         static void prepBasicWrites(AlignedBuilder& bb, const std::vector<WriteIntent>& intents) {
-            boost::lock_guard<boost::mutex> lk(privateViews._mutex());
+            stdx::lock_guard<stdx::mutex> lk(privateViews._mutex());
 
             // Each time write intents switch to a different database we journal a JDbContext.
             // Switches will be rare as we sort by memory location first and we batch commit.
@@ -181,8 +179,8 @@ namespace mongo {
             h.fileId = j.curFileId();
 
             // Ops other than basic writes (DurOp's) go first
-            const std::vector<boost::shared_ptr<DurOp> >& durOps = commitJob.ops();
-            for (std::vector<boost::shared_ptr<DurOp> >::const_iterator i = durOps.begin();
+            const std::vector<std::shared_ptr<DurOp> >& durOps = commitJob.ops();
+            for (std::vector<std::shared_ptr<DurOp> >::const_iterator i = durOps.begin();
                  i != durOps.end();
                  i++) {
 

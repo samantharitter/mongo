@@ -28,8 +28,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/shared_ptr.hpp>
 #include <vector>
 
 #include "mongo/db/auth/action_set.h"
@@ -38,7 +36,6 @@
 #include "mongo/db/catalog/database.h"
 #include "mongo/db/client.h"
 #include "mongo/db/commands.h"
-#include "mongo/db/commands/cursor_responses.h"
 #include "mongo/db/curop.h"
 #include "mongo/db/db_raii.h"
 #include "mongo/db/exec/pipeline_proxy.h"
@@ -50,6 +47,7 @@
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/db/pipeline/pipeline.h"
 #include "mongo/db/pipeline/pipeline_d.h"
+#include "mongo/db/query/cursor_responses.h"
 #include "mongo/db/query/find_constants.h"
 #include "mongo/db/query/get_executor.h"
 #include "mongo/db/storage_options.h"
@@ -57,9 +55,9 @@
 namespace mongo {
 
     using boost::intrusive_ptr;
-    using boost::scoped_ptr;
-    using boost::shared_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::shared_ptr;
+    using std::unique_ptr;
     using std::string;
     using std::stringstream;
     using std::endl;
@@ -218,8 +216,8 @@ namespace mongo {
             }
 
             PlanExecutor* exec = NULL;
-            scoped_ptr<ClientCursorPin> pin; // either this OR the execHolder will be non-null
-            auto_ptr<PlanExecutor> execHolder;
+            unique_ptr<ClientCursorPin> pin; // either this OR the execHolder will be non-null
+            unique_ptr<PlanExecutor> execHolder;
             {
                 // This will throw if the sharding version for this connection is out of date. The
                 // lock must be held continuously from now until we have we created both the output
@@ -233,7 +231,7 @@ namespace mongo {
 
                 // This does mongod-specific stuff like creating the input PlanExecutor and adding
                 // it to the front of the pipeline if needed.
-                boost::shared_ptr<PlanExecutor> input = PipelineD::prepareCursorSource(txn,
+                std::shared_ptr<PlanExecutor> input = PipelineD::prepareCursorSource(txn,
                                                                                        collection,
                                                                                        pPipeline,
                                                                                        pCtx);
@@ -242,8 +240,8 @@ namespace mongo {
                 // Create the PlanExecutor which returns results from the pipeline. The WorkingSet
                 // ('ws') and the PipelineProxyStage ('proxy') will be owned by the created
                 // PlanExecutor.
-                auto_ptr<WorkingSet> ws(new WorkingSet());
-                auto_ptr<PipelineProxyStage> proxy(
+                unique_ptr<WorkingSet> ws(new WorkingSet());
+                unique_ptr<PipelineProxyStage> proxy(
                     new PipelineProxyStage(pPipeline, input, ws.get()));
                 Status execStatus = Status::OK();
                 if (NULL == collection) {

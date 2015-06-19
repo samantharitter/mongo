@@ -472,16 +472,17 @@ namespace mongo {
         
         std::string toString() const;
 
-    private:
-        void _setData( char* d, bool freeIt ) {
-            _freeIt = freeIt;
-            _buf = d;
-        }
         // if just one buffer, keep it in _buf, otherwise keep a sequence of buffers in _data
         char* _buf;
         // byte buffer(s) - the first must contain at least a full MsgData unless using _buf for storage instead
         typedef std::vector< std::pair< char*, int > > MsgVec;
         MsgVec _data;
+
+    private:
+        void _setData( char* d, bool freeIt ) {
+            _freeIt = freeIt;
+            _buf = d;
+        }
         bool _freeIt;
     };
 

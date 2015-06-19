@@ -28,8 +28,6 @@
 
 #pragma once
 
-#include <boost/thread/condition_variable.hpp>
-#include <boost/thread/mutex.hpp>
 #include <memory>
 #include <string>
 
@@ -46,7 +44,9 @@
 #include "mongo/db/jsobj.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/platform/unordered_map.h"
+#include "mongo/stdx/condition_variable.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/mutex.h"
 
 namespace mongo {
 
@@ -344,7 +344,7 @@ namespace mongo {
          */
         Status _fetchUserV2(OperationContext* txn,
                             const UserName& userName,
-                            std::auto_ptr<User>* acquiredUser);
+                            std::unique_ptr<User>* acquiredUser);
 
         /**
          * True if access control enforcement is enabled in this AuthorizationManager.
@@ -360,7 +360,7 @@ namespace mongo {
         bool _privilegeDocsExist;
 
         // Protects _privilegeDocsExist
-        mutable boost::mutex _privilegeDocsExistMutex;
+        mutable stdx::mutex _privilegeDocsExistMutex;
 
         std::unique_ptr<AuthzManagerExternalState> _externalState;
 
@@ -400,13 +400,13 @@ namespace mongo {
          * Protects _userCache, _cacheGeneration, _version and _isFetchPhaseBusy.  Manipulated
          * via CacheGuard.
          */
-        boost::mutex _cacheMutex;
+        stdx::mutex _cacheMutex;
 
         /**
          * Condition used to signal that it is OK for another CacheGuard to enter a fetch phase.
          * Manipulated via CacheGuard.
          */
-        boost::condition_variable _fetchPhaseIsReady;
+        stdx::condition_variable _fetchPhaseIsReady;
     };
 
 } // namespace mongo

@@ -27,12 +27,11 @@
  */
 #pragma once
 
-#include <boost/thread/thread.hpp>
-#include <boost/thread/condition.hpp>
-
 #include "mongo/base/disallow_copying.h"
 #include "mongo/platform/cstdint.h"
 #include "mongo/platform/unordered_map.h"
+#include "mongo/stdx/condition_variable.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/util/concurrency/mutex.h"
 #include "mongo/util/time_support.h"
 
@@ -71,13 +70,13 @@ namespace mongo {
             // should not create the thread in the initializer list.  Creating it there leaves us
             // vulnerable to errors introduced by rearranging the order of fields in the class.
             _monitorThread =
-                boost::thread(&mongo::DeadlineMonitor<_Task>::deadlineMonitorThread, this);
+                stdx::thread(&mongo::DeadlineMonitor<_Task>::deadlineMonitorThread, this);
         }
 
         ~DeadlineMonitor() {
             {
                 // ensure the monitor thread has been stopped before destruction
-                boost::lock_guard<boost::mutex> lk(_deadlineMutex);
+                stdx::lock_guard<stdx::mutex> lk(_deadlineMutex);
                 _inShutdown = true;
                 _newDeadlineAvailable.notify_one();
             }
@@ -93,7 +92,7 @@ namespace mongo {
          */
         void startDeadline(_Task* const task, uint64_t timeoutMs) {
             const auto deadline = Date_t::now() + Milliseconds(timeoutMs);
-            boost::lock_guard<boost::mutex> lk(_deadlineMutex);
+            stdx::lock_guard<stdx::mutex> lk(_deadlineMutex);
 
             _tasks[task] = deadline;
 
@@ -109,7 +108,7 @@ namespace mongo {
          * @return true  if the task was found and erased
          */
         bool stopDeadline(_Task* const task) {
-            boost::lock_guard<boost::mutex> lk(_deadlineMutex);
+            stdx::lock_guard<stdx::mutex> lk(_deadlineMutex);
             return _tasks.erase(task);
         }
 
@@ -120,7 +119,7 @@ namespace mongo {
          * _Task::kill() is invoked.
          */
         void deadlineMonitorThread() {
-            boost::unique_lock<boost::mutex> lk(_deadlineMutex);
+            stdx::unique_lock<stdx::mutex> lk(_deadlineMutex);
             while (!_inShutdown) {
 
                 // get the next interval to wait
@@ -160,12 +159,11 @@ namespace mongo {
 
         typedef unordered_map<_Task*, Date_t> TaskDeadlineMap;
         TaskDeadlineMap _tasks; // map of running tasks with deadlines
-        boost::mutex _deadlineMutex; // protects all non-const members, except _monitorThread
-        boost::condition_variable _newDeadlineAvailable; // Signaled for timeout, start and stop
-        boost::thread _monitorThread; // the deadline monitor thread
+        stdx::mutex _deadlineMutex; // protects all non-const members, except _monitorThread
+        stdx::condition_variable _newDeadlineAvailable; // Signaled for timeout, start and stop
+        stdx::thread _monitorThread; // the deadline monitor thread
         Date_t _nearestDeadlineWallclock = Date_t::max(); // absolute time of the nearest deadline
         bool _inShutdown = false;
     };
 
 } // namespace mongo
-

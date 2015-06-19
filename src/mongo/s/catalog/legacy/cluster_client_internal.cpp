@@ -32,7 +32,6 @@
 
 #include "mongo/s/catalog/legacy/cluster_client_internal.h"
 
-#include <boost/scoped_ptr.hpp>
 #include <vector>
 
 #include "mongo/client/connpool.h"
@@ -45,8 +44,8 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::string;
     using std::vector;
@@ -55,7 +54,7 @@ namespace mongo {
     Status checkClusterMongoVersions(CatalogManager* catalogManager,
                                      const string& minMongoVersion) {
 
-        scoped_ptr<ScopedDbConnection> connPtr;
+        unique_ptr<ScopedDbConnection> connPtr;
 
         //
         // Find mongos pings in config server
@@ -64,7 +63,7 @@ namespace mongo {
         try {
             connPtr.reset(new ScopedDbConnection(catalogManager->connectionString(), 30));
             ScopedDbConnection& conn = *connPtr;
-            scoped_ptr<DBClientCursor> cursor(_safeCursor(conn->query(MongosType::ConfigNS,
+            unique_ptr<DBClientCursor> cursor(_safeCursor(conn->query(MongosType::ConfigNS,
                                                                       Query())));
 
             while (cursor->more()) {
@@ -142,15 +141,15 @@ namespace mongo {
                                            << " failed validation: " << causedBy(status));
                 }
 
-                string errMsg;
-                ConnectionString shardLoc = ConnectionString::parse(shard.getHost(), errMsg);
-                if (shardLoc.type() == ConnectionString::INVALID) {
+                const auto shardConnStatus = ConnectionString::parse(shard.getHost());
+                if (!shardConnStatus.isOK()) {
                     return Status(ErrorCodes::UnsupportedFormat,
                                   stream() << "invalid shard host " << shard.getHost()
-                                           << " read from the config server" << causedBy(errMsg));
+                                           << " read from the config server"
+                                           << shardConnStatus.getStatus().toString());
                 }
 
-                vector<HostAndPort> shardServers = shardLoc.getServers();
+                vector<HostAndPort> shardServers = shardConnStatus.getValue().getServers();
                 servers.insert(servers.end(), shardServers.begin(), shardServers.end());
             }
         }
@@ -178,7 +177,7 @@ namespace mongo {
             log() << "checking that version of host " << serverLoc << " is compatible with "
                   << minMongoVersion << endl;
 
-            scoped_ptr<ScopedDbConnection> serverConnPtr;
+            unique_ptr<ScopedDbConnection> serverConnPtr;
 
             bool resultOk;
             BSONObj buildInfo;
@@ -223,7 +222,7 @@ namespace mongo {
     }
 
     // Helper function for safe cursors
-    DBClientCursor* _safeCursor(auto_ptr<DBClientCursor> cursor) {
+    DBClientCursor* _safeCursor(unique_ptr<DBClientCursor> cursor) {
         // TODO: Make error handling more consistent, it's annoying that cursors error out by
         // throwing exceptions *and* being empty
         uassert(16625, str::stream() << "cursor not found, transport error", cursor.get());

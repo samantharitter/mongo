@@ -28,7 +28,6 @@
 
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
 
 #include <map>
 #include <string>
@@ -93,7 +92,7 @@ namespace mongo {
         MultiCommandDispatch* _dispatcher;
 
         // Stats
-        std::auto_ptr<BatchWriteExecStats> _stats;
+        std::unique_ptr<BatchWriteExecStats> _stats;
     };
 
     struct HostOpTime {

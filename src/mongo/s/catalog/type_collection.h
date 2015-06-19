@@ -32,11 +32,11 @@
 #include <string>
 
 #include "mongo/db/jsobj.h"
+#include "mongo/db/keypattern.h"
 #include "mongo/db/namespace_string.h"
 
 namespace mongo {
 
-    class BSONObj;
     class Status;
     template<typename T> class StatusWith;
 
@@ -60,8 +60,6 @@ namespace mongo {
         static const BSONField<bool> dropped;
 
 
-        CollectionType();
-
         /**
          * Constructs a new DatabaseType object from BSON. Also does validation of the contents.
          */
@@ -77,11 +75,6 @@ namespace mongo {
          * Returns the BSON representation of the entry.
          */
         BSONObj toBSON() const;
-
-        /**
-         * Clears the internal state.
-         */
-        void clear();
 
         /**
          * Returns a std::string representation of the current internal state.
@@ -100,8 +93,8 @@ namespace mongo {
         bool getDropped() const { return _dropped.get_value_or(false); }
         void setDropped(bool dropped) { _dropped = dropped; }
 
-        const BSONObj& getKeyPattern() const { return _keyPattern.get(); }
-        void setKeyPattern(const BSONObj& keyPattern);
+        const KeyPattern& getKeyPattern() const { return _keyPattern.get(); }
+        void setKeyPattern(const KeyPattern& keyPattern);
 
         bool getUnique() const { return _unique.get_value_or(false); }
         void setUnique(bool unique) { _unique = unique; }
@@ -122,7 +115,7 @@ namespace mongo {
         boost::optional<bool> _dropped;
 
         // Sharding key. Required, if collection is not dropped.
-        boost::optional<BSONObj> _keyPattern;
+        boost::optional<KeyPattern> _keyPattern;
 
         // Optional uniqueness of the sharding key. If missing, implies false.
         boost::optional<bool> _unique;

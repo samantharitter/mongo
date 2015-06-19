@@ -20,7 +20,7 @@ var shardedAggTest = new ShardingTest({
     shards: 2,
     verbose: 2,
     mongos: 1,
-    other: { chunksize : 1 }
+    other: { chunksize : 1, enableBalancer: true }
     }
 );
 
@@ -78,7 +78,8 @@ var nItems = 200000;
 var bulk = db.ts1.initializeUnorderedBulkOp();
 for(i = 1; i <= nItems; ++i) {
     bulk.insert(
-        {counter: ++count, number: strings[i % 20], random: Math.random(),
+        {_id: i,
+         counter: ++count, number: strings[i % 20], random: Math.random(),
          filler: "0123456789012345678901234567890123456789"});
 }
 assert.writeOK(bulk.execute());
@@ -203,6 +204,24 @@ testSortLimit(10, -1);
 testSortLimit(100,  1);
 testSortLimit(100, -1);
 
+function testAvgStdDev() {
+    jsTestLog('testing $avg and $stdDevPop in sharded $group');
+    // Note: not using aggregateOrdered since it requires exact results. $stdDevPop can vary
+    // slightly between runs if a migration occurs. This is why we use assert.close below.
+    var res = db.ts1.aggregate([{$group: {_id: null,
+                                          avg: {$avg: '$counter'},
+                                          stdDevPop: {$stdDevPop: '$counter'},
+                                         }}]).toArray()
+    // http://en.wikipedia.org/wiki/Arithmetic_progression#Sum
+    var avg = (1 + nItems) / 2
+    assert.close(res[0].avg, avg, '', 10 /*decimal places*/);
+
+    // http://en.wikipedia.org/wiki/Arithmetic_progression#Standard_deviation
+    var stdDev = Math.sqrt(((nItems - 1) * (nItems + 1)) / 12);
+    assert.close(res[0].stdDevPop, stdDev, '', 10 /*decimal places*/);
+}
+testAvgStdDev();
+
 jsTestLog('test $out by copying source collection verbatim to output');
 var outCollection = db.ts1_out;
 var res = aggregateOrdered(db.ts1, [{$out: outCollection.getName()}]);
@@ -235,6 +254,42 @@ for (var shardName in res.shards) {
     assert("host" in res.shards[shardName]);
     assert("stages" in res.shards[shardName]);
 }
+
+(function() {
+    jsTestLog('Testing a $match stage on the shard key.');
+
+    var outCollection = 'testShardKeyMatchOut';
+
+    // Point query.
+    var targetId = Math.floor(nItems * Math.random());
+    var pipeline = [{$match: {_id: targetId}}, {$project: {_id: 1}}, {$sort: {_id: 1}}];
+    var expectedDocs = [{_id: targetId}];
+    // Normal pipeline.
+    assert.eq(aggregateOrdered(db.ts1, pipeline), expectedDocs);
+    // With $out.
+    db[outCollection].drop();
+    pipeline.push({$out: outCollection});
+    db.ts1.aggregate(pipeline);
+    assert.eq(db[outCollection].find().toArray(), expectedDocs);
+
+    // Range query.
+    var range = 500;
+    var targetStart = Math.floor((nItems - range) * Math.random());
+    pipeline = [{$match: {_id: {$gte: targetStart, $lt: targetStart + range}}},
+                {$project: {_id: 1}},
+                {$sort: {_id: 1}}];
+    expectedDocs = [];
+    for (var i = targetStart; i < targetStart + range; i++) {
+        expectedDocs.push({_id: i});
+    }
+    // Normal pipeline.
+    assert.eq(aggregateOrdered(db.ts1, pipeline), expectedDocs);
+    // With $out.
+    db[outCollection].drop();
+    pipeline.push({$out: outCollection});
+    db.ts1.aggregate(pipeline);
+    assert.eq(db[outCollection].find().toArray(), expectedDocs);
+}());
 
 // Call sub-tests designed to work sharded and unsharded.
 // They check for this variable to know to shard their collections.

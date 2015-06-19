@@ -36,7 +36,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::vector;
 
     // static
@@ -50,7 +50,7 @@ namespace mongo {
         : _txn(txn),
           _collection(collection),
           _request(request),
-          _leftToSkip(request.skip),
+          _leftToSkip(request.getSkip()),
           _ws(ws),
           _child(child),
           _commonStats(kStageType) { }
@@ -62,7 +62,7 @@ namespace mongo {
             return true;
         }
 
-        if (_request.limit > 0 && _specificStats.nCounted >= _request.limit) {
+        if (_request.getLimit() > 0 && _specificStats.nCounted >= _request.getLimit()) {
             return true;
         }
 
@@ -73,14 +73,14 @@ namespace mongo {
         invariant(_collection);
         long long nCounted = _collection->numRecords(_txn);
 
-        if (0 != _request.skip) {
-            nCounted -= _request.skip;
+        if (0 != _request.getSkip()) {
+            nCounted -= _request.getSkip();
             if (nCounted < 0) {
                 nCounted = 0;
             }
         }
 
-        long long limit = _request.limit;
+        long long limit = _request.getLimit();
         if (limit < 0) {
             limit = -limit;
         }
@@ -90,7 +90,7 @@ namespace mongo {
         }
 
         _specificStats.nCounted = nCounted;
-        _specificStats.nSkipped = _request.skip;
+        _specificStats.nSkipped = _request.getSkip();
         _specificStats.trivialCount = true;
     }
 
@@ -105,7 +105,7 @@ namespace mongo {
 
         // If we don't have a query and we have a non-NULL collection, then we can execute this
         // as a trivial count (just ask the collection for how many records it has).
-        if (_request.query.isEmpty() && NULL != _collection) {
+        if (_request.getQuery().isEmpty() && NULL != _collection) {
             trivialCount();
             return PlanStage::IS_EOF;
         }
@@ -128,10 +128,10 @@ namespace mongo {
         else if (PlanStage::DEAD == state) {
             return state;
         }
-        else if (PlanStage::FAILURE == state) {
+        else if (PlanStage::FAILURE == state || PlanStage::DEAD == state) {
             *out = id;
-            // If a stage fails, it may create a status WSM to indicate why it failed, in which cas
-            // 'id' is valid. If ID is invalid, we create our own error message.
+            // If a stage fails, it may create a status WSM to indicate why it failed, in which
+            // case 'id' is valid. If ID is invalid, we create our own error message.
             if (WorkingSet::INVALID_ID == id) {
                 const std::string errmsg = "count stage failed to read result from child";
                 Status status = Status(ErrorCodes::InternalError, errmsg);
@@ -200,7 +200,7 @@ namespace mongo {
 
     PlanStageStats* CountStage::getStats() {
         _commonStats.isEOF = isEOF();
-        auto_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_COUNT));
+        unique_ptr<PlanStageStats> ret(new PlanStageStats(_commonStats, STAGE_COUNT));
         CountStats* countStats = new CountStats(_specificStats);
         ret->specific.reset(countStats);
         if (_child.get()) {

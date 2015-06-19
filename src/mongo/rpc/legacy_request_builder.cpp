@@ -80,8 +80,8 @@ namespace rpc {
         int queryOptions;
 
         std::tie(legacyCommandArgs, queryOptions) = uassertStatusOK(
-            metadata::downconvertRequest(std::move(commandArgs),
-                                         std::move(_metadata))
+            rpc::downconvertRequestMetadata(std::move(commandArgs),
+                                            std::move(_metadata))
         );
 
         _builder.appendNum(queryOptions); // queryOptions
@@ -108,6 +108,10 @@ namespace rpc {
 
     RequestBuilderInterface::State LegacyRequestBuilder::getState() const {
         return _state;
+    }
+
+    Protocol LegacyRequestBuilder::getProtocol() const {
+        return rpc::Protocol::kOpQuery;
     }
 
     std::unique_ptr<Message> LegacyRequestBuilder::done() {

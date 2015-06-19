@@ -28,17 +28,19 @@
 
 #pragma once
 
-#include <boost/thread/condition.hpp>
-#include <boost/thread/mutex.hpp>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "mongo/base/disallow_copying.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
-#include "mongo/bson/bsonobj.h"
+#include "mongo/db/jsobj.h"
 #include "mongo/db/repl/replication_executor.h"
+#include "mongo/stdx/condition_variable.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/mutex.h"
 
 namespace mongo {
 namespace repl {
@@ -47,6 +49,9 @@ namespace repl {
         MONGO_DISALLOW_COPYING(Applier);
     public:
 
+        /**
+         * Operations sorted by timestamp in ascending order.
+         */
         using Operations = std::vector<BSONObj>;
 
         /**
@@ -121,7 +126,7 @@ namespace repl {
         /**
          * DB worker callback function - applies all operations.
          */
-        void _callback(const ReplicationExecutor::CallbackData& cbd);
+        void _callback(const ReplicationExecutor::CallbackArgs& cbd);
         void _finishCallback(const StatusWith<Timestamp>& result, const Operations& operations);
 
         // Not owned by us.
@@ -132,15 +137,37 @@ namespace repl {
         CallbackFn _onCompletion;
 
         // Protects member data of this Applier.
-        mutable boost::mutex _mutex;
+        mutable stdx::mutex _mutex;
 
-        boost::condition _condition;
+        stdx::condition_variable _condition;
 
         // _active is true when Applier is scheduled to be run by the executor.
         bool _active;
 
         ReplicationExecutor::CallbackHandle _dbWorkCallbackHandle;
-};
+    };
+
+
+    /**
+     * Applies operations (sorted by timestamp) up to and including 'lastTimestampToApply'.
+     * If 'lastTimestampToApply' is found in  'operations':
+     *     - The applier will be given a subset of 'operations' (includes 'lastTimestampToApply').
+     *     - On success, the applier will invoke the 'pause' function just before reporting
+     *       completion status.
+     * Otherwise, all entries in 'operations' before 'lastTimestampToApply' will be forwarded to
+     * the applier and the 'pause' function will be ignored.
+     * If the applier is successfully created, returns the applier and a list of operations that
+     * are skipped (operations with 'ts' field value after 'lastTimestampToApply).
+     */
+    using PauseDataReplicatorFn = stdx::function<void ()>;
+
+    StatusWith<std::pair<std::unique_ptr<Applier>, Applier::Operations> > applyUntilAndPause(
+        ReplicationExecutor* executor,
+        const Applier::Operations& operations,
+        const Applier::ApplyOperationFn& applyOperation,
+        const Timestamp& lastTimestampToApply,
+        const PauseDataReplicatorFn& pauseDataReplicator,
+        const Applier::CallbackFn& onCompletion);
 
 } // namespace repl
 } // namespace mongo

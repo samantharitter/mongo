@@ -38,6 +38,8 @@
 #include "mongo/db/lasterror.h"
 #include "mongo/s/chunk_manager.h"
 #include "mongo/s/client/shard.h"
+#include "mongo/s/client/shard_registry.h"
+#include "mongo/s/grid.h"
 #include "mongo/s/stale_exception.h"
 #include "mongo/s/version_manager.h"
 #include "mongo/util/concurrency/spin_lock.h"
@@ -47,7 +49,7 @@
 
 namespace mongo {
 
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::map;
     using std::set;
     using std::string;
@@ -65,12 +67,12 @@ namespace {
     class ActiveClientConnections {
     public:
         void add(const ClientConnections* cc) {
-            boost::lock_guard<boost::mutex> lock(_mutex);
+            stdx::lock_guard<stdx::mutex> lock(_mutex);
             _clientConnections.insert(cc);
         }
 
         void remove(const ClientConnections* cc) {
-            boost::lock_guard<boost::mutex> lock(_mutex);
+            stdx::lock_guard<stdx::mutex> lock(_mutex);
             _clientConnections.erase(cc);
         }
 
@@ -206,7 +208,7 @@ namespace {
 
             Status* s = _getStatus(addr);
 
-            auto_ptr<DBClientBase> c;
+            unique_ptr<DBClientBase> c;
             if (s->avail) {
                 c.reset(s->avail);
                 s->avail = 0;
@@ -277,18 +279,21 @@ namespace {
 
         void checkVersions( const string& ns ) {
 
-            vector<Shard> all;
-            Shard::getAllShards( all );
+            vector<ShardId> all;
+            grid.shardRegistry()->getAllShardIds(&all);
 
             // Don't report exceptions here as errors in GetLastError
             LastError::Disabled ignoreForGLE(&LastError::get(cc()));
 
             // Now only check top-level shard connections
-            for ( unsigned i=0; i<all.size(); i++ ) {
-
-                Shard& shard = all[i];
+            for (const ShardId& shardId : all) {
                 try {
-                    string sconnString = shard.getConnString().toString();
+                    const auto shard = grid.shardRegistry()->getShard(shardId);
+                    if (!shard) {
+                        continue;
+                    }
+
+                    string sconnString = shard->getConnString().toString();
                     Status* s = _getStatus( sconnString );
 
                     if( ! s->avail ) {
@@ -301,7 +306,7 @@ namespace {
                 catch ( const DBException& ex ) {
 
                     warning() << "problem while initially checking shard versions on" << " "
-                              << shard.getName() << causedBy(ex);
+                              << shardId << causedBy(ex);
 
                     // NOTE: This is only a heuristic, to avoid multiple stale version retries
                     // across multiple shards, and does not affect correctness.
@@ -384,7 +389,7 @@ namespace {
         BSONArrayBuilder arr(64 * 1024); // There may be quite a few threads
 
         {
-            boost::lock_guard<boost::mutex> lock(_mutex);
+            stdx::lock_guard<stdx::mutex> lock(_mutex);
             for (set<const ClientConnections*>::const_iterator i = _clientConnections.begin();
                 i != _clientConnections.end();
                 ++i) {
@@ -411,7 +416,7 @@ namespace {
 
     ShardConnection::ShardConnection(const ConnectionString& connectionString,
                                      const string& ns,
-                                     boost::shared_ptr<ChunkManager> manager)
+                                     std::shared_ptr<ChunkManager> manager)
         : _cs(connectionString),
           _ns(ns),
           _manager(manager) {
@@ -527,9 +532,13 @@ namespace {
         cmdBuilder.append("setShardVersion", ns);
         cmdBuilder.append("configdb", configServerPrimary);
 
-        Shard s = Shard::make(conn.getServerAddress());
-        cmdBuilder.append("shard", s.getName());
-        cmdBuilder.append("shardHost", s.getConnString().toString());
+        ShardId shardId;
+        {
+            const auto shard = grid.shardRegistry()->getShard(conn.getServerAddress());
+            shardId = shard->getId();
+            cmdBuilder.append("shard", shardId);
+            cmdBuilder.append("shardHost", shard->getConnString().toString());
+        }
 
         if (ns.size() > 0) {
             version.addToBSON(cmdBuilder);
@@ -544,7 +553,7 @@ namespace {
 
         BSONObj cmd = cmdBuilder.obj();
 
-        LOG(1) << "    setShardVersion  " << s.getName() << " " << conn.getServerAddress()
+        LOG(1) << "    setShardVersion  " << shardId << " " << conn.getServerAddress()
                << "  " << ns << "  " << cmd
                << (manager ? string(str::stream() << " " << manager->getSequenceNumber()) : "");
 

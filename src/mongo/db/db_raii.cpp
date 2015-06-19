@@ -31,7 +31,9 @@
 #include "mongo/db/db_raii.h"
 
 #include "mongo/db/catalog/database_holder.h"
+#include "mongo/db/client.h"
 #include "mongo/db/curop.h"
+#include "mongo/db/stats/top.h"
 #include "mongo/s/d_state.h"
 
 namespace mongo {
@@ -85,19 +87,21 @@ namespace mongo {
     void AutoGetCollectionForRead::_init(const std::string& ns, StringData coll) {
         massert(28535, "need a non-empty collection name", !coll.empty());
 
-        // TODO: OldClientContext legacy, needs to be removed
-        CurOp::get(_txn)->ensureStarted();
-        CurOp::get(_txn)->setNS(ns);
-
         // We have both the DB and collection locked, which the prerequisite to do a stable shard
         // version check.
-        ensureShardVersionOKOrThrow(ns);
+        ensureShardVersionOKOrThrow(_txn->getClient(), ns);
+
+        auto curOp = CurOp::get(_txn);
+        stdx::lock_guard<Client> lk(*_txn->getClient());
+        // TODO: OldClientContext legacy, needs to be removed
+        curOp->ensureStarted();
+        curOp->setNS_inlock(ns);
 
         // At this point, we are locked in shared mode for the database by the DB lock in the
         // constructor, so it is safe to load the DB pointer.
         if (_db.getDb()) {
             // TODO: OldClientContext legacy, needs to be removed
-            CurOp::get(_txn)->enter(ns.c_str(), _db.getDb()->getProfilingLevel());
+            curOp->enter_inlock(ns.c_str(), _db.getDb()->getProfilingLevel());
 
             _coll = _db.getDb()->getCollection(ns);
         }
@@ -105,7 +109,13 @@ namespace mongo {
 
     AutoGetCollectionForRead::~AutoGetCollectionForRead() {
         // Report time spent in read lock
-        CurOp::get(_txn)->recordGlobalTime(false, _timer.micros());
+        auto currentOp = CurOp::get(_txn);
+        Top::get(_txn->getClient()->getServiceContext()).record(
+                currentOp->getNS(),
+                currentOp->getOp(),
+                -1,  // "read locked"
+                _timer.micros(),
+                currentOp->isCommand());
     }
 
 
@@ -156,7 +166,8 @@ namespace mongo {
             _checkNotStale();
         }
 
-        CurOp::get(_txn)->enter(_ns.c_str(), _db->getProfilingLevel());
+        stdx::lock_guard<Client> lk(*_txn->getClient());
+        CurOp::get(_txn)->enter_inlock(_ns.c_str(), _db->getProfilingLevel());
     }
 
     void OldClientContext::_checkNotStale() const {
@@ -166,7 +177,7 @@ namespace mongo {
         case dbDelete:  // here as well.
             break;
         default:
-            ensureShardVersionOKOrThrow(_ns);
+            ensureShardVersionOKOrThrow(_txn->getClient(), _ns);
         }
     }
 
@@ -174,7 +185,13 @@ namespace mongo {
         // Lock must still be held
         invariant(_txn->lockState()->isLocked());
 
-        CurOp::get(_txn)->recordGlobalTime(_txn->lockState()->isWriteLocked(), _timer.micros());
+        auto currentOp = CurOp::get(_txn);
+        Top::get(_txn->getClient()->getServiceContext()).record(
+                currentOp->getNS(),
+                currentOp->getOp(),
+                _txn->lockState()->isWriteLocked() ? 1 : -1,
+                _timer.micros(),
+                currentOp->isCommand());
     }
 
 

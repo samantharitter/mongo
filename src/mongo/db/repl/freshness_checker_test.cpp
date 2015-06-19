@@ -28,27 +28,27 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread.hpp>
-
 #include "mongo/base/status.h"
 #include "mongo/db/jsobj.h"
+#include "mongo/db/repl/freshness_checker.h"
 #include "mongo/db/repl/member_heartbeat_data.h"
-#include "mongo/db/repl/network_interface_mock.h"
 #include "mongo/db/repl/replica_set_config.h"
 #include "mongo/db/repl/replication_executor.h"
-#include "mongo/db/repl/freshness_checker.h"
+#include "mongo/db/repl/storage_interface_mock.h"
+#include "mongo/executor/network_interface_mock.h"
 #include "mongo/platform/unordered_set.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/thread.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/mongoutils/str.h"
 
-using boost::scoped_ptr;
+using std::unique_ptr;
 
 namespace mongo {
 namespace repl {
 namespace {
 
+    using executor::NetworkInterfaceMock;
     using unittest::assertGet;
 
     bool stringContains(const std::string &haystack, const std::string& needle) {
@@ -73,11 +73,12 @@ namespace {
         }
 
         NetworkInterfaceMock* _net;
-        boost::scoped_ptr<ReplicationExecutor> _executor;
-        boost::scoped_ptr<boost::thread> _executorThread;
+        StorageInterfaceMock* _storage;
+        std::unique_ptr<ReplicationExecutor> _executor;
+        std::unique_ptr<stdx::thread> _executorThread;
 
     private:
-        void freshnessCheckerRunner(const ReplicationExecutor::CallbackData& data,
+        void freshnessCheckerRunner(const ReplicationExecutor::CallbackArgs& data,
                                     const Timestamp& lastOpTimeApplied,
                                     const ReplicaSetConfig& currentConfig,
                                     int selfIndex,
@@ -85,14 +86,15 @@ namespace {
         void setUp();
         void tearDown();
 
-        boost::scoped_ptr<FreshnessChecker> _checker;
+        std::unique_ptr<FreshnessChecker> _checker;
         ReplicationExecutor::EventHandle _checkerDoneEvent;
     };
 
     void FreshnessCheckerTest::setUp() {
         _net = new NetworkInterfaceMock;
-        _executor.reset(new ReplicationExecutor(_net, 1 /* prng seed */));
-        _executorThread.reset(new boost::thread(stdx::bind(&ReplicationExecutor::run,
+        _storage = new StorageInterfaceMock;
+        _executor.reset(new ReplicationExecutor(_net, _storage, 1 /* prng seed */));
+        _executorThread.reset(new stdx::thread(stdx::bind(&ReplicationExecutor::run,
                                                            _executor.get())));
         _checker.reset(new  FreshnessChecker);
     }
@@ -132,14 +134,16 @@ namespace {
     // This is necessary because the run method must be scheduled in the Replication Executor
     // for correct concurrency operation.
     void FreshnessCheckerTest::freshnessCheckerRunner(
-            const ReplicationExecutor::CallbackData& data,
+            const ReplicationExecutor::CallbackArgs& data,
             const Timestamp& lastOpTimeApplied,
             const ReplicaSetConfig& currentConfig,
             int selfIndex,
             const std::vector<HostAndPort>& hosts) {
 
         invariant(data.status.isOK());
-        StatusWith<ReplicationExecutor::EventHandle> evh = _checker->start(data.executor,
+        ReplicationExecutor* executor = dynamic_cast<ReplicationExecutor*>(data.executor);
+        ASSERT(executor);
+        StatusWith<ReplicationExecutor::EventHandle> evh = _checker->start(executor,
                                                                            lastOpTimeApplied,
                                                                            currentConfig,
                                                                            selfIndex,
@@ -929,7 +933,7 @@ namespace {
                                         Milliseconds(0));
         }
     private:
-        scoped_ptr<FreshnessChecker::Algorithm> _checker;
+        unique_ptr<FreshnessChecker::Algorithm> _checker;
     };
 
     TEST_F(FreshnessScatterGatherTest, BothNodesLessFresh) {

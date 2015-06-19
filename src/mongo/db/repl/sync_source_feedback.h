@@ -29,12 +29,10 @@
 
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread/mutex.hpp>
-#include <boost/thread/condition.hpp>
-
 #include "mongo/client/constants.h"
 #include "mongo/client/dbclientcursor.h"
+#include "mongo/stdx/condition_variable.h"
+#include "mongo/stdx/mutex.h"
 #include "mongo/util/net/hostandport.h"
 
 namespace mongo {
@@ -82,11 +80,11 @@ namespace repl {
         // the member we are currently syncing from
         HostAndPort _syncTarget;
         // our connection to our sync target
-        boost::scoped_ptr<DBClientConnection> _connection;
+        std::unique_ptr<DBClientConnection> _connection;
         // protects cond, _shutdownSignaled, and _positionChanged.
-        boost::mutex _mtx;
+        stdx::mutex _mtx;
         // used to alert our thread of changes which need to be passed up the chain
-        boost::condition _cond;
+        stdx::condition_variable _cond;
         // used to indicate a position change which has not yet been pushed along
         bool _positionChanged;
         // Once this is set to true the _run method will terminate

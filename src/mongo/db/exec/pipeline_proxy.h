@@ -30,8 +30,6 @@
 
 #include <boost/optional/optional.hpp>
 #include <boost/intrusive_ptr.hpp>
-#include <boost/shared_ptr.hpp>
-#include <boost/weak_ptr.hpp>
 
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/exec/plan_stage.h"
@@ -47,7 +45,7 @@ namespace mongo {
     class PipelineProxyStage : public PlanStage {
     public:
         PipelineProxyStage(boost::intrusive_ptr<Pipeline> pipeline,
-                           const boost::shared_ptr<PlanExecutor>& child,
+                           const std::shared_ptr<PlanExecutor>& child,
                            WorkingSet* ws);
 
         virtual PlanStage::StageState work(WorkingSetID* out);
@@ -72,14 +70,15 @@ namespace mongo {
          * Return a shared pointer to the PlanExecutor that feeds the pipeline. The returned
          * pointer may be NULL.
          */
-        boost::shared_ptr<PlanExecutor> getChildExecutor();
+        std::shared_ptr<PlanExecutor> getChildExecutor();
 
-        //
-        // These should not be used.
-        //
+        // Returns empty PlanStageStats object
+        virtual PlanStageStats* getStats();
 
-        virtual PlanStageStats* getStats() { return NULL; }
+        // Not used.
         virtual CommonStats* getCommonStats() const { return NULL; }
+
+        // Not used.
         virtual SpecificStats* getSpecificStats() const { return NULL; }
 
         // Not used.
@@ -88,6 +87,8 @@ namespace mongo {
         // Not used.
         virtual StageType stageType() const { return STAGE_PIPELINE_PROXY; }
 
+        static const char* kStageType;
+
     private:
         boost::optional<BSONObj> getNextBson();
 
@@ -95,7 +96,7 @@ namespace mongo {
         const boost::intrusive_ptr<Pipeline> _pipeline;
         std::vector<BSONObj> _stash;
         const bool _includeMetaData;
-        boost::weak_ptr<PlanExecutor> _childExec;
+        std::weak_ptr<PlanExecutor> _childExec;
 
         // Not owned by us.
         WorkingSet* _ws;

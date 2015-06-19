@@ -69,26 +69,30 @@ namespace {
 
     const auto clientOperationInfoDecoration = Client::declareDecoration<ClientOperationInfo>();
 
+    AtomicUInt32 nextOpId{1};
 }  // namespace
 
     using std::string;
 
     OperationContextImpl::OperationContextImpl()
-        : _client(&cc()),
-          _locker(clientOperationInfoDecoration(_client).getLocker()),
+        : OperationContext(&cc(),
+                           nextOpId.fetchAndAdd(1),
+                           clientOperationInfoDecoration(cc()).getLocker()),
           _writesAreReplicated(true) {
-
-        invariant(_locker);
 
         StorageEngine* storageEngine = getGlobalServiceContext()->getGlobalStorageEngine();
         _recovery.reset(storageEngine->newRecoveryUnit());
 
-        _client->setOperationContext(this);
+        auto client = getClient();
+        stdx::lock_guard<Client> lk(*client);
+        client->setOperationContext(this);
     }
 
     OperationContextImpl::~OperationContextImpl() {
-        _locker->assertEmptyAndReset();
-        _client->resetOperationContext();
+        lockState()->assertEmptyAndReset();
+        auto client = getClient();
+        stdx::lock_guard<Client> lk(*client);
+        client->resetOperationContext();
     }
 
     RecoveryUnit* OperationContextImpl::recoveryUnit() const {
@@ -111,27 +115,15 @@ namespace {
         return oldState;
     }
 
-    Locker* OperationContextImpl::lockState() const {
-        return _locker;
-    }
-
-    ProgressMeter* OperationContextImpl::setMessage(const char * msg,
-                                                    const std::string &name,
-                                                    unsigned long long progressMeterTotal,
-                                                    int secondsBetween) {
-        return &CurOp::get(this)->setMessage(msg, name, progressMeterTotal, secondsBetween);
+    ProgressMeter* OperationContextImpl::setMessage_inlock(const char * msg,
+                                                           const std::string &name,
+                                                           unsigned long long progressMeterTotal,
+                                                           int secondsBetween) {
+        return &CurOp::get(this)->setMessage_inlock(msg, name, progressMeterTotal, secondsBetween);
     }
 
     string OperationContextImpl::getNS() const {
         return CurOp::get(this)->getNS();
-    }
-
-    Client* OperationContextImpl::getClient() const {
-        return _client;
-    }
-
-    unsigned int OperationContextImpl::getOpID() const {
-        return CurOp::get(this)->opNum();
     }
 
     uint64_t OperationContextImpl::getRemainingMaxTimeMicros() const {
@@ -183,7 +175,7 @@ namespace {
 
     } // namespace
 
-    void OperationContextImpl::checkForInterrupt() const {
+    void OperationContextImpl::checkForInterrupt() {
         // We cannot interrupt operation, while it's inside of a write unit of work, because logOp
         // cannot handle being iterrupted.
         if (lockState()->inAWriteUnitOfWork()) return;
@@ -191,14 +183,14 @@ namespace {
         uassertStatusOK(checkForInterruptNoAssert());
     }
 
-    Status OperationContextImpl::checkForInterruptNoAssert() const {
+    Status OperationContextImpl::checkForInterruptNoAssert() {
         if (getGlobalServiceContext()->getKillAllOperations()) {
             return Status(ErrorCodes::InterruptedAtShutdown, "interrupted at shutdown");
         }
 
         CurOp* curOp = CurOp::get(this);
         if (curOp->maxTimeHasExpired()) {
-            curOp->kill();
+            markKilled();
             return Status(ErrorCodes::ExceededTimeLimit, "operation exceeded time limit");
         }
 
@@ -206,12 +198,12 @@ namespace {
             if (opShouldFail(this, scopedFailPoint.getData())) {
                 log() << "set pending kill on "
                       << (curOp->parent() ? "nested" : "top-level")
-                      << " op " << curOp->opNum() << ", for checkForInterruptFail";
-                curOp->kill();
+                      << " op " << getOpID() << ", for checkForInterruptFail";
+                markKilled();
             }
         }
 
-        if (curOp->killPending()) {
+        if (isKillPending()) {
             return Status(ErrorCodes::Interrupted, "operation was interrupted");
         }
 
@@ -219,8 +211,7 @@ namespace {
     }
 
     bool OperationContextImpl::isPrimaryFor( StringData ns ) {
-        return repl::getGlobalReplicationCoordinator()->canAcceptWritesForDatabase(
-                NamespaceString(ns).db());
+        return repl::getGlobalReplicationCoordinator()->canAcceptWritesFor(NamespaceString(ns));
     }
 
     void OperationContextImpl::setReplicatedWrites(bool writesAreReplicated) {

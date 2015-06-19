@@ -28,7 +28,6 @@
  *    then also delete it in the license file.
  */
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/index_catalog.h"
@@ -45,7 +44,7 @@
 
 namespace IndexUpdateTests {
 
-    using boost::scoped_ptr;
+    using std::unique_ptr;
 
     static const char* const _ns = "unittests.indexupdate";
 
@@ -248,7 +247,7 @@ namespace IndexUpdateTests {
             // The index's root is set after the build is complete.
             ASSERT( !id->getHead().isNull() );
             // Create a cursor over the index.
-            scoped_ptr<BtreeCursor> cursor(
+            unique_ptr<BtreeCursor> cursor(
                     BtreeCursor::make( nsdetails( _ns ),
                                        id->getOnDisk(),
                                        BSON( "" << -1 ),    // startKey below minimum key.
@@ -482,8 +481,6 @@ namespace IndexUpdateTests {
                 }
                 wunit.commit();
             }
-            // Initialize curop.
-            CurOp::get(_txn)->reset();
             // Request an interrupt.
             getGlobalServiceContext()->setKillAllOperations();
             BSONObj indexInfo = BSON( "key" << BSON( "a" << 1 ) << "ns" << _ns << "name" << "a_1" );
@@ -515,8 +512,6 @@ namespace IndexUpdateTests {
                 }
                 wunit.commit();
             }
-            // Initialize curop.
-            CurOp::get(_txn)->reset();
             // Request an interrupt.
             getGlobalServiceContext()->setKillAllOperations();
             BSONObj indexInfo = BSON( "key" << BSON( "a" << 1 ) << "ns" << _ns << "name" << "a_1" );
@@ -551,8 +546,6 @@ namespace IndexUpdateTests {
                 }
                 wunit.commit();
             }
-            // Initialize curop.
-            CurOp::get(_txn)->reset();
             // Request an interrupt.
             getGlobalServiceContext()->setKillAllOperations();
             BSONObj indexInfo = BSON( "key" << BSON( "_id" << 1 ) <<
@@ -589,8 +582,6 @@ namespace IndexUpdateTests {
                 }
                 wunit.commit();
             }
-            // Initialize curop.
-            CurOp::get(_txn)->reset();
             // Request an interrupt.
             getGlobalServiceContext()->setKillAllOperations();
             BSONObj indexInfo = BSON( "key" << BSON( "_id" << 1 ) <<
@@ -616,8 +607,6 @@ namespace IndexUpdateTests {
             }
             // Start with just _id
             ASSERT_EQUALS( 1U, _client.getIndexSpecs(_ns).size());
-            // Initialize curop.
-            CurOp::get(_txn)->reset();
             // Request an interrupt.
             getGlobalServiceContext()->setKillAllOperations();
             // The call is not interrupted.

@@ -35,7 +35,6 @@
 #include "mongo/db/jsobj.h"
 #include "mongo/db/repl/base_cloner_test_fixture.h"
 #include "mongo/db/repl/collection_cloner.h"
-#include "mongo/db/repl/network_interface_mock.h"
 #include "mongo/unittest/unittest.h"
 
 namespace {
@@ -45,7 +44,6 @@ namespace {
 
     class CollectionClonerTest : public BaseClonerTest {
     public:
-        CollectionClonerTest();
 
         void setUp() override;
         void tearDown() override;
@@ -53,25 +51,18 @@ namespace {
 
     protected:
         CollectionOptions options;
-        StorageInterfaceMock* storageInterface;
         std::unique_ptr<CollectionCloner> collectionCloner;
     };
-
-    CollectionClonerTest::CollectionClonerTest()
-        : options(),
-          storageInterface(nullptr),
-          collectionCloner() { }
 
     void CollectionClonerTest::setUp() {
         BaseClonerTest::setUp();
         options.reset();
         options.storageEngine = BSON("storageEngine1" << BSONObj());
-        storageInterface = new StorageInterfaceMock();
         collectionCloner.reset(new CollectionCloner(&getExecutor(), target, nss, options,
                                                     stdx::bind(&CollectionClonerTest::setStatus,
                                                                this,
                                                                stdx::placeholders::_1),
-                                                    storageInterface));
+                                                    storageInterface.get()));
     }
 
     void CollectionClonerTest::tearDown() {
@@ -92,7 +83,7 @@ namespace {
 
         // Null executor.
         {
-            CollectionCloner::StorageInterface* si = new StorageInterfaceMock();
+            CollectionCloner::StorageInterface* si = storageInterface.get();
             ASSERT_THROWS(CollectionCloner(nullptr, target, nss, options, cb, si), UserException);
         }
 
@@ -103,7 +94,7 @@ namespace {
         // Invalid namespace.
         {
             NamespaceString badNss("db.");
-            CollectionCloner::StorageInterface* si = new StorageInterfaceMock();
+            CollectionCloner::StorageInterface* si = storageInterface.get();
             ASSERT_THROWS(CollectionCloner(&executor, target, badNss, options, cb, si),
                           UserException);
         }
@@ -112,7 +103,7 @@ namespace {
         {
             CollectionOptions invalidOptions;
             invalidOptions.storageEngine = BSON("storageEngine1" << "not a document");
-            CollectionCloner::StorageInterface* si = new StorageInterfaceMock();
+            CollectionCloner::StorageInterface* si = storageInterface.get();
             ASSERT_THROWS(CollectionCloner(&executor, target, nss, invalidOptions, cb, si),
                           UserException);
         }
@@ -120,7 +111,7 @@ namespace {
         // Callback function cannot be null.
         {
             CollectionCloner::CallbackFn nullCb;
-            CollectionCloner::StorageInterface* si = new StorageInterfaceMock();
+            CollectionCloner::StorageInterface* si = storageInterface.get();
             ASSERT_THROWS(CollectionCloner(&executor, target, nss, options, nullCb, si),
                           UserException);
         }

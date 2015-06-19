@@ -30,7 +30,6 @@
 
 #include "mongo/db/commands/group.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/db/auth/action_set.h"
 #include "mongo/db/auth/action_type.h"
@@ -45,7 +44,7 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
+    using std::unique_ptr;
     using std::string;
 
     static GroupCommand cmdGroup;
@@ -152,14 +151,15 @@ namespace mongo {
             return appendCommandStatus(out, getExecStatus);
         }
 
-        scoped_ptr<PlanExecutor> planExecutor(rawPlanExecutor);
+        unique_ptr<PlanExecutor> planExecutor(rawPlanExecutor);
 
         // Group executors return ADVANCED exactly once, with the entire group result.
         BSONObj retval;
         PlanExecutor::ExecState state = planExecutor->getNext(&retval, NULL);
         if (PlanExecutor::ADVANCED != state) {
-            if (PlanExecutor::FAILURE == state &&
-                WorkingSetCommon::isValidStatusMemberObject(retval)) {
+            invariant(PlanExecutor::FAILURE == state || PlanExecutor::DEAD == state);
+
+            if (WorkingSetCommon::isValidStatusMemberObject(retval)) {
                 return appendCommandStatus(out, WorkingSetCommon::getMemberObjectStatus(retval));
             }
             return appendCommandStatus(out,
@@ -168,6 +168,7 @@ namespace mongo {
                                                             << "operation, executor returned "
                                                             << PlanExecutor::statestr(state)));
         }
+
         invariant(planExecutor->isEOF());
 
         invariant(STAGE_GROUP == planExecutor->getRootStage()->stageType());
@@ -209,7 +210,7 @@ namespace mongo {
             return getExecStatus;
         }
 
-        scoped_ptr<PlanExecutor> planExecutor(rawPlanExecutor);
+        unique_ptr<PlanExecutor> planExecutor(rawPlanExecutor);
 
         Explain::explainStages(planExecutor.get(), verbosity, out);
         return Status::OK();

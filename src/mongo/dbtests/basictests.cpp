@@ -31,8 +31,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/shared_ptr.hpp>
 #include <iostream>
 
 #include "mongo/db/operation_context_impl.h"
@@ -48,8 +46,8 @@
 
 namespace BasicTests {
 
-    using boost::scoped_ptr;
-    using boost::shared_ptr;
+    using std::unique_ptr;
+    using std::shared_ptr;
     using std::cout;
     using std::dec;
     using std::endl;

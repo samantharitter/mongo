@@ -32,8 +32,6 @@
 
 #include "mongo/s/chunk.h"
 
-#include <iostream>
-
 #include "mongo/client/connpool.h"
 #include "mongo/client/dbclientcursor.h"
 #include "mongo/config.h"
@@ -47,16 +45,17 @@
 #include "mongo/s/catalog/type_collection.h"
 #include "mongo/s/catalog/type_settings.h"
 #include "mongo/s/chunk_manager.h"
+#include "mongo/s/client/shard_registry.h"
 #include "mongo/s/config.h"
 #include "mongo/s/cursors.h"
 #include "mongo/s/grid.h"
-#include "mongo/util/concurrency/ticketholder.h"
+#include "mongo/s/shard_key_pattern.h"
 #include "mongo/util/log.h"
 
 namespace mongo {
 
-    using boost::shared_ptr;
-    using std::auto_ptr;
+    using std::shared_ptr;
+    using std::unique_ptr;
     using std::map;
     using std::ostringstream;
     using std::set;
@@ -129,10 +128,15 @@ namespace {
 
         log() << "moving chunk (auto): " << toMove->toString() << " to: " << newLocation;
 
-        BSONObj res;
+        shared_ptr<Shard> newShard = grid.shardRegistry()->getShard(newLocation);
+        if (!newShard) {
+            warning() << "Newly selected shard " << newLocation << " could not be found.";
+            return false;
+        }
 
+        BSONObj res;
         WriteConcernOptions noThrottle;
-        if (!toMove->moveAndCommit(newLocation,
+        if (!toMove->moveAndCommit(newShard->getId(),
                                    Chunk::MaxChunkSize,
                                    &noThrottle, /* secondaryThrottle */
                                    false, /* waitForDelete - small chunk, no need */
@@ -159,7 +163,7 @@ namespace {
         : _manager(manager), _lastmod(0, 0, OID()), _dataWritten(mkDataWritten())
     {
         string ns = from.getStringField(ChunkType::ns().c_str());
-        _shard.reset(from.getStringField(ChunkType::shard().c_str()));
+        _shardId = from.getStringField(ChunkType::shard().c_str());
 
         _lastmod = ChunkVersion::fromBSON(from[ChunkType::DEPRECATED_lastmod()]);
         verify( _lastmod.isSet() );
@@ -172,24 +176,32 @@ namespace {
         uassert( 10170 ,  "Chunk needs a ns" , ! ns.empty() );
         uassert( 13327 ,  "Chunk ns must match server ns" , ns == _manager->getns() );
 
-        uassert( 10171 ,  "Chunk needs a server" , _shard.ok() );
+        {
+            const auto shard = grid.shardRegistry()->getShard(_shardId);
+            uassert(10171, "Chunk needs a server", shard);
+        }
 
         uassert( 10172 ,  "Chunk needs a min" , ! _min.isEmpty() );
         uassert( 10173 ,  "Chunk needs a max" , ! _max.isEmpty() );
     }
 
-    Chunk::Chunk(const ChunkManager * info , const BSONObj& min, const BSONObj& max, const Shard& shard, ChunkVersion lastmod)
-        : _manager(info), _min(min), _max(max), _shard(shard), _lastmod(lastmod), _jumbo(false), _dataWritten(mkDataWritten())
+    Chunk::Chunk(const ChunkManager * info,
+                 const BSONObj& min,
+                 const BSONObj& max,
+                 const ShardId& shardId,
+                 ChunkVersion lastmod)
+        : _manager(info),
+          _min(min),
+          _max(max),
+          _shardId(shardId),
+          _lastmod(lastmod),
+          _jumbo(false),
+          _dataWritten(mkDataWritten())
     {}
 
     int Chunk::mkDataWritten() {
         PseudoRandom r(static_cast<int64_t>(time(0)));
         return r.nextInt32( MaxChunkSize / ChunkManager::SplitHeuristics::splitTestFactor );
-    }
-
-    string Chunk::getns() const {
-        verify( _manager );
-        return _manager->getns();
     }
 
     bool Chunk::containsKey( const BSONObj& shardKey ) const {
@@ -234,14 +246,14 @@ namespace {
         }
 
         // find the extreme key
-        ScopedDbConnection conn(getShard().getConnString());
+        ScopedDbConnection conn(_getShardConnectionString());
         BSONObj end;
 
         if (doSplitAtLower) {
             // Splitting close to the lower bound means that the split point will be the
             // upper bound. Chunk range upper bounds are exclusive so skip a document to
             // make the lower half of the split end up with a single document.
-            auto_ptr<DBClientCursor> cursor = conn->query(_manager->getns(),
+            unique_ptr<DBClientCursor> cursor = conn->query(_manager->getns(),
                                                           q,
                                                           1, /* nToReturn */
                                                           1 /* nToSkip */);
@@ -262,7 +274,7 @@ namespace {
 
     void Chunk::pickMedianKey( BSONObj& medianKey ) const {
         // Ask the mongod holding this chunk to figure out the split points.
-        ScopedDbConnection conn(getShard().getConnString());
+        ScopedDbConnection conn(_getShardConnectionString());
         BSONObj result;
         BSONObjBuilder cmd;
         cmd.append( "splitVector" , _manager->getns() );
@@ -292,7 +304,7 @@ namespace {
                                 int maxPoints,
                                 int maxObjs) const {
         // Ask the mongod holding this chunk to figure out the split points.
-        ScopedDbConnection conn(getShard().getConnString());
+        ScopedDbConnection conn(_getShardConnectionString());
         BSONObj result;
         BSONObjBuilder cmd;
         cmd.append( "splitVector" , _manager->getns() );
@@ -429,16 +441,16 @@ namespace {
         uassert( 13333 , "can't split a chunk in that many parts", m.size() < maxSplitPoints );
         uassert( 13003 , "can't split a chunk with only one distinct value" , _min.woCompare(_max) );
 
-        ScopedDbConnection conn(getShard().getConnString());
+        ScopedDbConnection conn(_getShardConnectionString());
 
         BSONObjBuilder cmd;
         cmd.append( "splitChunk" , _manager->getns() );
         cmd.append( "keyPattern" , _manager->getShardKeyPattern().toBSON() );
         cmd.append( "min" , getMin() );
         cmd.append( "max" , getMax() );
-        cmd.append( "from" , getShard().getName() );
+        cmd.append( "from" , getShardId());
         cmd.append( "splitKeys" , m );
-        cmd.append( "configdb" , configServer.modelServer() );
+        cmd.append("configdb", grid.catalogManager()->connectionString().toString());
         cmd.append("epoch", _manager->getVersion().epoch());
         BSONObj cmdObj = cmd.obj();
 
@@ -464,32 +476,36 @@ namespace {
         return Status::OK();
     }
 
-    bool Chunk::moveAndCommit(const Shard& to,
+    bool Chunk::moveAndCommit(const ShardId& toShardId,
                               long long chunkSize /* bytes */,
                               const WriteConcernOptions* writeConcern,
                               bool waitForDelete,
                               int maxTimeMS,
                               BSONObj& res) const {
-        uassert( 10167 ,  "can't move shard to its current location!" , getShard() != to );
+        uassert(10167,
+                "can't move shard to its current location!",
+                getShardId() != toShardId);
 
         log() << "moving chunk ns: " << _manager->getns() << " moving ( " << toString() << ") "
-              << _shard.toString() << " -> " << to.toString();
+              << getShardId() << " -> " << toShardId;
 
-        Shard from = _shard;
-        ScopedDbConnection fromconn(from.getConnString());
+        const auto from = grid.shardRegistry()->getShard(getShardId());
 
         BSONObjBuilder builder;
         builder.append("moveChunk", _manager->getns());
-        builder.append("from", from.getConnString().toString());
-        builder.append("to", to.getConnString().toString());
+        builder.append("from", from->getConnString().toString());
+        {
+            const auto toShard = grid.shardRegistry()->getShard(toShardId);
+            builder.append("to", toShard->getConnString().toString());
+        }
         // NEEDED FOR 2.0 COMPATIBILITY
-        builder.append("fromShard", from.getName());
-        builder.append("toShard", to.getName());
+        builder.append("fromShard", from->getId());
+        builder.append("toShard", toShardId);
         ///////////////////////////////
         builder.append("min", _min);
         builder.append("max", _max);
         builder.append("maxChunkSizeBytes", chunkSize);
-        builder.append("configdb", configServer.modelServer());
+        builder.append("configdb", grid.catalogManager()->connectionString().toString());
 
         // For legacy secondary throttle setting.
         bool secondaryThrottle = true;
@@ -509,6 +525,7 @@ namespace {
         builder.append(LiteParsedQuery::cmdOptionMaxTimeMS, maxTimeMS);
         builder.append("epoch", _manager->getVersion().epoch());
 
+        ScopedDbConnection fromconn(from->getConnString());
         bool worked = fromconn->runCommand("admin", builder.done(), res);
         fromconn.done();
 
@@ -601,7 +618,10 @@ namespace {
                 BSONObj range = shouldMigrate.embeddedObject();
 
                 ChunkType chunkToMove;
-                chunkToMove.setShard(getShard().toString());
+                {
+                    const auto shard = grid.shardRegistry()->getShard(getShardId());
+                    chunkToMove.setShard(shard->toString());
+                }
                 chunkToMove.setMin(range["min"].embeddedObject());
                 chunkToMove.setMax(range["max"].embeddedObject());
 
@@ -623,8 +643,13 @@ namespace {
         }
     }
 
+    const ConnectionString& Chunk::_getShardConnectionString() const {
+        const auto shard = grid.shardRegistry()->getShard(getShardId());
+        return shard->getConnString();
+    }
+
     long Chunk::getPhysicalSize() const {
-        ScopedDbConnection conn(getShard().getConnString());
+        ScopedDbConnection conn(_getShardConnectionString());
 
         BSONObj result;
         uassert( 10169 ,  "datasize failed!" , conn->runCommand( "admin" ,
@@ -668,7 +693,7 @@ namespace {
         to << ChunkType::ns(_manager->getns());
         to << ChunkType::min(_min);
         to << ChunkType::max(_max);
-        to << ChunkType::shard(_shard.getName());
+        to << ChunkType::shard(_shardId);
     }
 
     string Chunk::genID() const {
@@ -691,7 +716,7 @@ namespace {
     string Chunk::toString() const {
         stringstream ss;
         ss << ChunkType::ns()                 << ": " << _manager->getns()   << ", "
-           << ChunkType::shard()              << ": " << _shard.toString()   << ", "
+           << ChunkType::shard()              << ": " << _shardId            << ", "
            << ChunkType::DEPRECATED_lastmod() << ": " << _lastmod.toString() << ", "
            << ChunkType::min()                << ": " << _min                << ", "
            << ChunkType::max()                << ": " << _max;
@@ -723,7 +748,7 @@ namespace {
             return;
         }
         SettingsType chunkSizeSettings = chunkSizeSettingsResult.getValue();
-        int csize = chunkSizeSettings.getChunkSize();
+        int csize = chunkSizeSettings.getChunkSizeMB();
 
         LOG(1) << "Refreshing MaxChunkSize: " << csize << "MB";
 

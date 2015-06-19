@@ -32,22 +32,24 @@
 #include "mongo/client/dbclient_rs.h"
 
 #include <memory>
-#include <boost/shared_ptr.hpp>
 #include <utility>
 
 #include "mongo/bson/util/builder.h"
 #include "mongo/client/connpool.h"
 #include "mongo/client/dbclientcursor.h"
+#include "mongo/client/global_conn_pool.h"
+#include "mongo/client/read_preference.h"
 #include "mongo/client/replica_set_monitor.h"
 #include "mongo/client/sasl_client_authenticate.h"
 #include "mongo/db/dbmessage.h"
 #include "mongo/db/jsobj.h"
+#include "mongo/rpc/metadata/server_selection_metadata.h"
 #include "mongo/util/log.h"
 
 namespace mongo {
 
-    using boost::shared_ptr;
-    using std::auto_ptr;
+    using std::shared_ptr;
+    using std::unique_ptr;
     using std::endl;
     using std::map;
     using std::set;
@@ -147,7 +149,8 @@ namespace {
     }
 
     ReplicaSetMonitorPtr DBClientReplicaSet::_getMonitor() const {
-        ReplicaSetMonitorPtr rsm = ReplicaSetMonitor::get( _setName, true );
+        ReplicaSetMonitorPtr rsm = ReplicaSetMonitor::get(_setName);
+
         // If you can't get a ReplicaSetMonitor then this connection isn't valid
         uassert( 16340, str::stream() << "No replica set monitor active and no cached seed "
                  "found for set: " << _setName, rsm );
@@ -156,10 +159,10 @@ namespace {
 
     // This can't throw an exception because it is called in the destructor of ScopedDbConnection
     string DBClientReplicaSet::getServerAddress() const {
-        ReplicaSetMonitorPtr rsm = ReplicaSetMonitor::get( _setName, true );
+        ReplicaSetMonitorPtr rsm = ReplicaSetMonitor::get(_setName);
         if ( !rsm ) {
             warning() << "Trying to get server address for DBClientReplicaSet, but no "
-                "ReplicaSetMonitor exists for " << _setName << endl;
+                         "ReplicaSetMonitor exists for " << _setName;
             return str::stream() << _setName << "/" ;
         }
         return rsm->getServerAddress();
@@ -172,27 +175,26 @@ namespace {
         return _master->getServerHostAndPort();
     }
 
-    void DBClientReplicaSet::setRunCommandHook(DBClientWithCommands::RunCommandHookFunc func) {
+    void DBClientReplicaSet::setRequestMetadataWriter(rpc::RequestMetadataWriter writer) {
         // Set the hooks in both our sub-connections and in ourselves.
         if (_master) {
-            _master->setRunCommandHook(func);
+            _master->setRequestMetadataWriter(writer);
         }
         if (_lastSlaveOkConn.get()) {
-           _lastSlaveOkConn->setRunCommandHook(func);
+            _lastSlaveOkConn->setRequestMetadataWriter(writer);
         }
-        _runCommandHook = func;
+        DBClientWithCommands::setRequestMetadataWriter(std::move(writer));
     }
 
-    void DBClientReplicaSet::setPostRunCommandHook
-    (DBClientWithCommands::PostRunCommandHookFunc func) {
+    void DBClientReplicaSet::setReplyMetadataReader(rpc::ReplyMetadataReader reader) {
         // Set the hooks in both our sub-connections and in ourselves.
         if (_master) {
-            _master->setPostRunCommandHook(func);
+            _master->setReplyMetadataReader(reader);
         }
         if (_lastSlaveOkConn.get()) {
-           _lastSlaveOkConn->setPostRunCommandHook(func);
+            _lastSlaveOkConn->setReplyMetadataReader(reader);
         }
-        _postRunCommandHook = func;
+        DBClientWithCommands::setReplyMetadataReader(std::move(reader));
     }
 
     // A replica set connection is never disconnected, since it controls its own reconnection
@@ -215,10 +217,31 @@ namespace {
         return true;
     }
 
+namespace {
+
+    bool _isSecondaryCommand(StringData commandName,
+                             const BSONObj& commandArgs) {
+
+        if (_secOkCmdList.count(commandName.toString())) {
+            return true;
+        }
+        if (commandName == "mapReduce" || commandName == "mapreduce") {
+            if (!commandArgs.hasField("out")) {
+                return false;
+            }
+
+            BSONElement outElem(commandArgs["out"]);
+            if (outElem.isABSONObj() && outElem["inline"].trueValue()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Internal implementation of isSecondaryQuery, takes previously-parsed read preference
-    static bool _isSecondaryQuery( const string& ns,
-                                   const BSONObj& queryObj,
-                                   const ReadPreferenceSetting& readPref ) {
+    bool _isSecondaryQuery( const string& ns,
+                            const BSONObj& queryObj,
+                            const ReadPreferenceSetting& readPref ) {
 
         // If the read pref is primary only, this is not a secondary query
         if (readPref.pref == ReadPreference::PrimaryOnly) return false;
@@ -238,29 +261,17 @@ namespace {
             actualQueryObj = queryObj;
         }
 
-        const string cmdName = actualQueryObj.firstElementFieldName();
-        if (_secOkCmdList.count(cmdName) == 1) {
-            return true;
-        }
-
-        if (cmdName == "mapReduce" || cmdName == "mapreduce") {
-            if (!actualQueryObj.hasField("out")) {
-                return false;
-            }
-
-            BSONElement outElem(actualQueryObj["out"]);
-            if (outElem.isABSONObj() && outElem["inline"].trueValue()) {
-                return true;
-            }
-        }
-
-        return false;
+        StringData commandName = actualQueryObj.firstElementFieldName();
+        return _isSecondaryCommand(commandName, actualQueryObj);
     }
+
+}  // namespace
+
 
     bool DBClientReplicaSet::isSecondaryQuery( const string& ns,
                                                const BSONObj& queryObj,
                                                int queryOptions ) {
-        auto_ptr<ReadPreferenceSetting> readPref( _extractReadPref( queryObj, queryOptions ) );
+        unique_ptr<ReadPreferenceSetting> readPref( _extractReadPref( queryObj, queryOptions ) );
         return _isSecondaryQuery( ns, queryObj, *readPref );
     }
 
@@ -307,8 +318,8 @@ namespace {
         _masterHost = h;
         _master.reset(newConn);
         _master->setParentReplSetName(_setName);
-        _master->setRunCommandHook(_runCommandHook);
-        _master->setPostRunCommandHook(_postRunCommandHook);
+        _master->setRequestMetadataWriter(getRequestMetadataWriter());
+        _master->setReplyMetadataReader(getReplyMetadataReader());
 
         _auth( _master.get() );
         return _master.get();
@@ -490,7 +501,7 @@ namespace {
         return checkMaster()->update( ns, query, obj, flags );
     }
 
-    auto_ptr<DBClientCursor> DBClientReplicaSet::query(const string &ns,
+    unique_ptr<DBClientCursor> DBClientReplicaSet::query(const string &ns,
                                                        Query query,
                                                        int nToReturn,
                                                        int nToSkip,
@@ -520,11 +531,11 @@ namespace {
                         break;
                     }
 
-                    auto_ptr<DBClientCursor> cursor = conn->query(ns, query,
+                    unique_ptr<DBClientCursor> cursor = conn->query(ns, query,
                             nToReturn, nToSkip, fieldsToReturn, queryOptions,
                             batchSize);
 
-                    return checkSlaveQueryResult(cursor);
+                    return checkSlaveQueryResult(std::move(cursor));
                 }
                 catch (const DBException &dbExcep) {
                     StringBuilder errMsgBuilder;
@@ -616,7 +627,7 @@ namespace {
         verify(0);
     }
 
-    void DBClientReplicaSet::isntMaster() { 
+    void DBClientReplicaSet::isntMaster() {
         log() << "got not master for: " << _masterHost << endl;
         // Can't use _getMonitor because that will create a new monitor from the cached seed if
         // the monitor doesn't exist.
@@ -628,7 +639,7 @@ namespace {
         resetMaster();
     }
 
-    auto_ptr<DBClientCursor> DBClientReplicaSet::checkSlaveQueryResult( auto_ptr<DBClientCursor> result ){
+    unique_ptr<DBClientCursor> DBClientReplicaSet::checkSlaveQueryResult( unique_ptr<DBClientCursor> result ){
         if ( result.get() == NULL ) return result;
 
         BSONObj error;
@@ -702,7 +713,7 @@ namespace {
         // callback. We should eventually not need this after we remove the
         // callback.
         DBClientConnection* newConn = dynamic_cast<DBClientConnection*>(
-                pool.get(_lastSlaveOkHost.toString(), _so_timeout));
+                globalConnPool.get(_lastSlaveOkHost.toString(), _so_timeout));
 
         // Assert here instead of returning NULL since the contract of this method is such
         // that returning NULL means none of the nodes were good, which is not the case here.
@@ -711,8 +722,8 @@ namespace {
 
         _lastSlaveOkConn.reset(newConn);
         _lastSlaveOkConn->setParentReplSetName(_setName);
-        _lastSlaveOkConn->setRunCommandHook(_runCommandHook);
-        _lastSlaveOkConn->setPostRunCommandHook(_postRunCommandHook);
+        _lastSlaveOkConn->setRequestMetadataWriter(getRequestMetadataWriter());
+        _lastSlaveOkConn->setReplyMetadataReader(getReplyMetadataReader());
 
         if (_authPooledSecondaryConn) {
             _auth(_lastSlaveOkConn.get());
@@ -901,6 +912,66 @@ namespace {
         }
     }
 
+    rpc::UniqueReply DBClientReplicaSet::runCommandWithMetadata(StringData database,
+                                                                StringData command,
+                                                                const BSONObj& metadata,
+                                                                const BSONObj& commandArgs) {
+        // This overload exists so we can parse out the read preference and then use server
+        // selection directly without having to re-parse the raw message.
+
+        // TODO: eventually we will want to pass the metadata before serializing it to BSON
+        // so we don't have to re-parse it, however, that will come with its own set of
+        // complications (e.g. some kind of base class or concept for MetadataSerializable
+        // objects). For now we do it the stupid way.
+        auto ssm = uassertStatusOK(
+            rpc::ServerSelectionMetadata::readFromMetadata(metadata)
+        );
+
+        // If we didn't get a readPref with this query, we assume SecondaryPreferred if secondaryOk
+        // is true, and PrimaryOnly otherwise. This logic is replicated from _extractReadPref.
+        auto defaultReadPref = ssm.isSecondaryOk() ?
+            ReadPreferenceSetting(ReadPreference::SecondaryPreferred, TagSet()) :
+            ReadPreferenceSetting(ReadPreference::PrimaryOnly, TagSet::primaryOnly());
+
+        auto readPref = ssm.getReadPreference().get_value_or(defaultReadPref);
+
+        if (readPref.pref == ReadPreference::PrimaryOnly ||
+            // If the command is not runnable on a secondary, we run it on the primary
+            // regardless of the read preference.
+            !_isSecondaryCommand(command, commandArgs)) {
+
+            return checkMaster()->runCommandWithMetadata(std::move(database),
+                                                         std::move(command),
+                                                         metadata,
+                                                         commandArgs);
+        }
+
+        auto rpShared = std::make_shared<ReadPreferenceSetting>(std::move(readPref));
+
+        for (size_t retry = 0; retry < MAX_RETRY; ++retry)  {
+            try {
+                auto* conn = selectNodeUsingTags(rpShared);
+                if (conn == nullptr) {
+                    break;
+                }
+                // We can't move database and command in case this throws
+                // and we retry.
+                return conn->runCommandWithMetadata(database,
+                                                    command,
+                                                    metadata,
+                                                    commandArgs);
+            }
+            catch (const DBException& ex) {
+                log() << exceptionToStatus();
+                invalidateLastSlaveOkCache();
+            }
+        }
+        uasserted(ErrorCodes::NodeNotFound,
+                  str::stream() << "Could not satisfy $readPreference of '"
+                                << readPref.toBSON() << "' "
+                                << "while attempting to run command "
+                                << command);
+    }
 
     bool DBClientReplicaSet::call(Message &toSend,
                                   Message &response,
@@ -956,13 +1027,13 @@ namespace {
                 return false;
             }
         }
-        
+
         LOG( 3 ) << "dbclient_rs call to primary node in " << _getMonitor()->getName() << endl;
 
         DBClientConnection* m = checkMaster();
         if ( actualServer )
             *actualServer = m->getServerAddress();
-        
+
         if ( ! m->call( toSend , response , assertOk ) )
             return false;
 
@@ -1027,7 +1098,7 @@ namespace {
             }
 
             // If the connection was bad, the pool will clean it up.
-            pool.release(_lastSlaveOkHost.toString(), _lastSlaveOkConn.release());
+            globalConnPool.release(_lastSlaveOkHost.toString(), _lastSlaveOkConn.release());
         }
 
         _lastSlaveOkHost = HostAndPort();

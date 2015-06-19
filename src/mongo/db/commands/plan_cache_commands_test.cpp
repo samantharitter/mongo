@@ -33,7 +33,6 @@
 #include "mongo/db/commands/plan_cache_commands.h"
 
 #include <algorithm>
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/db/json.h"
 #include "mongo/db/operation_context_noop.h"
@@ -46,12 +45,12 @@ using namespace mongo;
 
 namespace {
 
-    using boost::scoped_ptr;
-    using std::auto_ptr;
+    using std::unique_ptr;
+    using std::unique_ptr;
     using std::string;
     using std::vector;
 
-    static const char* ns = "somebogusns";
+    static const char* ns = "test.t";
 
     /**
      * Tests for planCacheListQueryShapes
@@ -98,7 +97,7 @@ namespace {
      * Utility function to create a SolutionCacheData
      */
     SolutionCacheData* createSolutionCacheData() {
-        auto_ptr<SolutionCacheData> scd(new SolutionCacheData());
+        unique_ptr<SolutionCacheData> scd(new SolutionCacheData());
         scd->tree.reset(new PlanCacheIndexTree());
         return scd.release();
     }
@@ -107,10 +106,10 @@ namespace {
      * Utility function to create a PlanRankingDecision
      */
     PlanRankingDecision* createDecision(size_t numPlans) {
-        auto_ptr<PlanRankingDecision> why(new PlanRankingDecision());
+        unique_ptr<PlanRankingDecision> why(new PlanRankingDecision());
         for (size_t i = 0; i < numPlans; ++i) {
             CommonStats common("COLLSCAN");
-            auto_ptr<PlanStageStats> stats(new PlanStageStats(common, STAGE_COLLSCAN));
+            unique_ptr<PlanStageStats> stats(new PlanStageStats(common, STAGE_COLLSCAN));
             stats->specific.reset(new CollectionScanStats());
             why->stats.mutableVector().push_back(stats.release());
             why->scores.push_back(0U);
@@ -129,7 +128,7 @@ namespace {
         // Create a canonical query
         CanonicalQuery* cqRaw;
         ASSERT_OK(CanonicalQuery::canonicalize(ns, fromjson("{a: 1}"), &cqRaw));
-        auto_ptr<CanonicalQuery> cq(cqRaw);
+        unique_ptr<CanonicalQuery> cq(cqRaw);
 
         // Plan cache with one entry
         PlanCache planCache;
@@ -154,7 +153,7 @@ namespace {
         // Create a canonical query
         CanonicalQuery* cqRaw;
         ASSERT_OK(CanonicalQuery::canonicalize(ns, fromjson("{a: 1}"), &cqRaw));
-        auto_ptr<CanonicalQuery> cq(cqRaw);
+        unique_ptr<CanonicalQuery> cq(cqRaw);
 
         // Plan cache with one entry
         PlanCache planCache;
@@ -196,36 +195,36 @@ namespace {
 
         // Valid parameters
         ASSERT_OK(PlanCacheCommand::canonicalize(&txn, ns, fromjson("{query: {a: 1, b: 1}}"), &cqRaw));
-        scoped_ptr<CanonicalQuery> query(cqRaw);
+        unique_ptr<CanonicalQuery> query(cqRaw);
 
 
         // Equivalent query should generate same key.
         ASSERT_OK(PlanCacheCommand::canonicalize(&txn, ns, fromjson("{query: {b: 1, a: 1}}"), &cqRaw));
-        scoped_ptr<CanonicalQuery> equivQuery(cqRaw);
+        unique_ptr<CanonicalQuery> equivQuery(cqRaw);
         ASSERT_EQUALS(planCache.computeKey(*query), planCache.computeKey(*equivQuery));
 
         // Sort query should generate different key from unsorted query.
         ASSERT_OK(PlanCacheCommand::canonicalize(&txn, ns,
             fromjson("{query: {a: 1, b: 1}, sort: {a: 1, b: 1}}"), &cqRaw));
-        scoped_ptr<CanonicalQuery> sortQuery1(cqRaw);
+        unique_ptr<CanonicalQuery> sortQuery1(cqRaw);
         ASSERT_NOT_EQUALS(planCache.computeKey(*query), planCache.computeKey(*sortQuery1));
 
         // Confirm sort arguments are properly delimited (SERVER-17158)
         ASSERT_OK(PlanCacheCommand::canonicalize(&txn, ns,
             fromjson("{query: {a: 1, b: 1}, sort: {aab: 1}}"), &cqRaw));
-        scoped_ptr<CanonicalQuery> sortQuery2(cqRaw);
+        unique_ptr<CanonicalQuery> sortQuery2(cqRaw);
         ASSERT_NOT_EQUALS(planCache.computeKey(*sortQuery1), planCache.computeKey(*sortQuery2));
 
         // Changing order and/or value of predicates should not change key
         ASSERT_OK(PlanCacheCommand::canonicalize(&txn, ns,
             fromjson("{query: {b: 3, a: 3}, sort: {a: 1, b: 1}}"), &cqRaw));
-        scoped_ptr<CanonicalQuery> sortQuery3(cqRaw);
+        unique_ptr<CanonicalQuery> sortQuery3(cqRaw);
         ASSERT_EQUALS(planCache.computeKey(*sortQuery1), planCache.computeKey(*sortQuery3));
 
         // Projected query should generate different key from unprojected query.
         ASSERT_OK(PlanCacheCommand::canonicalize(&txn, ns,
             fromjson("{query: {a: 1, b: 1}, projection: {_id: 0, a: 1}}"), &cqRaw));
-        scoped_ptr<CanonicalQuery> projectionQuery(cqRaw);
+        unique_ptr<CanonicalQuery> projectionQuery(cqRaw);
         ASSERT_NOT_EQUALS(planCache.computeKey(*query), planCache.computeKey(*projectionQuery));
     }
 
@@ -261,9 +260,9 @@ namespace {
         // Create 2 canonical queries.
         CanonicalQuery* cqRaw;
         ASSERT_OK(CanonicalQuery::canonicalize(ns, fromjson("{a: 1}"), &cqRaw));
-        auto_ptr<CanonicalQuery> cqA(cqRaw);
+        unique_ptr<CanonicalQuery> cqA(cqRaw);
         ASSERT_OK(CanonicalQuery::canonicalize(ns, fromjson("{b: 1}"), &cqRaw));
-        auto_ptr<CanonicalQuery> cqB(cqRaw);
+        unique_ptr<CanonicalQuery> cqB(cqRaw);
 
         // Create plan cache with 2 entries.
         PlanCache planCache;
@@ -378,7 +377,7 @@ namespace {
         // Create a canonical query
         CanonicalQuery* cqRaw;
         ASSERT_OK(CanonicalQuery::canonicalize(ns, fromjson("{a: 1}"), &cqRaw));
-        auto_ptr<CanonicalQuery> cq(cqRaw);
+        unique_ptr<CanonicalQuery> cq(cqRaw);
 
         // Plan cache with one entry
         PlanCache planCache;
@@ -397,7 +396,7 @@ namespace {
         // Create a canonical query
         CanonicalQuery* cqRaw;
         ASSERT_OK(CanonicalQuery::canonicalize(ns, fromjson("{a: 1}"), &cqRaw));
-        auto_ptr<CanonicalQuery> cq(cqRaw);
+        unique_ptr<CanonicalQuery> cq(cqRaw);
 
         // Plan cache with one entry
         PlanCache planCache;

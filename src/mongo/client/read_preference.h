@@ -127,6 +127,11 @@ namespace mongo {
         BSONObj toBSON() const;
 
         /**
+         * Describes this ReadPreferenceSetting as a string.
+         */
+        std::string toString() const;
+
+        /**
          * Parses a ReadPreferenceSetting from a BSON document of the form:
          * { mode: <mode>, tags: <array of tags> }. The 'mode' element must a string equal to either
          * "primary", "primaryPreferred", "secondary", "secondaryPreferred", or "nearest". Although
@@ -136,8 +141,8 @@ namespace mongo {
          */
         static StatusWith<ReadPreferenceSetting> fromBSON(const BSONObj& readPrefSettingObj);
 
-        const ReadPreference pref{ReadPreference::PrimaryOnly};
-        const TagSet tags{TagSet::primaryOnly()};
+        ReadPreference pref{ReadPreference::PrimaryOnly};
+        TagSet tags{TagSet::primaryOnly()};
     };
 
 } // namespace mongo

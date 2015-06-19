@@ -35,8 +35,6 @@
 
 #include "mongo/base/string_data.h"
 #include "mongo/db/fts/fts_language.h"
-#include "mongo/platform/unordered_map.h"
-#include "mongo/platform/unordered_set.h"
 
 namespace mongo {
 
@@ -44,25 +42,24 @@ namespace mongo {
 
         struct Token {
             enum Type { WHITESPACE, DELIMITER, TEXT, INVALID };
-            Token( Type type, StringData data, unsigned offset, bool previousWhiteSpace )
+            Token( Type type, StringData data, unsigned offset)
                 : type( type ),
                   data( data ),
-                  offset( offset ),
-                  previousWhiteSpace( previousWhiteSpace ) {}
+                  offset( offset )
+                  {}
 
             bool ok() const { return type != INVALID; }
 
             Type type;
             StringData data;
             unsigned offset;
-            bool previousWhiteSpace;
         };
 
         class Tokenizer {
             MONGO_DISALLOW_COPYING( Tokenizer );
         public:
 
-            Tokenizer( const FTSLanguage* language, StringData str );
+            Tokenizer( const FTSLanguage* language, StringData str);
 
             bool more() const;
             Token next();
@@ -72,7 +69,6 @@ namespace mongo {
             bool _skipWhitespace();
 
             unsigned _pos;
-            bool _previousWhiteSpace;
             const StringData _raw;
             bool _english;
         };

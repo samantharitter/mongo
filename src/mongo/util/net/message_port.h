@@ -29,8 +29,6 @@
 
 #pragma once
 
-#include <boost/noncopyable.hpp>
-#include <boost/shared_ptr.hpp>
 #include <vector>
 
 #include "mongo/config.h"
@@ -42,7 +40,8 @@ namespace mongo {
     class MessagingPort;
     class PiggyBackData;
 
-    class AbstractMessagingPort : boost::noncopyable {
+    class AbstractMessagingPort {
+        MONGO_DISALLOW_COPYING(AbstractMessagingPort);
     public:
         AbstractMessagingPort() : tag(0), _connectionId(0) {}
         virtual ~AbstractMessagingPort() { }
@@ -86,7 +85,7 @@ namespace mongo {
         MessagingPort(double so_timeout = 0,
                       logger::LogSeverity logLevel = logger::LogSeverity::Log() );
 
-        MessagingPort(boost::shared_ptr<Socket> socket);
+        MessagingPort(std::shared_ptr<Socket> socket);
 
         virtual ~MessagingPort();
 
@@ -122,7 +121,7 @@ namespace mongo {
         virtual SockAddr remoteAddr() const;
         virtual SockAddr localAddr() const;
 
-        boost::shared_ptr<Socket> psock;
+        std::shared_ptr<Socket> psock;
                 
         void send( const char * data , int len, const char *context ) {
             psock->send( data, len, context );

@@ -28,18 +28,21 @@
 
 #pragma once
 
-#include <boost/scoped_ptr.hpp>
-#include <boost/thread/thread.hpp>
-
+#include "mongo/stdx/thread.h"
 #include "mongo/unittest/unittest.h"
 
 namespace mongo {
+
+namespace executor {
+    class NetworkInterfaceMock;
+} // namespace executor
+
 namespace repl {
 
     using std::unique_ptr;
 
-    class NetworkInterfaceMock;
     class ReplicationExecutor;
+    class StorageInterfaceMock;
 
     /**
      * Test fixture for tests that require a ReplicationExecutor backed by
@@ -47,12 +50,17 @@ namespace repl {
      */
     class ReplicationExecutorTest : public unittest::Test {
     protected:
-        NetworkInterfaceMock* getNet() { return _net; }
+        executor::NetworkInterfaceMock* getNet() { return _net; }
         ReplicationExecutor& getExecutor() { return *_executor; }
         /**
          * Runs ReplicationExecutor in background.
          */
         void launchExecutorThread();
+
+        /**
+         * Anything that needs to be done after launchExecutorThread should go in here.
+         */
+        virtual void postExecutorThreadLaunch();
 
         /**
          * Waits for background ReplicationExecutor to stop running.
@@ -80,9 +88,10 @@ namespace repl {
 
 
     private:
-        NetworkInterfaceMock* _net;
+        executor::NetworkInterfaceMock* _net;
+        StorageInterfaceMock* _storage;
         unique_ptr<ReplicationExecutor> _executor;
-        unique_ptr<boost::thread> _executorThread;
+        unique_ptr<stdx::thread> _executorThread;
     };
 
 }  // namespace repl

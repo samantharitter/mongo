@@ -30,7 +30,6 @@
 
 #include "mongo/s/write_ops/batch_upconvert.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/bson/bsonobj.h"
 #include "mongo/client/dbclientinterface.h"
@@ -44,9 +43,9 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
+    using std::unique_ptr;
     using mongoutils::str::stream;
-    using std::auto_ptr;
+    using std::unique_ptr;
     using std::string;
     using std::vector;
 
@@ -54,7 +53,7 @@ namespace mongo {
 
         int opType = msg.operation();
 
-        auto_ptr<BatchedCommandRequest> request;
+        unique_ptr<BatchedCommandRequest> request;
         if ( opType == dbInsert ) {
             msgToBatchInserts( msg, requests );
         }
@@ -174,7 +173,7 @@ namespace mongo {
                                 const BatchedCommandResponse& response,
                                 LastError* error ) {
 
-        scoped_ptr<WriteErrorDetail> commandError;
+        unique_ptr<WriteErrorDetail> commandError;
         WriteErrorDetail* lastBatchError = NULL;
 
         if ( !response.getOk() ) {

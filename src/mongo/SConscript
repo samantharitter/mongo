@@ -30,6 +30,7 @@ env.SConscript(
         'crypto',
         'db',
         'dbtests',
+        'executor',
         'installer',
         'logger',
         'platform',
@@ -145,13 +146,13 @@ config_header_substs = (
     ('@mongo_config_have___declspec_thread@', 'MONGO_CONFIG_HAVE___DECLSPEC_THREAD'),
     ('@mongo_config_have___thread@', 'MONGO_CONFIG_HAVE___THREAD'),
     ('@mongo_config_have_execinfo_backtrace@', 'MONGO_CONFIG_HAVE_EXECINFO_BACKTRACE'),
+    ('@mongo_config_have_fips_mode_set@', 'MONGO_CONFIG_HAVE_FIPS_MODE_SET'),
     ('@mongo_config_have_header_unistd_h@', 'MONGO_CONFIG_HAVE_HEADER_UNISTD_H'),
     ('@mongo_config_have_posix_monotonic_clock@', 'MONGO_CONFIG_HAVE_POSIX_MONOTONIC_CLOCK'),
     ('@mongo_config_have_std_is_trivially_copyable@', 'MONGO_CONFIG_HAVE_STD_IS_TRIVIALLY_COPYABLE'),
     ('@mongo_config_have_std_make_unique@', 'MONGO_CONFIG_HAVE_STD_MAKE_UNIQUE'),
     ('@mongo_config_optimized_build@', 'MONGO_CONFIG_OPTIMIZED_BUILD'),
     ('@mongo_config_ssl@', 'MONGO_CONFIG_SSL'),
-    ('@mongo_config_ssl_fips@', 'MONGO_CONFIG_SSL_FIPS'),
     ('@mongo_config_use_gdbserver@', 'MONGO_CONFIG_USE_GDBSERVER'),
 )
 
@@ -188,7 +189,10 @@ mongod = env.Program(
         "db/mongod_options",
         "db/mongodandmongos",
         "db/mongodwebserver",
+        "db/repl/storage_interface_impl",
         "db/serveronly",
+        "executor/network_interface_asio",
+        's/commands/shared_cluster_commands',
         "util/ntservice",
     ],
 )
@@ -225,16 +229,18 @@ env.Install(
             "s/mongos_options_init.cpp",
         ],
         LIBDEPS=[
+            'db/conn_pool_options',
+            'db/coredb',
+            'db/mongodandmongos',
             's/catalog/legacy/catalog_manager_legacy',
+            's/catalog/replset/catalog_manager_replica_set',
             's/client/sharding_connection_hook',
             's/commands/cluster_commands',
-            "s/mongoscore",
-            "db/coredb",
-            "s/coreshard",
-            "util/ntservice",
-            "db/mongodandmongos",
-            "db/conn_pool_options",
-            '$BUILD_DIR/mongo/util/options_parser/options_parser_init',
+            's/commands/shared_cluster_commands',
+            's/coreshard',
+            's/mongoscore',
+            'util/ntservice',
+            'util/options_parser/options_parser_init',
         ]))
 
 # --- sniffer ---
@@ -402,15 +408,22 @@ for full_dir, archive_dir in env["ARCHIVE_ADDITION_DIR_MAP"].items():
 # Attempts to build release artifacts without tools must fail
 if has_option("use-new-tools"):
     env.Command(
-        '#/${SERVER_ARCHIVE}',
-        ['#buildscripts/make_archive.py'] + env["MODULE_BANNERS"] + env["ARCHIVE_ADDITIONS"] +
-        distBinaries, ' '.join(['$PYTHON ${SOURCES[0]} -o $TARGET'] + archive_addition_transforms +
-        module_banner_transforms + [
-                '--transform ${str(Dir(BUILD_DIR))}/mongo/stripped=$SERVER_DIST_BASENAME/bin',
-                '--transform ${str(Dir(BUILD_DIR))}/mongo=$SERVER_DIST_BASENAME/bin',
-                '--transform ${str(Dir(BUILD_DIR))}/mongo/stripped/src/mongo-tools=$SERVER_DIST_BASENAME/bin',
+        target='#/${SERVER_ARCHIVE}',
+        source=['#buildscripts/make_archive.py'] + env["MODULE_BANNERS"] + env["ARCHIVE_ADDITIONS"] + distBinaries,
+        action=' '.join(
+            ['$PYTHON ${SOURCES[0]} -o $TARGET'] +
+            archive_addition_transforms +
+            module_banner_transforms +
+            [
+                '--transform $BUILD_DIR/mongo/stripped=$SERVER_DIST_BASENAME/bin',
+                '--transform $BUILD_DIR/mongo=$SERVER_DIST_BASENAME/bin',
+                '--transform $BUILD_DIR/mongo/stripped/src/mongo-tools=$SERVER_DIST_BASENAME/bin',
                 '--transform src/mongo-tools=$SERVER_DIST_BASENAME/bin',
-                '${TEMPFILE(SOURCES[1:])}']))
+                '${TEMPFILE(SOURCES[1:])}'
+            ],
+        ),
+        BUILD_DIR=env.Dir('$BUILD_DIR').path
+    )
 
     env.Alias("dist", source='#/${SERVER_ARCHIVE}')
 else:

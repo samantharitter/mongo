@@ -32,14 +32,15 @@
 
 #include "mongo/db/storage/mmap_v1/record_store_v1_base.h"
 
-#include <boost/scoped_ptr.hpp>
 
 #include "mongo/db/catalog/collection.h"
+#include "mongo/db/client.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/storage/mmap_v1/extent.h"
 #include "mongo/db/storage/mmap_v1/extent_manager.h"
 #include "mongo/db/storage/mmap_v1/record.h"
 #include "mongo/db/storage/mmap_v1/record_store_v1_repair_iterator.h"
+#include "mongo/stdx/memory.h"
 #include "mongo/util/log.h"
 #include "mongo/util/progress_meter.h"
 #include "mongo/util/timer.h"
@@ -47,7 +48,7 @@
 
 namespace mongo {
 
-    using boost::scoped_ptr;
+    using std::unique_ptr;
     using std::set;
     using std::string;
 
@@ -165,7 +166,7 @@ namespace mongo {
         // this is a bit odd, as the semantics of using the storage engine imply it _has_ to be.
         // And in fact we can't actually check.
         // So we assume the best.
-        Record* rec = recordFor(DiskLoc::fromRecordId(loc));
+        MmapV1RecordHeader* rec = recordFor(DiskLoc::fromRecordId(loc));
         if ( !rec ) {
             return false;
         }
@@ -173,7 +174,7 @@ namespace mongo {
         return true;
     }
 
-    Record* RecordStoreV1Base::recordFor( const DiskLoc& loc ) const {
+    MmapV1RecordHeader* RecordStoreV1Base::recordFor( const DiskLoc& loc ) const {
         return _extentManager->recordForV1( loc );
     }
 
@@ -282,12 +283,6 @@ namespace mongo {
         return result;
     }
 
-    RecordFetcher* RecordStoreV1Base::recordNeedsFetch( OperationContext* txn,
-                                                        const RecordId& loc ) const {
-        return _extentManager->recordNeedsFetch( DiskLoc::fromRecordId(loc) );
-    }
-
-
     StatusWith<RecordId> RecordStoreV1Base::insertRecord( OperationContext* txn,
                                                           const DocWriter* doc,
                                                           bool enforceQuota ) {
@@ -295,7 +290,7 @@ namespace mongo {
         if ( docSize < 4 ) {
             return StatusWith<RecordId>(ErrorCodes::InvalidLength, "record has to be >= 4 bytes");
         }
-        const int lenWHdr = docSize + Record::HeaderSize;
+        const int lenWHdr = docSize + MmapV1RecordHeader::HeaderSize;
         if ( lenWHdr > MaxAllowedAllocation ) {
             return StatusWith<RecordId>(ErrorCodes::InvalidLength, "record has to be <= 16.5MB");
         }
@@ -307,10 +302,10 @@ namespace mongo {
         if ( !loc.isOK() )
             return StatusWith<RecordId>(loc.getStatus());
 
-        Record *r = recordFor( loc.getValue() );
+        MmapV1RecordHeader *r = recordFor( loc.getValue() );
         fassert( 17319, r->lengthWithHeaders() >= lenWHdr );
 
-        r = reinterpret_cast<Record*>( txn->recoveryUnit()->writingPtr(r, lenWHdr) );
+        r = reinterpret_cast<MmapV1RecordHeader*>( txn->recoveryUnit()->writingPtr(r, lenWHdr) );
         doc->writeDocument( r->data() );
 
         _addRecordToRecListInExtent(txn, r, loc.getValue());
@@ -329,7 +324,7 @@ namespace mongo {
             return StatusWith<RecordId>( ErrorCodes::InvalidLength, "record has to be >= 4 bytes" );
         }
 
-        if ( len + Record::HeaderSize > MaxAllowedAllocation ) {
+        if ( len + MmapV1RecordHeader::HeaderSize > MaxAllowedAllocation ) {
             return StatusWith<RecordId>( ErrorCodes::InvalidLength, "record has to be <= 16.5MB" );
         }
 
@@ -341,7 +336,7 @@ namespace mongo {
                                                           int len,
                                                           bool enforceQuota ) {
 
-        const int lenWHdr = len + Record::HeaderSize;
+        const int lenWHdr = len + MmapV1RecordHeader::HeaderSize;
         const int lenToAlloc = shouldPadInserts() ? quantizeAllocationSpace(lenWHdr)
                                                   : lenWHdr;
         fassert( 17208, lenToAlloc >= lenWHdr );
@@ -350,11 +345,11 @@ namespace mongo {
         if ( !loc.isOK() )
             return StatusWith<RecordId>(loc.getStatus());
 
-        Record *r = recordFor( loc.getValue() );
+        MmapV1RecordHeader *r = recordFor( loc.getValue() );
         fassert( 17210, r->lengthWithHeaders() >= lenWHdr );
 
         // copy the data
-        r = reinterpret_cast<Record*>( txn->recoveryUnit()->writingPtr(r, lenWHdr) );
+        r = reinterpret_cast<MmapV1RecordHeader*>( txn->recoveryUnit()->writingPtr(r, lenWHdr) );
         memcpy( r->data(), data, len );
 
         _addRecordToRecListInExtent(txn, r, loc.getValue());
@@ -370,7 +365,7 @@ namespace mongo {
                                                          int dataSize,
                                                          bool enforceQuota,
                                                          UpdateNotifier* notifier ) {
-        Record* oldRecord = recordFor( DiskLoc::fromRecordId(oldLocation) );
+        MmapV1RecordHeader* oldRecord = recordFor( DiskLoc::fromRecordId(oldLocation) );
         if ( oldRecord->netLength() >= dataSize ) {
             // Make sure to notify other queries before we do an in-place update.
             if ( notifier ) {
@@ -391,7 +386,7 @@ namespace mongo {
                                          10003 );
 
         // we have to move
-        if ( dataSize + Record::HeaderSize > MaxAllowedAllocation ) {
+        if ( dataSize + MmapV1RecordHeader::HeaderSize > MaxAllowedAllocation ) {
             return StatusWith<RecordId>( ErrorCodes::InvalidLength, "record has to be <= 16.5MB" );
         }
 
@@ -423,7 +418,7 @@ namespace mongo {
                                                  const RecordData& oldRec,
                                                  const char* damageSource,
                                                  const mutablebson::DamageVector& damages ) {
-        Record* rec = recordFor( DiskLoc::fromRecordId(loc) );
+        MmapV1RecordHeader* rec = recordFor( DiskLoc::fromRecordId(loc) );
         char* root = rec->data();
 
         // All updates were in place. Apply them via durability and writing pointer.
@@ -441,20 +436,20 @@ namespace mongo {
     void RecordStoreV1Base::deleteRecord( OperationContext* txn, const RecordId& rid ) {
         const DiskLoc dl = DiskLoc::fromRecordId(rid);
 
-        Record* todelete = recordFor( dl );
+        MmapV1RecordHeader* todelete = recordFor( dl );
         invariant( todelete->netLength() >= 4 ); // this is required for defensive code
 
         /* remove ourself from the record next/prev chain */
         {
             if ( todelete->prevOfs() != DiskLoc::NullOfs ) {
                 DiskLoc prev = getPrevRecordInExtent( txn, dl );
-                Record* prevRecord = recordFor( prev );
+                MmapV1RecordHeader* prevRecord = recordFor( prev );
                 txn->recoveryUnit()->writingInt( prevRecord->nextOfs() ) = todelete->nextOfs();
             }
 
             if ( todelete->nextOfs() != DiskLoc::NullOfs ) {
                 DiskLoc next = getNextRecord( txn, dl );
-                Record* nextRecord = recordFor( next );
+                MmapV1RecordHeader* nextRecord = recordFor( next );
                 txn->recoveryUnit()->writingInt( nextRecord->prevOfs() ) = todelete->prevOfs();
             }
         }
@@ -502,12 +497,13 @@ namespace mongo {
 
     }
 
-    RecordIterator* RecordStoreV1Base::getIteratorForRepair(OperationContext* txn) const {
-        return new RecordStoreV1RepairIterator(txn, this);
+    std::unique_ptr<RecordCursor> RecordStoreV1Base::getCursorForRepair(
+            OperationContext* txn) const {
+        return stdx::make_unique<RecordStoreV1RepairCursor>(txn, this);
     }
 
     void RecordStoreV1Base::_addRecordToRecListInExtent(OperationContext* txn,
-                                                        Record *r,
+                                                        MmapV1RecordHeader *r,
                                                         DiskLoc loc) {
         dassert( recordFor(loc) == r );
         DiskLoc extentLoc = _getExtentLocForRecord( txn, loc );
@@ -518,7 +514,7 @@ namespace mongo {
             r->prevOfs() = r->nextOfs() = DiskLoc::NullOfs;
         }
         else {
-            Record *oldlast = recordFor(e->lastRecord);
+            MmapV1RecordHeader *oldlast = recordFor(e->lastRecord);
             r->prevOfs() = e->lastRecord.getOfs();
             r->nextOfs() = DiskLoc::NullOfs;
             txn->recoveryUnit()->writingInt(oldlast->nextOfs()) = loc.getOfs();
@@ -718,22 +714,22 @@ namespace mongo {
                 long long nlen = 0;
                 long long bsonLen = 0;
                 int outOfOrder = 0;
-                DiskLoc cl_last;
+                DiskLoc dl_last;
 
-                scoped_ptr<RecordIterator> iterator( getIterator(txn) );
-                DiskLoc cl;
-                while ( !( cl = DiskLoc::fromRecordId(iterator->getNext()) ).isNull() ) {
+                auto cursor = getCursor(txn);
+                while (auto record = cursor->next()) {
+                    const auto dl = DiskLoc::fromRecordId(record->id);
                     n++;
 
                     if ( n < 1000000 )
-                        recs.insert(cl);
+                        recs.insert(dl);
                     if ( isCapped() ) {
-                        if ( cl < cl_last )
+                        if ( dl < dl_last )
                             outOfOrder++;
-                        cl_last = cl;
+                        dl_last = dl;
                     }
 
-                    Record *r = recordFor(cl);
+                    MmapV1RecordHeader *r = recordFor(dl);
                     len += r->lengthWithHeaders();
                     nlen += r->netLength();
 
@@ -900,9 +896,11 @@ namespace mongo {
         }
 
         std::string progress_msg = "touch " + std::string(txn->getNS()) + " extents";
-        ProgressMeterHolder pm(*txn->setMessage(progress_msg.c_str(),
-                                                "Touch Progress",
-                                                ranges.size()));
+        stdx::unique_lock<Client> lk(*txn->getClient());
+        ProgressMeterHolder pm(*txn->setMessage_inlock(progress_msg.c_str(),
+                                                       "Touch Progress",
+                                                       ranges.size()));
+        lk.unlock();
 
         for ( std::vector<touch_location>::iterator it = ranges.begin(); it != ranges.end(); ++it ) {
             touch_pages( it->root, it->length );
@@ -919,21 +917,34 @@ namespace mongo {
         return Status::OK();
     }
 
-    RecordId RecordStoreV1Base::IntraExtentIterator::getNext() {
-        if (_curr.isNull())
-            return RecordId();
+    boost::optional<Record> RecordStoreV1Base::IntraExtentIterator::next() {
+        if (_curr.isNull()) return {};
+        auto out = _curr.toRecordId();
+        advance();
+        return {{out, _rs->dataFor(_txn, out)}};
+    }
 
-        const DiskLoc out = _curr; // we always return where we were, not where we will be.
-        const Record* rec = recordFor(_curr);
+    boost::optional<Record> RecordStoreV1Base::IntraExtentIterator::seekExact(const RecordId& id) {
+        invariant(!"seekExact not supported");
+    }
+
+    void RecordStoreV1Base::IntraExtentIterator::advance() {
+        if (_curr.isNull())
+            return;
+
+        const MmapV1RecordHeader* rec = recordFor(_curr);
         const int nextOfs = _forward ? rec->nextOfs() : rec->prevOfs();
         _curr = (nextOfs == DiskLoc::NullOfs ? DiskLoc() : DiskLoc(_curr.a(), nextOfs));
-        return out.toRecordId();;
     }
 
     void RecordStoreV1Base::IntraExtentIterator::invalidate(const RecordId& rid) {
         if (rid == _curr.toRecordId()) {
-            getNext();
+            advance();
         }
+    }
+
+    std::unique_ptr<RecordFetcher> RecordStoreV1Base::IntraExtentIterator::fetcherForNext() const {
+        return _rs->_extentManager->recordNeedsFetch(_curr);
     }
 
     int RecordStoreV1Base::quantizeAllocationSpace(int allocSize) {

@@ -62,7 +62,7 @@ namespace repl {
     }
 
     void Reporter::cancel() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
 
         if (!_active) {
             return;
@@ -75,8 +75,18 @@ namespace repl {
         _executor->cancel(_remoteCommandCallbackHandle);
     }
 
+    void Reporter::wait() {
+        stdx::unique_lock<stdx::mutex> lk(_mutex);
+        if (!_active) {
+            return;
+        }
+        if(_remoteCommandCallbackHandle.isValid()) {
+            _executor->wait(_remoteCommandCallbackHandle);
+        }
+    }
+
     Status Reporter::trigger() {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         return _schedule_inlock();
     }
 
@@ -113,8 +123,8 @@ namespace repl {
         return Status::OK();
     }
 
-    void Reporter::_callback(const ReplicationExecutor::RemoteCommandCallbackData& rcbd) {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+    void Reporter::_callback(const ReplicationExecutor::RemoteCommandCallbackArgs& rcbd) {
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
 
         _status = rcbd.response.getStatus();
         _active = false;
@@ -128,18 +138,18 @@ namespace repl {
         }
     }
 
-    Status Reporter::previousReturnStatus() const {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+    Status Reporter::getStatus() const {
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         return _status;
     }
 
     bool Reporter::isActive() const {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         return _active;
     }
 
     bool Reporter::willRunAgain() const {
-        boost::lock_guard<boost::mutex> lk(_mutex);
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
         return _willRunAgain;
     }
 } // namespace repl

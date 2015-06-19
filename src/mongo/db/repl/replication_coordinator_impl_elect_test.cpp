@@ -33,7 +33,6 @@
 #include "mongo/db/jsobj.h"
 #include "mongo/db/operation_context_noop.h"
 #include "mongo/db/repl/is_master_response.h"
-#include "mongo/db/repl/network_interface_mock.h"
 #include "mongo/db/repl/operation_context_repl_mock.h"
 #include "mongo/db/repl/repl_set_heartbeat_args.h"
 #include "mongo/db/repl/repl_set_heartbeat_response.h"
@@ -41,12 +40,15 @@
 #include "mongo/db/repl/replication_coordinator_external_state_mock.h"
 #include "mongo/db/repl/replication_coordinator_impl.h"
 #include "mongo/db/repl/replication_coordinator_test_fixture.h"
+#include "mongo/executor/network_interface_mock.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/log.h"
 
 namespace mongo {
 namespace repl {
 namespace {
+
+    using executor::NetworkInterfaceMock;
 
     class ReplCoordElectTest : public ReplCoordTest {
     protected:
@@ -71,7 +73,7 @@ namespace {
                 hbResp.setConfigVersion(rsConfig.getConfigVersion());
                 BSONObjBuilder respObj;
                 respObj << "ok" << 1;
-                hbResp.addToBSON(&respObj);
+                hbResp.addToBSON(&respObj, false);
                 net->scheduleResponse(noi, net->now(), makeResponseStatus(respObj.obj()));
             }
             else {
@@ -354,7 +356,7 @@ namespace {
         hbResp2.setState(MemberState::RS_SECONDARY);
         BSONObjBuilder respObj2;
         respObj2 << "ok" << 1;
-        hbResp2.addToBSON(&respObj2);
+        hbResp2.addToBSON(&respObj2, false);
         net->runUntil(net->now() + Seconds(10)); // run until we've sent a heartbeat request
         const NetworkInterfaceMock::NetworkOperationIterator noi2 = net->getNextReadyRequest();
         net->scheduleResponse(noi2, net->now(), makeResponseStatus(respObj2.obj()));
@@ -388,7 +390,7 @@ namespace {
                 hbResp.setConfigVersion(rsConfig.getConfigVersion());
                 BSONObjBuilder respObj;
                 respObj << "ok" << 1;
-                hbResp.addToBSON(&respObj);
+                hbResp.addToBSON(&respObj, false);
                 net->scheduleResponse(noi, net->now(), makeResponseStatus(respObj.obj()));
             }
             else {
