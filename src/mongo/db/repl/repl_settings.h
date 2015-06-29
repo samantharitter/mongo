@@ -39,6 +39,7 @@ namespace mongo {
 namespace repl {
 
 extern int maxSyncSourceLagSecs;
+extern std::string outboundNetworkImpl;
 
 bool anyReplEnabled();
 
@@ -46,6 +47,10 @@ bool anyReplEnabled();
    --slave cmd line setting -> SimpleSlave
 */
 typedef enum { NotSlave = 0, SimpleSlave } SlaveTypes;
+
+// Options for NetworkInterface implementations
+const char* const kNetworkImplASIO = "ASIO";
+const char* const kNetworkImplThreadPool = "threadPool";
 
 class ReplSettings {
 public:

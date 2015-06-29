@@ -137,7 +137,7 @@ void NetworkInterfaceASIO::AsyncOp::complete(Date_t now) {
     if (canceled()) {
         finish(ResponseStatus(ErrorCodes::CallbackCanceled, "Callback canceled"));
     } else {
-        finish(ResponseStatus(Response(_output, Milliseconds(now - start()))));
+        finish(ResponseStatus(Response(_output, BSONObj(), Milliseconds(now - start()))));
     }
 
     _state = OpState::kCompleted;

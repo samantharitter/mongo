@@ -35,6 +35,15 @@
 namespace mongo {
 namespace repl {
 
+MONGO_EXPORT_STARTUP_SERVER_PARAMETER(outboundNetworkImpl, std::string, kNetworkImplThreadPool);
+MONGO_INITIALIZER(outboundNetworkImpl)(InitializerContext*) {
+    if (outboundNetworkImpl != kNetworkImplThreadPool &&
+        outboundNetworkImpl != kNetworkImplASIO) {
+        return Status(ErrorCodes::BadValue, "unsupported networking option: " + outboundNetworkImpl);
+    }
+    return Status::OK();
+}
+
 MONGO_EXPORT_STARTUP_SERVER_PARAMETER(maxSyncSourceLagSecs, int, 30);
 MONGO_INITIALIZER(maxSyncSourceLagSecsCheck)(InitializerContext*) {
     if (maxSyncSourceLagSecs < 1) {
@@ -42,5 +51,5 @@ MONGO_INITIALIZER(maxSyncSourceLagSecsCheck)(InitializerContext*) {
     }
     return Status::OK();
 }
-}
-}
+} // namespace repl
+} // namespace mongo
