@@ -38,6 +38,11 @@
 #include "mongo/db/client.h"
 #include "mongo/db/dbmessage.h"
 #include "mongo/db/operation_context_impl.h"
+#include "mongo/rpc/command_reply.h"
+#include "mongo/rpc/factory.h"
+#include "mongo/rpc/protocol.h"
+#include "mongo/rpc/reply_interface.h"
+#include "mongo/rpc/request_builder_interface.h"
 #include "mongo/stdx/chrono.h"
 #include "mongo/stdx/memory.h"
 #include "mongo/util/log.h"
@@ -71,6 +76,10 @@ NetworkInterfaceASIO::AsyncConnection& NetworkInterfaceASIO::AsyncConnection::op
 
 tcp::socket& NetworkInterfaceASIO::AsyncConnection::sock() {
     return _sock;
+}
+
+void NetworkInterfaceASIO::AsyncConnection::setProtocols(rpc::ProtocolSet protocols) {
+    _protocols = protocols;
 }
 
 NetworkInterfaceASIO::AsyncOp::AsyncOp(const TaskExecutor::CallbackHandle& cbHandle,
@@ -146,7 +155,13 @@ std::string NetworkInterfaceASIO::AsyncOp::toString() const {
 }
 
 namespace {
+
 const auto kCanceledStatus = Status(ErrorCodes::CallbackCanceled, "Callback canceled");
+
+// constants to support internal ismaster
+const BSONObj kIsMasterCmdObj = fromjson("{\"ismaster\":1}");
+const std::string kIsMasterDatabase = "admin";
+
 }  // namespace
 
 void NetworkInterfaceASIO::AsyncOp::cancel() {
@@ -202,6 +217,23 @@ NetworkInterfaceASIO::NetworkInterfaceASIO()
       _isExecutorRunnable(false),
       _numOps(0) {
     _connPool = stdx::make_unique<ConnectionPool>(kMessagingPortKeepOpen);
+
+    // Fill in our cached ismaster request.
+    // TODO: Do we actually need to upconvert?
+    BSONObj upconvertedCmd;
+    BSONObj upconvertedMetadata;
+    std::tie(upconvertedCmd, upconvertedMetadata) =
+        uassertStatusOK(rpc::upconvertRequestMetadata(kIsMasterCmdObj, 0));
+
+    // TODO: Do we need to write additional metadata?
+
+    auto requestBuilder = rpc::makeRequestBuilder(rpc::supports::kAll, rpc::supports::kOpQueryOnly);
+    requestBuilder->setDatabase(kIsMasterDatabase);
+    requestBuilder->setCommandName(upconvertedCmd.firstElementFieldName());
+    requestBuilder->setMetadata(upconvertedMetadata);
+    requestBuilder->setCommandArgs(upconvertedCmd);
+
+    _isMasterMessage = requestBuilder->done();
 }
 
 std::string NetworkInterfaceASIO::getDiagnosticString() {
@@ -489,6 +521,64 @@ void NetworkInterfaceASIO::_beginCommunication(AsyncOp* op) {
     return _sendMessage(op);
 }
 
+void NetworkInterfaceASIO::_runIsMaster(AsyncOp* op) {
+    // TODO: Make sure isMasterMessage is actually "reusable" and can
+    // be safely used by multiple AsyncOps concurrently.
+
+    // Step 1: send cached ismaster message
+    _asyncSendMessage(
+        op->connection()->sock(),
+        _isMasterMessage.get(),
+        [this, op](std::error_code ec, size_t bytes) {
+            if (op->canceled())
+                return _completeOperation(op, kCanceledStatus);
+
+            if (ec)
+                return _networkErrorCallback(op, ec);
+
+            // Step 2: receive ismaster response header
+            auto replyHeader = std::make_shared<MessageHeader>();
+            _asyncRecvMessageHeader(
+                op->connection()->sock(),
+                replyHeader.get(),
+                [this, op, replyHeader](std::error_code ec, size_t bytes) {
+                    if (op->canceled())
+                        return _completeOperation(op, kCanceledStatus);
+
+                    if (ec)
+                        return _networkErrorCallback(op, ec);
+
+                    // Step 3: receive ismaster response body
+                    auto replyMessage = std::make_shared<Message>();
+                    _asyncRecvMessageBody(
+                        op->connection()->sock(),
+                        replyHeader.get(),
+                        replyMessage.get(),
+                        [this, op, replyHeader, replyMessage](std::error_code ec, size_t bytes) {
+                            if (op->canceled())
+                                return _completeOperation(op, kCanceledStatus);
+
+                            if (ec)
+                                return _networkErrorCallback(op, ec);
+
+                            // Step 4: parse ismaster response
+                            auto commandReply = rpc::makeReply(replyMessage.get());
+                            BSONObj isMasterReply =
+                                commandReply.get()->getCommandReply().getOwned();
+
+                            auto protocolSet =
+                                rpc::parseProtocolSetFromIsMasterReply(isMasterReply);
+
+                            // TODO: Handle improperly-parsed protocol sets.
+                            op->connection()->setProtocols(protocolSet.getValue());
+
+                            // Step 5: advance the state machine
+                            _authenticate(op);
+                        });
+                });
+        });
+}
+
 void NetworkInterfaceASIO::_authenticate(AsyncOp* op) {
     // TODO: Implement asynchronous authentication, SERVER-19155
     asio::post(_io_service, [this, op]() { _beginCommunication(op); });
@@ -496,7 +586,7 @@ void NetworkInterfaceASIO::_authenticate(AsyncOp* op) {
 
 void NetworkInterfaceASIO::_sslHandshake(AsyncOp* op) {
     // TODO: Implement asynchronous SSL, SERVER-19221
-    _authenticate(op);
+    _runIsMaster(op);
 }
 
 void NetworkInterfaceASIO::_setupSocket(AsyncOp* op, const tcp::resolver::iterator& endpoints) {

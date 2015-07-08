@@ -80,6 +80,8 @@ private:
 
         asio::ip::tcp::socket& sock();
 
+        void setProtocols(rpc::ProtocolSet protocols);
+
 // Explicit move construction and assignment to support MSVC
 #if defined(_MSC_VER) && _MSC_VER < 1900
         AsyncConnection(AsyncConnection&&);
@@ -171,6 +173,7 @@ private:
     void _connectASIO(AsyncOp* op);
     void _connectWithDBClientConnection(AsyncOp* op);
     void _setupSocket(AsyncOp* op, const asio::ip::tcp::resolver::iterator& endpoints);
+    void _runIsMaster(AsyncOp* op);
     void _authenticate(AsyncOp* op);
     void _sslHandshake(AsyncOp* op);
 
@@ -184,9 +187,8 @@ private:
 
     void _keepAlive(AsyncOp* op);
 
-    // Send - Receive utilities
-    // These are "dumb" in that they exist apart from the state machine,
-    // and they have no knowledge of AsyncOps.
+    // Send - Receive utilities.
+    // These are "stateless" and exist independently of the state machine.
     void _asyncSendMessage(asio::ip::tcp::socket& sock,
                            Message* m,
                            std::function<void(std::error_code, size_t)> handler);
@@ -219,6 +221,9 @@ private:
     std::unique_ptr<ConnectionPool> _connPool;
 
     AtomicUInt64 _numOps;
+
+    // Cache ismaster Message for authentication
+    std::unique_ptr<Message> _isMasterMessage;
 };
 
 }  // namespace executor
