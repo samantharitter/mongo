@@ -167,8 +167,6 @@ private:
                              Message* toSend,
                              bool useOpCommand = false);
 
-    void _asyncSendSimpleMessage(AsyncOp* op, const asio::const_buffer& buf);
-
     // Connection
     void _connectASIO(AsyncOp* op);
     void _connectWithDBClientConnection(AsyncOp* op);
@@ -178,15 +176,29 @@ private:
 
     // Communication state machine
     void _beginCommunication(AsyncOp* op);
+    void _sendMessage(AsyncOp* op);
+    void _receiveResponse(AsyncOp* op);
     void _completedWriteCallback(AsyncOp* op);
     void _networkErrorCallback(AsyncOp* op, const std::error_code& ec);
-
     void _completeOperation(AsyncOp* op, const TaskExecutor::ResponseStatus& resp);
 
     void _keepAlive(AsyncOp* op);
-    void _recvMessageHeader(AsyncOp* op);
-    void _recvMessageBody(AsyncOp* op);
-    void _receiveResponse(AsyncOp* op);
+
+    // Send - Receive utilities
+    // These are "dumb" in that they exist apart from the state machine,
+    // and they have no knowledge of AsyncOps.
+    void _asyncSendMessage(asio::ip::tcp::socket& sock,
+                           Message* m,
+                           std::function<void(std::error_code, size_t)> handler);
+
+    void _asyncRecvMessageHeader(asio::ip::tcp::socket& sock,
+                                 MSGHEADER::Value* header,
+                                 std::function<void(std::error_code, size_t)> handler);
+
+    void _asyncRecvMessageBody(asio::ip::tcp::socket& sock,
+                               MSGHEADER::Value* header,
+                               Message* m,
+                               std::function<void(std::error_code, size_t)> handler);
 
     void _signalWorkAvailable_inlock();
 

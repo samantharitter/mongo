@@ -50,6 +50,8 @@ namespace executor {
 using ResponseStatus = TaskExecutor::ResponseStatus;
 using asio::ip::tcp;
 using RemoteCommandCompletionFn = stdx::function<void(const ResponseStatus&)>;
+using MessageHeader = MSGHEADER::Value;
+using NetworkOpHandler = std::function<void(std::error_code, size_t)>;
 
 NetworkInterfaceASIO::AsyncConnection::AsyncConnection(asio::ip::tcp::socket&& sock,
                                                        rpc::ProtocolSet protocols)
@@ -238,101 +240,116 @@ void NetworkInterfaceASIO::_messageFromRequest(const RemoteCommandRequest& reque
     toSend->header().setResponseTo(0);
 }
 
-void NetworkInterfaceASIO::_asyncSendSimpleMessage(AsyncOp* op, const asio::const_buffer& buf) {
-    asio::async_write(op->connection()->sock(),
-                      asio::buffer(buf),
-                      [this, op](std::error_code ec, std::size_t bytes) {
+void NetworkInterfaceASIO::_asyncSendMessage(asio::ip::tcp::socket& sock,
+                                             Message* m,
+                                             NetworkOpHandler handler) {
+    // TODO: Some day we may need to support vector messages.
+    fassert(28708, m->buf() != 0);
+    asio::const_buffer buf(m->buf(), m->size());
+    asio::async_write(sock, asio::buffer(buf), handler);
+}
 
-                          if (op->canceled()) {
+void NetworkInterfaceASIO::_sendMessage(AsyncOp* op) {
+    _messageFromRequest(op->request(), op->toSend());
+
+    if (op->toSend()->empty())
+        return _completedWriteCallback(op);
+
+    _asyncSendMessage(op->connection()->sock(),
+                      op->toSend(),
+                      [this, op](std::error_code ec, size_t bytes) {
+                          if (op->canceled())
                               return _completeOperation(op, kCanceledStatus);
-                          }
 
-                          if (ec) {
+                          if (ec)
                               return _networkErrorCallback(op, ec);
-                          }
 
                           _receiveResponse(op);
                       });
 }
 
 void NetworkInterfaceASIO::_receiveResponse(AsyncOp* op) {
-    _recvMessageHeader(op);
+    // First we receive the header
+    _asyncRecvMessageHeader(op->connection()->sock(),
+                            op->header(),
+                            [this, op](std::error_code ec, size_t bytes) {
+                                if (op->canceled())
+                                    return _completeOperation(op, kCanceledStatus);
+
+                                if (ec)
+                                    return _networkErrorCallback(op, ec);
+
+                                // validate response id
+                                uint32_t expectedId = op->toSend()->header().getId();
+                                uint32_t actualId = op->header()->constView().getResponseTo();
+                                if (actualId != expectedId) {
+                                    LOG(3) << "got wrong response:"
+                                           << " expected response id: " << expectedId
+                                           << ", got response id: " << actualId;
+                                    return _networkErrorCallback(op, ec);
+                                }
+
+                                // receive body
+                                _asyncRecvMessageBody(op->connection()->sock(),
+                                                      op->header(),
+                                                      op->toRecv(),
+                                                      [this, op](std::error_code ec, size_t bytes) {
+                                                          if (op->canceled())
+                                                              return _completeOperation(
+                                                                  op, kCanceledStatus);
+
+                                                          if (ec)
+                                                              return _networkErrorCallback(op, ec);
+
+                                                          _completedWriteCallback(op);
+                                                      });
+                            });
 }
 
-void NetworkInterfaceASIO::_recvMessageBody(AsyncOp* op) {
+void NetworkInterfaceASIO::_asyncRecvMessageBody(asio::ip::tcp::socket& sock,
+                                                 MessageHeader* header,
+                                                 Message* m,
+                                                 NetworkOpHandler handler) {
     // TODO: This error code should be more meaningful.
     std::error_code ec;
 
     // validate message length
-    int len = op->header()->constView().getMessageLength();
+    int len = header->constView().getMessageLength();
     if (len == 542393671) {
         LOG(3) << "attempt to access MongoDB over HTTP on the native driver port.";
-        return _networkErrorCallback(op, ec);
+        return handler(ec, 0);
     } else if (len == -1) {
         // TODO: An endian check is run after the client connects, we should
         // set that we've received the client's handshake
         LOG(3) << "Endian check received from client";
-        return _networkErrorCallback(op, ec);
+        return handler(ec, 0);
     } else if (static_cast<size_t>(len) < sizeof(MSGHEADER::Value) ||
                static_cast<size_t>(len) > MaxMessageSizeBytes) {
         warning() << "recv(): message len " << len << " is invalid. "
                   << "Min " << sizeof(MSGHEADER::Value) << " Max: " << MaxMessageSizeBytes;
-        return _networkErrorCallback(op, ec);
-    }
-
-    // validate response id
-    uint32_t expectedId = op->toSend()->header().getId();
-    uint32_t actualId = op->header()->constView().getResponseTo();
-    if (actualId != expectedId) {
-        LOG(3) << "got wrong response:"
-               << " expected response id: " << expectedId << ", got response id: " << actualId;
-        return _networkErrorCallback(op, ec);
+        return handler(ec, 0);
     }
 
     int z = (len + 1023) & 0xfffffc00;
     invariant(z >= len);
-    op->toRecv()->setData(reinterpret_cast<char*>(mongoMalloc(z)), true);
-    MsgData::View mdView = op->toRecv()->buf();
+    m->setData(reinterpret_cast<char*>(mongoMalloc(z)), true);
+    MsgData::View mdView = m->buf();
 
     // copy header data into master buffer
     int headerLen = sizeof(MSGHEADER::Value);
-    memcpy(mdView.view2ptr(), op->header(), headerLen);
+    memcpy(mdView.view2ptr(), header, headerLen);
     int bodyLength = len - headerLen;
     invariant(bodyLength >= 0);
 
     // receive remaining data into md->data
-    asio::async_read(op->connection()->sock(),
-                     asio::buffer(mdView.data(), bodyLength),
-                     [this, op, mdView](asio::error_code ec, size_t bytes) {
-
-                         if (op->canceled()) {
-                             return _completeOperation(op, kCanceledStatus);
-                         }
-
-                         if (ec) {
-                             LOG(3) << "error receiving message body";
-                             return _networkErrorCallback(op, ec);
-                         }
-
-                         return _completedWriteCallback(op);
-                     });
+    asio::async_read(sock, asio::buffer(mdView.data(), bodyLength), handler);
 }
 
-void NetworkInterfaceASIO::_recvMessageHeader(AsyncOp* op) {
-    asio::async_read(op->connection()->sock(),
-                     asio::buffer(reinterpret_cast<char*>(op->header()), sizeof(MSGHEADER::Value)),
-                     [this, op](asio::error_code ec, size_t bytes) {
-
-                         if (op->canceled()) {
-                             return _completeOperation(op, kCanceledStatus);
-                         }
-
-                         if (ec) {
-                             LOG(3) << "error receiving header";
-                             return _networkErrorCallback(op, ec);
-                         }
-                         _recvMessageBody(op);
-                     });
+void NetworkInterfaceASIO::_asyncRecvMessageHeader(tcp::socket& sock,
+                                                   MessageHeader* header,
+                                                   NetworkOpHandler handler) {
+    asio::async_read(
+        sock, asio::buffer(reinterpret_cast<char*>(header), sizeof(MSGHEADER::Value)), handler);
 }
 
 void NetworkInterfaceASIO::_completedWriteCallback(AsyncOp* op) {
@@ -469,16 +486,7 @@ void NetworkInterfaceASIO::_beginCommunication(AsyncOp* op) {
         return _completeOperation(op, kCanceledStatus);
     }
 
-    Message* toSend = op->toSend();
-    _messageFromRequest(op->request(), toSend);
-
-    if (toSend->empty())
-        return _completedWriteCallback(op);
-
-    // TODO: Some day we may need to support vector messages.
-    fassert(28708, toSend->buf() != 0);
-    asio::const_buffer buf(toSend->buf(), toSend->size());
-    return _asyncSendSimpleMessage(op, buf);
+    return _sendMessage(op);
 }
 
 void NetworkInterfaceASIO::_authenticate(AsyncOp* op) {
