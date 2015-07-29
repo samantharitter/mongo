@@ -43,7 +43,10 @@ class BSONObj;
 
 namespace auth {
 
-using RunCommandResultHandler = stdx::function<void(StatusWith<executor::RemoteCommandResponse>)>;
+using AuthResponse = StatusWith<executor::RemoteCommandResponse>;
+using AuthCompletionHandler = stdx::function<void(AuthResponse)>;
+// this is a little awkward...
+using RunCommandResultHandler = AuthCompletionHandler;
 using RunCommandHook =
     stdx::function<void(executor::RemoteCommandRequest, RunCommandResultHandler)>;
 
@@ -52,7 +55,7 @@ using RunCommandHook =
  *
  * Pass the default hostname for this client in through "hostname." If SSL is enabled and
  * there is a stored client subject name, pass that through the "clientSubjectName" parameter.
- * Otherwise, "clientSubjectName" will be ignored, pass in any string.
+ * Otherwise, "clientSubjectName" will be silently ignored, pass in any string.
  *
  * The "params" BSONObj should be initialized with some of the fields below.  Which fields
  * are required depends on the mechanism, which is mandatory.
@@ -71,6 +74,10 @@ using RunCommandHook =
  * Other fields in "params" are silently ignored. A "params" object can be constructed
  * using the buildAuthParams() method.
  *
+ * If a "handler" is provided, this call will execute asynchronously and "handler" will be
+ * invoked when authentication has completed.  If no handler is provided, authenticateClient
+ * will run synchronously.
+ *
  * Returns normally on success, and throws on error.  Throws a DBException with getCode() ==
  * ErrorCodes::AuthenticationFailed if authentication is rejected.  All other exceptions are
  * tantamount to authentication failure, but may also indicate more serious problems.
@@ -78,7 +85,8 @@ using RunCommandHook =
 void authenticateClient(const BSONObj& params,
                         StringData hostname,
                         StringData clientSubjectName,
-                        RunCommandHook runCommand);
+                        RunCommandHook runCommand,
+                        AuthCompletionHandler handler = AuthCompletionHandler());
 
 /**
  * Build a BSONObject representing parameters to be passed to authenticateClient(). Takes

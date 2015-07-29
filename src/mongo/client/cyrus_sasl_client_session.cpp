@@ -112,6 +112,7 @@ MONGO_INITIALIZER(CyrusSaslAllocatorsAndMutexes)(InitializerContext*) {
 }
 
 int saslClientLogSwallow(void* context, int priority, const char* message) {
+    std::cout << "SASL: " << message << std::endl;
     return SASL_OK;  // do nothing
 }
 

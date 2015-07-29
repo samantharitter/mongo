@@ -35,7 +35,9 @@
 namespace mongo {
 class BSONObj;
 
-using RunCommandResultHandler = stdx::function<void(StatusWith<executor::RemoteCommandResponse>)>;
+using AuthResponse = StatusWith<executor::RemoteCommandResponse>;
+using AuthCompletionHandler = stdx::function<void(AuthResponse)>;
+using RunCommandResultHandler = AuthCompletionHandler;
 using RunCommandHook =
     stdx::function<void(executor::RemoteCommandRequest, RunCommandResultHandler)>;
 
@@ -70,9 +72,10 @@ using RunCommandHook =
  * rejected.  Other failures, all of which are tantamount to authentication failure, may also be
  * returned.
  */
-extern Status (*saslClientAuthenticate)(RunCommandHook runCommand,
-                                        StringData hostname,
-                                        const BSONObj& saslParameters);
+extern void (*saslClientAuthenticate)(RunCommandHook runCommand,
+                                      StringData hostname,
+                                      const BSONObj& saslParameters,
+                                      AuthCompletionHandler handler);
 
 /**
  * Extracts the payload field from "cmdObj", and store it into "*payload".
