@@ -128,30 +128,30 @@ public:
     std::queue<RemoteCommandResponse> _responses;
 };
 
-TEST_F(AuthTest, Plain) {
-    // 1. Client sends saslStart command
-    StringBuilder sb;
-    sb << _username << '\0' << _username << '\0' << _password_digest;
-    std::string payload = sb.str();
+// TEST_F(AuthTest, Plain) {
+//     // 1. Client sends saslStart command
+//     StringBuilder sb;
+//     sb << _username << '\0' << _username << '\0' << _password_digest;
+//     std::string payload = sb.str();
 
-    BSONObjBuilder cmd;
-    cmd.appendElements(BSON("saslStart" << 1 << "mechanism"
-                                        << "PLAIN"));
-    cmd.appendBinData("payload", int(payload.size()), BinDataGeneral, payload.c_str());
-    pushRequest("admin", cmd.obj());
+//     BSONObjBuilder cmd;
+//     cmd.appendElements(BSON("saslStart" << 1 << "mechanism"
+//                                         << "PLAIN"));
+//     cmd.appendBinData("payload", int(payload.size()), BinDataGeneral, payload.c_str());
+//     pushRequest("admin", cmd.obj());
 
-    // 2. Client receives 'done'
-    pushResponse(BSON("done" << true << "ok" << 1));
+//     // 2. Client receives 'done'
+//     pushResponse(BSON("done" << true << "ok" << 1));
 
-    // Call authenticateClient()
-    auto params = BSON("mechanism"
-                       << "PLAIN"
-                       << "db"
-                       << "admin"
-                       << "user" << _username << "pwd" << _password << "digest"
-                       << "true");
-    auth::authenticateClient(params, "", "", _runCommandCallback);
-}
+//     // Call authenticateClient()
+//     auto params = BSON("mechanism"
+//                        << "PLAIN"
+//                        << "db"
+//                        << "admin"
+//                        << "user" << _username << "pwd" << _password << "digest"
+//                        << "true");
+//     auth::authenticateClient(params, "", "", _runCommandCallback);
+// }
 
 TEST_F(AuthTest, MongoCR) {
     // 1. Client sends 'getnonce' command
