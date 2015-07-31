@@ -52,9 +52,9 @@ using auth::RunCommandResultHandler;
  * Utility class to support tests in this file.  Allows caller to load
  * with pre-made responses and requests to interject into authentication methods.
  */
-class AuthTest : public mongo::unittest::Test {
+class AuthClientTest : public mongo::unittest::Test {
 public:
-    AuthTest()
+    AuthClientTest()
         : _mockHost(),
           _millis(100),
           _username("PinkPanther"),
@@ -128,32 +128,32 @@ public:
     std::queue<RemoteCommandResponse> _responses;
 };
 
-// TEST_F(AuthTest, Plain) {
-//     // 1. Client sends saslStart command
-//     StringBuilder sb;
-//     sb << _username << '\0' << _username << '\0' << _password_digest;
-//     std::string payload = sb.str();
+TEST_F(AuthClientTest, Plain) {
+    // 1. Client sends saslStart command
+    StringBuilder sb;
+    sb << _username << '\0' << _username << '\0' << _password_digest;
+    std::string payload = sb.str();
 
-//     BSONObjBuilder cmd;
-//     cmd.appendElements(BSON("saslStart" << 1 << "mechanism"
-//                                         << "PLAIN"));
-//     cmd.appendBinData("payload", int(payload.size()), BinDataGeneral, payload.c_str());
-//     pushRequest("admin", cmd.obj());
+    BSONObjBuilder cmd;
+    cmd.appendElements(BSON("saslStart" << 1 << "mechanism"
+                                        << "PLAIN"));
+    cmd.appendBinData("payload", int(payload.size()), BinDataGeneral, payload.c_str());
+    pushRequest("admin", cmd.obj());
 
-//     // 2. Client receives 'done'
-//     pushResponse(BSON("done" << true << "ok" << 1));
+    // 2. Client receives 'done'
+    pushResponse(BSON("done" << true << "ok" << 1));
 
-//     // Call authenticateClient()
-//     auto params = BSON("mechanism"
-//                        << "PLAIN"
-//                        << "db"
-//                        << "admin"
-//                        << "user" << _username << "pwd" << _password << "digest"
-//                        << "true");
-//     auth::authenticateClient(params, "", "", _runCommandCallback);
-// }
+    // Call authenticateClient()
+    auto params = BSON("mechanism"
+                       << "PLAIN"
+                       << "db"
+                       << "admin"
+                       << "user" << _username << "pwd" << _password << "digest"
+                       << "true");
+    auth::authenticateClient(params, "some.hostname.com", "serviceName", _runCommandCallback);
+}
 
-TEST_F(AuthTest, MongoCR) {
+TEST_F(AuthClientTest, MongoCR) {
     // 1. Client sends 'getnonce' command
     pushRequest("admin", BSON("getnonce" << 1));
 
@@ -178,7 +178,7 @@ TEST_F(AuthTest, MongoCR) {
     auth::authenticateClient(params, "", "", _runCommandCallback);
 }
 
-TEST_F(AuthTest, X509) {
+TEST_F(AuthClientTest, X509) {
 #ifdef MONGO_CONFIG_SSL
     // 1. Client sends 'authenticate' command
     pushRequest("$external",
@@ -198,7 +198,5 @@ TEST_F(AuthTest, X509) {
     auth::authenticateClient(params, "", _username, _runCommandCallback);
 #endif
 }
-
-TEST_F(AuthTest, SASL) {}
 
 }  // namespace
