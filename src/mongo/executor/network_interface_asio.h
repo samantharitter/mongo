@@ -196,7 +196,8 @@ private:
         // AsyncOp may run multiple commands over its lifetime (for example, an ismaster
         // command, the command provided to the NetworkInterface via startCommand(), etc.)
         // Calling beginCommand() resets internal state to prepare to run newCommand.
-        AsyncCommand& beginCommand(Message&& newCommand);
+        AsyncCommand& beginCommand(const RemoteCommandRequest& request, rpc::Protocol protocol);
+        AsyncCommand& beginCommand(Message&& m);
         AsyncCommand& command();
 
         void finish(const TaskExecutor::ResponseStatus& status);
@@ -261,8 +262,7 @@ private:
         handler();
     }
 
-    std::unique_ptr<Message> _messageFromRequest(const RemoteCommandRequest& request,
-                                                 rpc::Protocol protocol);
+    ResponseStatus _responseFromMessage(const Message& m, rpc::Protocol protocol);
 
     // Connection
     void _connect(AsyncOp* op);

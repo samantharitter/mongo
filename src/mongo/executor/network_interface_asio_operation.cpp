@@ -31,11 +31,36 @@
 #include "mongo/platform/basic.h"
 
 #include "mongo/executor/network_interface_asio.h"
+#include "mongo/rpc/factory.h"
+#include "mongo/rpc/request_builder_interface.h"
 
 namespace mongo {
 namespace executor {
 
 using asio::ip::tcp;
+
+namespace {
+
+std::unique_ptr<Message> messageFromRequest(const RemoteCommandRequest& request,
+                                            rpc::Protocol protocol) {
+    BSONObj query = request.cmdObj;
+    auto requestBuilder = rpc::makeRequestBuilder(protocol);
+
+    // TODO: handle metadata writers
+    auto toSend = rpc::makeRequestBuilder(protocol)
+                      ->setDatabase(request.dbname)
+                      .setCommandName(request.cmdObj.firstElementFieldName())
+                      .setMetadata(request.metadata)
+                      .setCommandArgs(request.cmdObj)
+                      .done();
+
+    toSend->header().setId(nextMessageId());
+    toSend->header().setResponseTo(0);
+
+    return toSend;
+}
+
+}  // namespace
 
 NetworkInterfaceASIO::AsyncOp::AsyncOp(const TaskExecutor::CallbackHandle& cbHandle,
                                        const RemoteCommandRequest& request,
@@ -80,6 +105,12 @@ NetworkInterfaceASIO::AsyncCommand& NetworkInterfaceASIO::AsyncOp::beginCommand(
     }
     _command->setToSend(std::move(newCommand));
     return _command.get();
+}
+
+NetworkInterfaceASIO::AsyncCommand& NetworkInterfaceASIO::AsyncOp::beginCommand(
+    const RemoteCommandRequest& request, rpc::Protocol protocol) {
+    auto newCommand = messageFromRequest(request, protocol);
+    return beginCommand(std::move(*newCommand));
 }
 
 NetworkInterfaceASIO::AsyncCommand& NetworkInterfaceASIO::AsyncOp::command() {

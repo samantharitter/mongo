@@ -51,6 +51,9 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/password_digest.h"
 
+// remove
+#include <iostream>
+
 namespace mongo {
 
 using std::endl;
@@ -159,7 +162,7 @@ Status configureSession(SaslClientSession* session,
         // $external users do not have passwords, hence NoSuchKey is expected
         return status;
     }
-
+    std::cout << "made it to initialize()" << std::endl;
     return session->initialize();
 }
 

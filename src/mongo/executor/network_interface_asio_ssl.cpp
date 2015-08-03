@@ -109,7 +109,7 @@ void NetworkInterfaceASIO::_setupSecureSocket(AsyncOp* op,
     auto& stream = op->connection().stream();
     stream.connect(std::move(endpoints),
                    [this, op](std::error_code ec) {
-                       _validateAndRun(op, ec, [this, op] { _authenticate(op); });
+                       _validateAndRun(op, ec, [this, op] { _runIsMaster(op); });
                    });
 }
 
