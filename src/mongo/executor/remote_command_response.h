@@ -43,6 +43,15 @@ namespace executor {
 struct RemoteCommandResponse {
     RemoteCommandResponse() = default;
 
+#if defined(_MSC_VER) && _MSC_VER < 1900
+    // Custom move assignment and construction to support MSVC 2013.
+    RemoteCommandResponse(const RemoteCommandResponse&) = default;
+    RemoteCommandResponse& operator=(const RemoteCommandResponse&) = default;
+
+    RemoteCommandResponse(RemoteCommandResponse&&);
+    RemoteCommandResponse& operator=(RemoteCommandResponse&&);
+#endif
+
     RemoteCommandResponse(BSONObj dataObj, BSONObj metadataObj, Milliseconds millis)
         : data(std::move(dataObj)), metadata(std::move(metadataObj)), elapsedMillis(millis) {}
 

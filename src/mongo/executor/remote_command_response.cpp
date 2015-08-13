@@ -35,6 +35,22 @@
 namespace mongo {
 namespace executor {
 
+#if defined(_MSC_VER) && _MSC_VER < 1900
+
+RemoteCommandResponse::RemoteCommandResponse(RemoteCommandResponse&& other)
+    : data(std::move(other.data)),
+      metadata(std::move(other.metadata)),
+      elapsedMillis(other.elapsedMillis) {}
+
+RemoteCommandResponse& RemoteCommandResponse::operator=(RemoteCommandResponse&& other) {
+    data = std::move(other.data);
+    metadata = std::move(other.metadata);
+    elapsedMillis = other.elapsedMillis;
+    return *this;
+}
+
+#endif
+
 std::string RemoteCommandResponse::toString() const {
     return str::stream() << "RemoteResponse -- "
                          << " cmd:" << data.toString();

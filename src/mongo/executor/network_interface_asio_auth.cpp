@@ -68,7 +68,7 @@ void NetworkInterfaceASIO::_runIsMaster(AsyncOp* op) {
 
             auto protocolSet = rpc::parseProtocolSetFromIsMasterReply(isMasterReply);
             if (!protocolSet.isOK())
-                return _completeOperation(op, protocolSet.getStatus());
+                return _completeOperation(op, std::move(protocolSet.getStatus()));
 
             op->connection().setServerProtocols(protocolSet.getValue());
 
@@ -77,7 +77,7 @@ void NetworkInterfaceASIO::_runIsMaster(AsyncOp* op) {
                                                      op->connection().clientProtocols());
 
             if (!negotiatedProtocol.isOK()) {
-                return _completeOperation(op, negotiatedProtocol.getStatus());
+                return _completeOperation(op, std::move(negotiatedProtocol.getStatus()));
             }
 
             op->setOperationProtocol(negotiatedProtocol.getValue());
@@ -136,7 +136,7 @@ void NetworkInterfaceASIO::_authenticate(AsyncOp* op) {
     // This will be called when authentication has completed.
     auto authHook = [this, op](auth::AuthResponse response) {
         if (!response.isOK())
-            return _completeOperation(op, response);
+            return _completeOperation(op, std::move(response));
         return _beginCommunication(op);
     };
 

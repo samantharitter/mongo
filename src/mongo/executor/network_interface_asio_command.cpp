@@ -215,7 +215,7 @@ void NetworkInterfaceASIO::_completedOpCallback(AsyncOp* op) {
 
     // TODO: handle metadata readers.
     auto response = _responseFromMessage(op->command().toRecv(), op->operationProtocol());
-    _completeOperation(op, response);
+    _completeOperation(op, std::move(response));
 }
 
 void NetworkInterfaceASIO::_networkErrorCallback(AsyncOp* op, const std::error_code& ec) {
@@ -225,8 +225,8 @@ void NetworkInterfaceASIO::_networkErrorCallback(AsyncOp* op, const std::error_c
 
 // NOTE: This method may only be called by ASIO threads
 // (do not call from methods entered by TaskExecutor threads)
-void NetworkInterfaceASIO::_completeOperation(AsyncOp* op, const ResponseStatus& resp) {
-    op->finish(resp);
+void NetworkInterfaceASIO::_completeOperation(AsyncOp* op, ResponseStatus&& resp) {
+    op->finish(std::move(resp));
 
     {
         // NOTE: op will be deleted in the call to erase() below.

@@ -118,8 +118,8 @@ NetworkInterfaceASIO::AsyncCommand& NetworkInterfaceASIO::AsyncOp::command() {
     return _command.get();
 }
 
-void NetworkInterfaceASIO::AsyncOp::finish(const ResponseStatus& status) {
-    _onFinish(status);
+void NetworkInterfaceASIO::AsyncOp::finish(ResponseStatus&& status) {
+    _onFinish(std::move(status));
 }
 
 const RemoteCommandRequest& NetworkInterfaceASIO::AsyncOp::request() const {

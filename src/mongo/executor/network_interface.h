@@ -49,7 +49,7 @@ public:
     static const unsigned int kMessagingPortKeepOpen = 1;
 
     using Response = RemoteCommandResponse;
-    using RemoteCommandCompletionFn = stdx::function<void(const TaskExecutor::ResponseStatus&)>;
+    using RemoteCommandCompletionFn = stdx::function<void(TaskExecutor::ResponseStatus&&)>;
 
     virtual ~NetworkInterface();
 

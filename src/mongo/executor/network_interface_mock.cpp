@@ -509,7 +509,7 @@ void NetworkInterfaceMock::NetworkOperation::setResponse(
 
 void NetworkInterfaceMock::NetworkOperation::finishResponse() {
     invariant(_onFinish);
-    _onFinish(_response);
+    _onFinish(std::move(_response));
     _onFinish = RemoteCommandCompletionFn();
 }
 

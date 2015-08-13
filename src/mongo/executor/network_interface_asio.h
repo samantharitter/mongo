@@ -169,7 +169,7 @@ private:
         AsyncCommand& beginCommand(Message&& newCommand);
         AsyncCommand& command();
 
-        void finish(const TaskExecutor::ResponseStatus& status);
+        void finish(TaskExecutor::ResponseStatus&& status);
 
         const RemoteCommandRequest& request() const;
 
@@ -246,7 +246,7 @@ private:
     void _beginCommunication(AsyncOp* op);
     void _completedOpCallback(AsyncOp* op);
     void _networkErrorCallback(AsyncOp* op, const std::error_code& ec);
-    void _completeOperation(AsyncOp* op, const TaskExecutor::ResponseStatus& resp);
+    void _completeOperation(AsyncOp* op, TaskExecutor::ResponseStatus&& resp);
 
     void _signalWorkAvailable_inlock();
 

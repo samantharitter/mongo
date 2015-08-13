@@ -154,7 +154,7 @@ void NetworkInterfaceImpl::_runOneCommand() {
     TaskExecutor::ResponseStatus result = _commandRunner.runCommand(todo.request);
     LOG(2) << "Network status of sending " << todo.request.cmdObj.firstElementFieldName() << " to "
            << todo.request.target << " was " << result.getStatus();
-    todo.onFinish(result);
+    todo.onFinish(std::move(result));
     lk.lock();
     --_numActiveNetworkRequests;
     _signalWorkAvailable_inlock();
@@ -189,7 +189,7 @@ void NetworkInterfaceImpl::cancelCommand(const TaskExecutor::CallbackHandle& cbH
            << iter->request.target;
     _pending.erase(iter);
     lk.unlock();
-    onFinish(TaskExecutor::ResponseStatus(ErrorCodes::CallbackCanceled, "Callback canceled"));
+    onFinish({ErrorCodes::CallbackCanceled, "Callback canceled"});
     lk.lock();
     _signalWorkAvailable_inlock();
 }
