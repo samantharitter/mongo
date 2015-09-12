@@ -269,6 +269,7 @@ class TaskExecutor::CallbackHandle {
 
 public:
     CallbackHandle();
+    explicit CallbackHandle(std::shared_ptr<CallbackState> cbData);
 
     bool operator==(const CallbackHandle& other) const {
         return _callback == other._callback;
@@ -290,7 +291,6 @@ public:
     }
 
 private:
-    explicit CallbackHandle(std::shared_ptr<CallbackState> cbData);
     void setCallback(std::shared_ptr<CallbackState> callback) {
         _callback = callback;
     }

@@ -51,6 +51,17 @@ namespace {
 
 HostAndPort testHost{"localhost", 20000};
 
+// Utility function to use with mock streams
+RemoteCommandResponse simulateIsMaster(RemoteCommandRequest request) {
+    ASSERT_EQ(std::string{request.cmdObj.firstElementFieldName()}, "isMaster");
+    ASSERT_EQ(request.dbname, "admin");
+
+    RemoteCommandResponse response;
+    response.data = BSON("minWireVersion" << mongo::minWireVersion << "maxWireVersion"
+                                          << mongo::maxWireVersion);
+    return response;
+}
+
 class NetworkInterfaceASIOTest : public mongo::unittest::Test {
 public:
     void setUp() override {
@@ -84,6 +95,54 @@ protected:
     std::unique_ptr<NetworkInterfaceASIO> _net;
 };
 
+// A mock class mimicking TaskExecutor::CallbackState, does nothing.
+class MockCallbackState : public TaskExecutor::CallbackState {
+public:
+    MockCallbackState() {}
+    void cancel() override {}
+    void waitForCompletion() override {}
+};
+
+TEST_F(NetworkInterfaceASIOTest, CancelMissingOperation) {
+    // This is just a sanity check, this action should have no effect.
+    auto cbState = std::make_shared<MockCallbackState>();
+    TaskExecutor::CallbackHandle cb(cbState);
+    net().cancelCommand(cb);
+}
+
+TEST_F(NetworkInterfaceASIOTest, CancelOperation) {
+    auto cbState = std::make_shared<MockCallbackState>();
+    TaskExecutor::CallbackHandle cbh(cbState);
+
+    stdx::promise<bool> canceled;
+
+    // Kick off our operation
+    net().startCommand(cbh,
+                       RemoteCommandRequest(testHost, "testDB", BSON("a" << 1), BSONObj()),
+                       [&canceled](StatusWith<RemoteCommandResponse> response) {
+                           canceled.set_value(response == ErrorCodes::CallbackCanceled);
+                       });
+
+    // Create and initialize a stream so operation can begin
+    auto stream = streamFactory().blockUntilStreamExists(testHost);
+    ConnectEvent{stream}.skip();
+
+    // Simulate isMaster reply.
+    stream->simulateServer(rpc::Protocol::kOpQuery,
+                           [](RemoteCommandRequest request)
+                               -> RemoteCommandResponse { return simulateIsMaster(request); });
+
+    // Wait for the operation to write so we know it's been added.
+    WriteEvent{stream}.skip();
+
+    // Cancel the operation.
+    net().cancelCommand(cbh);
+
+    // Wait for op to complete, assert that it was canceled.
+    auto canceledFuture = canceled.get_future();
+    ASSERT(canceledFuture.get());
+}
+
 TEST_F(NetworkInterfaceASIOTest, StartCommand) {
     TaskExecutor::CallbackHandle cb{};
 
@@ -113,17 +172,9 @@ TEST_F(NetworkInterfaceASIOTest, StartCommand) {
     ConnectEvent{stream}.skip();
 
     // simulate isMaster reply.
-    stream->simulateServer(
-        rpc::Protocol::kOpQuery,
-        [](RemoteCommandRequest request) -> RemoteCommandResponse {
-            ASSERT_EQ(std::string{request.cmdObj.firstElementFieldName()}, "isMaster");
-            ASSERT_EQ(request.dbname, "admin");
-
-            RemoteCommandResponse response;
-            response.data = BSON("minWireVersion" << mongo::minWireVersion << "maxWireVersion"
-                                                  << mongo::maxWireVersion);
-            return response;
-        });
+    stream->simulateServer(rpc::Protocol::kOpQuery,
+                           [](RemoteCommandRequest request)
+                               -> RemoteCommandResponse { return simulateIsMaster(request); });
 
     auto expectedMetadata = BSON("meep"
                                  << "beep");
@@ -266,13 +317,8 @@ TEST_F(NetworkInterfaceASIOConnectionHookTest, MakeRequestReturnsError) {
 
     // simulate isMaster reply.
     stream->simulateServer(rpc::Protocol::kOpQuery,
-                           [](RemoteCommandRequest request) -> RemoteCommandResponse {
-                               RemoteCommandResponse response;
-                               response.data = BSON("minWireVersion" << mongo::minWireVersion
-                                                                     << "maxWireVersion"
-                                                                     << mongo::maxWireVersion);
-                               return response;
-                           });
+                           [](RemoteCommandRequest request)
+                               -> RemoteCommandResponse { return simulateIsMaster(request); });
 
     // We should stop here.
     doneFuture.get();
@@ -326,14 +372,8 @@ TEST_F(NetworkInterfaceASIOConnectionHookTest, MakeRequestReturnsNone) {
 
     // simulate isMaster reply.
     stream->simulateServer(rpc::Protocol::kOpQuery,
-                           [](RemoteCommandRequest request) -> RemoteCommandResponse {
-                               RemoteCommandResponse response;
-                               response.data = BSON("minWireVersion" << mongo::minWireVersion
-                                                                     << "maxWireVersion"
-                                                                     << mongo::maxWireVersion);
-                               return response;
-                           });
-
+                           [](RemoteCommandRequest request)
+                               -> RemoteCommandResponse { return simulateIsMaster(request); });
 
     // Simulate user command.
     stream->simulateServer(rpc::Protocol::kOpCommandV1,
@@ -401,13 +441,8 @@ TEST_F(NetworkInterfaceASIOConnectionHookTest, HandleReplyReturnsError) {
 
     // simulate isMaster reply.
     stream->simulateServer(rpc::Protocol::kOpQuery,
-                           [](RemoteCommandRequest request) -> RemoteCommandResponse {
-                               RemoteCommandResponse response;
-                               response.data = BSON("minWireVersion" << mongo::minWireVersion
-                                                                     << "maxWireVersion"
-                                                                     << mongo::maxWireVersion);
-                               return response;
-                           });
+                           [](RemoteCommandRequest request)
+                               -> RemoteCommandResponse { return simulateIsMaster(request); });
 
     // Simulate hook reply
     stream->simulateServer(rpc::Protocol::kOpCommandV1,

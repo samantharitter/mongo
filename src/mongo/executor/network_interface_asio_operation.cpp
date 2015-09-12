@@ -82,9 +82,12 @@ NetworkInterfaceASIO::AsyncOp::AsyncOp(NetworkInterfaceASIO* const owner,
       _inSetup(true) {}
 
 void NetworkInterfaceASIO::AsyncOp::cancel() {
-    // An operation may be in mid-flight when it is canceled, so we
-    // do not disconnect immediately upon cancellation.
+    // An operation may be in mid-flight when it is canceled, so we cancel any
+    // in-progress async ops but do not complete the operation now.
     _canceled.store(1);
+    if (_connection) {
+        _connection->cancel();
+    }
 }
 
 bool NetworkInterfaceASIO::AsyncOp::canceled() const {

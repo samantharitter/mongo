@@ -36,6 +36,7 @@
 #include <iterator>
 #include <system_error>
 
+#include "mongo/base/system_error.h"
 #include "mongo/rpc/command_reply_builder.h"
 #include "mongo/rpc/factory.h"
 #include "mongo/rpc/legacy_reply_builder.h"
@@ -93,6 +94,15 @@ void AsyncMockStreamFactory::MockStream::connect(asio::ip::tcp::resolver::iterat
     // Suspend execution after "connecting"
     _defer(kBlockedBeforeConnect,
            [this, connectHandler, endpoints]() {
+               stdx::unique_lock<stdx::mutex> lk(_mutex);
+
+               if (_state == kCanceled) {
+                   _io_service->post([connectHandler]() {
+                       connectHandler(make_error_code(ErrorCodes::CallbackCanceled));
+                   });
+                   return;
+               }
+
                _io_service->post(
                    [connectHandler, endpoints] { connectHandler(std::error_code()); });
            });
@@ -109,6 +119,15 @@ void AsyncMockStreamFactory::MockStream::write(asio::const_buffer buf,
     // Suspend execution after data is written.
     _defer_inlock(kBlockedAfterWrite,
                   [this, writeHandler, size]() {
+                      stdx::unique_lock<stdx::mutex> lk(_mutex);
+
+                      if (_state == kCanceled) {
+                          _io_service->post([writeHandler]() {
+                              writeHandler(make_error_code(ErrorCodes::CallbackCanceled), 0);
+                          });
+                          return;
+                      }
+
                       _io_service->post(
                           [writeHandler, size] { writeHandler(std::error_code(), size); });
                   });
@@ -118,8 +137,17 @@ void AsyncMockStreamFactory::MockStream::cancel() {
     stdx::unique_lock<stdx::mutex> lk(_mutex);
     log() << "cancel() for: " << _target;
 
-    // TODO: We will need to mock cancel() to test SERVER-20190
-    // We may want a cancel queue the same way we have read and write queues
+    StreamState oldState = _state;
+    _state = kCanceled;
+
+    // If kRunning then we weren't in the middle of an async op, nothing to abort.
+    if (oldState != kRunning) {
+        // TODO: If you call cancel() and then try to skip things you might have issues...
+        _unblock_inlock();
+
+        // unblock any waiters
+        _deferredCV.notify_all();
+    }
 }
 
 void AsyncMockStreamFactory::MockStream::read(asio::mutable_buffer buf,
@@ -128,6 +156,14 @@ void AsyncMockStreamFactory::MockStream::read(asio::mutable_buffer buf,
     _defer(kBlockedBeforeRead,
            [this, buf, readHandler]() {
                stdx::unique_lock<stdx::mutex> lk(_mutex);
+
+               if (_state == kCanceled) {
+                   // Abort the operation
+                   _io_service->post([readHandler]() {
+                       readHandler(make_error_code(ErrorCodes::CallbackCanceled), 0);
+                   });
+                   return;
+               }
 
                auto nextRead = std::move(_readQueue.front());
                _readQueue.pop();
@@ -151,13 +187,13 @@ void AsyncMockStreamFactory::MockStream::read(asio::mutable_buffer buf,
 
 void AsyncMockStreamFactory::MockStream::pushRead(std::vector<uint8_t> toRead) {
     stdx::unique_lock<stdx::mutex> lk(_mutex);
-    invariant(_state != kRunning);
+    invariant(_state != kRunning && _state != kCanceled);
     _readQueue.emplace(std::move(toRead));
 }
 
 std::vector<uint8_t> AsyncMockStreamFactory::MockStream::popWrite() {
     stdx::unique_lock<stdx::mutex> lk(_mutex);
-    invariant(_state != kRunning);
+    invariant(_state != kRunning && _state != kCanceled);
     auto nextWrite = std::move(_writeQueue.front());
     _writeQueue.pop();
     return nextWrite;
@@ -183,7 +219,7 @@ void AsyncMockStreamFactory::MockStream::unblock() {
 }
 
 void AsyncMockStreamFactory::MockStream::_unblock_inlock() {
-    invariant(_state != kRunning);
+    invariant(_state != kRunning && _state != kCanceled);
     _state = kRunning;
 
     // Post our deferred action to resume state machine execution
