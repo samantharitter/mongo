@@ -36,6 +36,9 @@
 
 #include "mongo/executor/async_stream_interface.h"
 #include "mongo/executor/async_stream_factory.h"
+#include "mongo/executor/async_timer_asio.h"
+#include "mongo/executor/async_timer_interface.h"
+#include "mongo/executor/async_timer_mock.h"
 #include "mongo/executor/connection_pool_asio.h"
 #include "mongo/stdx/chrono.h"
 #include "mongo/stdx/memory.h"
@@ -60,6 +63,7 @@ NetworkInterfaceASIO::NetworkInterfaceASIO(
       _hook(std::move(networkConnectionHook)),
       _resolver(_io_service),
       _state(State::kReady),
+      _timerFactory(std::move(_options.timerFactory)),
       _streamFactory(std::move(streamFactory)),
       _connectionPool(stdx::make_unique<connection_pool_asio::ASIOImpl>(this),
                       _options.connectionPoolOptions),
