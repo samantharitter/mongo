@@ -272,9 +272,10 @@ void NetworkInterfaceASIO::_networkErrorCallback(AsyncOp* op, const std::error_c
 void NetworkInterfaceASIO::_completeOperation(AsyncOp* op, const ResponseStatus& resp) {
     // Prevent any other threads or callbacks from accessing this op so we may
     // safely complete and destroy it.
-    stdx::unique_lock<stdx::mutex> lk(op->_access->mutex);
-    op->_access->opIsValid = false;
-    lk.unlock();
+    {
+        stdx::lock_guard<stdx::mutex> lk(op->_access->mutex);
+        op->_access->opIsValid = false;
+    }
 
     op->finish(resp);
 

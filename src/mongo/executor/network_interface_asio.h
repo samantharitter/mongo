@@ -234,10 +234,8 @@ private:
          * 3. If flag is true, proceed, otherwise op has been cleaned up.
          */
         struct AccessControl {
-            AccessControl() : opIsValid(true) {}
-
             stdx::mutex mutex;
-            bool opIsValid;
+            bool opIsValid = true;
         };
 
         void cancel();
