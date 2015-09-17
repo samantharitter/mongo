@@ -208,20 +208,27 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
         if (op->_request.timeout != RemoteCommandRequest::kNoTimeout) {
             op->_timeoutAlarm = op->_owner->_timerFactory->make(&_io_service, op->_request.timeout);
 
-            std::shared_ptr<AsyncOp::AccessControl> access = op->_access;
+            std::shared_ptr<AsyncOp::AccessControl> access;
+            std::size_t generation;
+            {
+                stdx::lock_guard<stdx::mutex> lk(op->_access->mutex);
+                access = op->_access;
+                generation = access->id;
+            }
 
-            op->_timeoutAlarm->asyncWait([this, op, access](std::error_code ec) {
+            op->_timeoutAlarm->asyncWait([this, op, access, generation](std::error_code ec) {
                 if (!ec) {
-                    // We must pass a check for safe access before using op inside the
+                    // We must pass a check for safe access before using op inside
+                    // the
                     // callback or we may attempt access on an invalid pointer.
                     stdx::lock_guard<stdx::mutex> lk(access->mutex);
-                    if (!access->opIsValid) {
+                    if (generation != access->id) {
                         // The operation has been cleaned up, do not access.
                         return;
                     }
 
-                    // An operation may be in mid-flight when it times out, so we cancel any
-                    // in-progress async calls but do not complete the operation now.
+                    // An operation may be in mid-flight when it times out, so we
+                    // cancel any in-progress async calls but do not complete the operation now.
                     if (op->_connection) {
                         op->_connection->cancel();
                     }
@@ -253,14 +260,7 @@ void NetworkInterfaceASIO::cancelCommand(const TaskExecutor::CallbackHandle& cbH
 
     for (auto iter = _inProgress.begin(); iter != _inProgress.end(); ++iter) {
         if (iter->first->cbHandle() == cbHandle) {
-            // Before canceling, ensure that op is still valid. Since we have the _inProgress
-            // mutex the pointer will always be valid, but the op may have been marked for
-            // destruction. In this case, do not cancel.
-            stdx::lock_guard<stdx::mutex> lk(iter->first->_access->mutex);
-            if (iter->first->_access->opIsValid) {
-                iter->first->cancel();
-            }
-
+            iter->first->cancel();
             break;
         }
     }
@@ -270,11 +270,7 @@ void NetworkInterfaceASIO::cancelAllCommands() {
     stdx::lock_guard<stdx::mutex> lk(_inProgressMutex);
     _inGetConnection.clear();
     for (auto iter = _inProgress.begin(); iter != _inProgress.end(); ++iter) {
-        // Before canceling, ensure that op has not been marked for destruction.
-        stdx::lock_guard<stdx::mutex> lk(iter->first->_access->mutex);
-        if (iter->first->_access->opIsValid) {
-            iter->first->cancel();
-        }
+        iter->first->cancel();
     }
 }
 

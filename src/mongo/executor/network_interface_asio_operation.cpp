@@ -107,15 +107,21 @@ NetworkInterfaceASIO::AsyncOp::AsyncOp(NetworkInterfaceASIO* const owner,
       _inSetup(true) {}
 
 void NetworkInterfaceASIO::AsyncOp::cancel() {
-    std::shared_ptr<AsyncOp::AccessControl> access = _access;
+    std::shared_ptr<AsyncOp::AccessControl> access;
+    std::size_t generation;
+    {
+        stdx::lock_guard<stdx::mutex> lk(_access->mutex);
+        access = _access;
+        generation = access->id;
+    }
 
     // An operation may be in mid-flight when it is canceled, so we cancel any
     // in-progress async ops but do not complete the operation now.
     asio::post(_owner->_io_service,
-               [this, access] {
+               [this, access, generation] {
                    // Ensure 'this' pointer is still valid.
                    stdx::lock_guard<stdx::mutex> lk(access->mutex);
-                   if (access->opIsValid) {
+                   if (generation == access->id) {
                        _canceled.store(1);
                        if (_connection) {
                            _connection->cancel();

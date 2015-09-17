@@ -274,7 +274,7 @@ void NetworkInterfaceASIO::_completeOperation(AsyncOp* op, const ResponseStatus&
     // safely complete and destroy it.
     {
         stdx::lock_guard<stdx::mutex> lk(op->_access->mutex);
-        op->_access->opIsValid = false;
+        ++op->_access->id;
     }
 
     op->finish(resp);

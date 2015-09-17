@@ -235,7 +235,7 @@ private:
          */
         struct AccessControl {
             stdx::mutex mutex;
-            bool opIsValid = true;
+            std::size_t id = 0;
         };
 
         void cancel();
