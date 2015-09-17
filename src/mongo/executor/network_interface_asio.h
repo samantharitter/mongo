@@ -225,6 +225,21 @@ private:
                 const RemoteCommandCompletionFn& onFinish,
                 Date_t now);
 
+        /**
+         * Access control for AsyncOp. These objects should be used through shared_ptrs.
+         *
+         * In order to safely access an AsyncOp:
+         * 1. Take the lock
+         * 2. Check the flag
+         * 3. If flag is true, proceed, otherwise op has been cleaned up.
+         */
+        struct AccessControl {
+            AccessControl() : opIsValid(true) {}
+
+            stdx::mutex mutex;
+            bool opIsValid;
+        };
+
         void cancel();
         bool canceled() const;
         bool timedOut() const;
@@ -288,6 +303,13 @@ private:
 
         AtomicUInt64 _canceled;
         AtomicUInt64 _timedOut;
+
+        /**
+         * We maintain a shared_ptr to an access control object. This ensures that tangent
+         * execution paths, such as timeouts for this operation, will not try to access its
+         * state after it has been cleaned up.
+         */
+        std::shared_ptr<AccessControl> _access;
 
         /**
          * An AsyncOp may run 0, 1, or multiple commands over its lifetime.
@@ -361,6 +383,8 @@ private:
 
     ConnectionPool _connectionPool;
 
+    // If it is necessary to hold this lock while accessing a particular operation with
+    // an AccessControl object, take this lock first, always.
     stdx::mutex _inProgressMutex;
     std::unordered_map<AsyncOp*, std::unique_ptr<AsyncOp>> _inProgress;
     std::vector<TaskExecutor::CallbackHandle> _inGetConnection;
