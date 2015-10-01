@@ -205,8 +205,13 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
             // If we didn't find the request, we've been canceled
             if (eraseCount == 0) {
                 lk.unlock();
-                onFinish({ErrorCodes::CallbackCanceled, "Callback canceled"});
+
+                Status failure(ErrorCodes::CallbackCanceled, "Callback canceled");
+                onFinish(failure);
+                conn->indicateFailure(failure);
+
                 signalWorkAvailable();
+
                 return;
             }
 
