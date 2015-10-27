@@ -232,6 +232,7 @@ void NetworkInterfaceASIO::AsyncOp::reset() {
     _cbHandle = {};
     _request = {};
     _onFinish = {};
+    log() << "in reset(), going to clear _connectionPoolHandle";
     _connectionPoolHandle = {};
     // We don't reset _connection as we want to reuse it.
     // Ditto for _operationProtocol.

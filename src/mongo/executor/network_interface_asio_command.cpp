@@ -333,7 +333,7 @@ void NetworkInterfaceASIO::_completeOperation(AsyncOp* op, const ResponseStatus&
     } else {
         asioConn->indicateSuccess();
     }
-
+    log() << "done completing operation, calling signalWorkAvailable()";
     signalWorkAvailable();
 }
 

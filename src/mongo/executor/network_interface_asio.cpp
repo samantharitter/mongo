@@ -269,6 +269,8 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
         }
 
         _beginCommunication(op);
+
+        // conn->indicateSuccess();
     };
 
     // TODO: thread some higher level timeout through, rather than 5 minutes,
