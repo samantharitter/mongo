@@ -116,7 +116,8 @@ public:
                      std::string& errmsg,
                      mongo::BSONObjBuilder& result) {
         // Base pool info
-        shardConnectionPool.appendInfo(result);
+        // TODO: fix or remove?
+        // shardConnectionPool.appendInfo(result);
 
         // Thread connection info
         activeClientConnections.appendInfo(result);
