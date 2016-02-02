@@ -70,6 +70,17 @@ class ASIOImpl;
 class AsyncStreamInterface;
 
 /**
+ * Invariant with an error message. Callback should be a callable that returns
+ * a std::string.
+ */
+template <typename Expression, typename Callback>
+void invariantWithInfo(Expression e, Callback getInfo) {
+    if (static_cast<bool>(e))
+        return;
+    msgasserted(12345, getInfo());
+}
+
+/**
  * Implementation of the replication system's network interface using Christopher
  * Kohlhoff's ASIO library instead of existing MongoDB networking primitives.
  */

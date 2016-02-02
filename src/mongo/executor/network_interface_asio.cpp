@@ -174,12 +174,12 @@ Date_t NetworkInterfaceASIO::now() {
 void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHandle,
                                         const RemoteCommandRequest& request,
                                         const RemoteCommandCompletionFn& onFinish) {
-    invariant(onFinish);
+    invariantWithInfo(onFinish, []() { return "Invalid completion function"; });
     {
         stdx::lock_guard<stdx::mutex> lk(_inProgressMutex);
         const auto insertResult = _inGetConnection.emplace(cbHandle);
         // We should never see the same CallbackHandle added twice
-        invariant(insertResult.second);
+        invariantWithInfo(insertResult.second, []() { return "Same CallbackHandle added twice"; });
     }
 
     LOG(2) << "startCommand: " << request.toString();
@@ -233,8 +233,8 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
         op = ownedOp.get();
 
         // Sanity check that we are getting a clean AsyncOp.
-        invariant(!op->canceled());
-        invariant(!op->timedOut());
+        invariantWithInfo(!op->canceled(), []() { return "AsyncOp has inconsistent state"; });
+        invariantWithInfo(!op->timedOut(), []() { return "AsyncOp has inconsistent state"; });
 
         // Now that we're inProgress, an external cancel can touch our op, but
         // not until we release the inProgressMutex.
