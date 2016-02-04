@@ -104,7 +104,8 @@ NetworkInterfaceASIO::AsyncOp::AsyncOp(NetworkInterfaceASIO* const owner,
       _timedOut(0),
       _access(std::make_shared<AsyncOp::AccessControl>()),
       _inSetup(true),
-      _strand(owner->_io_service) {}
+      _strand(owner->_io_service),
+      _state(AsyncOp::State::kUninitialized) {}
 
 void NetworkInterfaceASIO::AsyncOp::cancel() {
     LOG(2) << "Canceling operation; original request was: " << request().toString();
@@ -119,6 +120,7 @@ void NetworkInterfaceASIO::AsyncOp::cancel() {
         stdx::lock_guard<stdx::mutex> lk(access->mutex);
         if (generation == access->id) {
             _canceled = true;
+            _state.store(AsyncOp::State::kCanceled);
             if (_connection) {
                 _connection->cancel();
             }
@@ -130,6 +132,27 @@ bool NetworkInterfaceASIO::AsyncOp::canceled() const {
     return _canceled;
 }
 
+void NetworkInterfaceASIO::AsyncOp::timeOut() {
+    LOG(2) << "Operation timing out; original request was: " << request().toString();
+    stdx::lock_guard<stdx::mutex> lk(_access->mutex);
+    auto access = _access;
+    auto generation = access->id;
+
+    // An operation may be in mid-flight when it times out, so we cancel any
+    // in-progress stream operations but do not complete the operation now.
+
+    _strand.post([this, access, generation] {
+        stdx::lock_guard<stdx::mutex> lk(access->mutex);
+        if (generation == access->id) {
+            _timedOut = true;
+            _state.store(AsyncOp::State::kTimedOut);
+            if (_connection) {
+                _connection->cancel();
+            }
+        }
+    });
+}
+
 bool NetworkInterfaceASIO::AsyncOp::timedOut() const {
     return _timedOut;
 }
@@ -139,12 +162,12 @@ const TaskExecutor::CallbackHandle& NetworkInterfaceASIO::AsyncOp::cbHandle() co
 }
 
 NetworkInterfaceASIO::AsyncConnection& NetworkInterfaceASIO::AsyncOp::connection() {
-    invariant(_connection.is_initialized());
+    _invariantWithInfo(_connection.is_initialized(), "Connection not yet initialized");
     return *_connection;
 }
 
 void NetworkInterfaceASIO::AsyncOp::setConnection(AsyncConnection&& conn) {
-    invariant(!_connection.is_initialized());
+    _invariantWithInfo(!_connection.is_initialized(), "Connection already initialized");
     _connection = std::move(conn);
 }
 
@@ -153,7 +176,8 @@ Status NetworkInterfaceASIO::AsyncOp::beginCommand(Message&& newCommand,
                                                    const HostAndPort& target) {
     // NOTE: We operate based on the assumption that AsyncOp's
     // AsyncConnection does not change over its lifetime.
-    invariant(_connection.is_initialized());
+    _invariantWithInfo(_connection.is_initialized(),
+                       "Connection should not change over AsyncOp's lifetime");
 
     // Construct a new AsyncCommand object for each command.
     _command.emplace(_connection.get_ptr(), type, std::move(newCommand), _owner->now(), target);
@@ -186,7 +210,7 @@ Status NetworkInterfaceASIO::AsyncOp::beginCommand(const RemoteCommandRequest& r
                             AsyncCommand::CommandType::kDownConvertedFind,
                             request.target);
     } else {
-        invariant(isGetMoreCmd);
+        _invariantWithInfo(isGetMoreCmd, "Expected a GetMore command");
         auto downconvertedGetMore = downconvertGetMoreCommandRequest(request);
         if (!downconvertedGetMore.isOK()) {
             return downconvertedGetMore.getStatus();
@@ -198,16 +222,22 @@ Status NetworkInterfaceASIO::AsyncOp::beginCommand(const RemoteCommandRequest& r
 }
 
 NetworkInterfaceASIO::AsyncCommand* NetworkInterfaceASIO::AsyncOp::command() {
-    invariant(_command.is_initialized());
+    _invariantWithInfo(_command.is_initialized(), "Command is not yet initialized");
     return _command.get_ptr();
 }
 
 void NetworkInterfaceASIO::AsyncOp::finish(const ResponseStatus& status) {
     _onFinish(status);
+    _state.store(AsyncOp::State::kFinished);
 }
 
 const RemoteCommandRequest& NetworkInterfaceASIO::AsyncOp::request() const {
     return _request;
+}
+
+void NetworkInterfaceASIO::AsyncOp::startProgress(Date_t startTime) {
+    _start = startTime;
+    _state.store(AsyncOp::State::kInProgress);
 }
 
 Date_t NetworkInterfaceASIO::AsyncOp::start() const {
@@ -215,12 +245,12 @@ Date_t NetworkInterfaceASIO::AsyncOp::start() const {
 }
 
 rpc::Protocol NetworkInterfaceASIO::AsyncOp::operationProtocol() const {
-    invariant(_operationProtocol.is_initialized());
+    _invariantWithInfo(_operationProtocol.is_initialized(), "Protocol not yet set");
     return *_operationProtocol;
 }
 
 void NetworkInterfaceASIO::AsyncOp::setOperationProtocol(rpc::Protocol proto) {
-    invariant(!_operationProtocol.is_initialized());
+    _invariantWithInfo(!_operationProtocol.is_initialized(), "Protocol already set");
     _operationProtocol = proto;
 }
 
@@ -238,10 +268,45 @@ void NetworkInterfaceASIO::AsyncOp::reset() {
     _timedOut = false;
     _command = boost::none;
     // _inSetup should always be false at this point.
+    _state.store(AsyncOp::State::kUninitialized);
 }
 
 void NetworkInterfaceASIO::AsyncOp::setOnFinish(RemoteCommandCompletionFn&& onFinish) {
     _onFinish = std::move(onFinish);
+}
+
+std::string NetworkInterfaceASIO::AsyncOp::stateAsString() const {
+    switch (_state.load()) {
+        case State::kUninitialized:
+            return "UNITIALIZED";
+        case State::kInProgress:
+            return "IN_PROGRESS";
+        case State::kTimedOut:
+            return "TIMED_OUT";
+        case State::kCanceled:
+            return "CANCELED";
+        case State::kFinished:
+            return "DONE";
+        default:
+            MONGO_UNREACHABLE;
+    }
+}
+
+std::string NetworkInterfaceASIO::AsyncOp::toString() const {
+    str::stream s;
+    s << stateAsString() << "\t\t";
+    s << _start.toString() << "\t\t";
+    s << _request.toString() << "\n";
+    return s;
+}
+
+template <typename Expression>
+void NetworkInterfaceASIO::AsyncOp::_invariantWithInfo(Expression e, std::string msg) const {
+    invariantWithInfo(e,
+                      [this, msg]() {
+                          return "AsyncOp invariant failure: " + msg + "\n\n\t Operation: " +
+                              toString() + "\n\n";
+                      });
 }
 
 }  // namespace executor

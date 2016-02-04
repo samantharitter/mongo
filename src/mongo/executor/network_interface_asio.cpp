@@ -91,9 +91,26 @@ NetworkInterfaceASIO::NetworkInterfaceASIO(Options options)
       _strand(_io_service) {}
 
 std::string NetworkInterfaceASIO::getDiagnosticString() {
+    stdx::lock_guard<stdx::mutex> lk(_inProgressMutex);
+    return _getDiagnosticString_inlock();
+}
+
+std::string NetworkInterfaceASIO::_getDiagnosticString_inlock() {
     str::stream output;
-    output << "NetworkInterfaceASIO";
-    output << " inShutdown: " << inShutdown();
+
+    output << "\n      NetworkInterfaceASIO:\n";
+    output << "\t Operations _inGetConnection: " << _inGetConnection.size() << "\n";
+    output << "\t Operations _inProgress: " << _inProgress.size() << "\n";
+
+    if (_inProgress.size() > 0) {
+        output << "\t    State\t\tStarted\t\t\t\t\tRequest\n";
+        for (auto&& kv : _inProgress) {
+            output << "\t    " << kv.first->toString() << "\n";
+        }
+    }
+
+    output << "\n";
+
     return output;
 }
 
@@ -174,12 +191,12 @@ Date_t NetworkInterfaceASIO::now() {
 void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHandle,
                                         const RemoteCommandRequest& request,
                                         const RemoteCommandCompletionFn& onFinish) {
-    invariantWithInfo(onFinish, []() { return "Invalid completion function"; });
+    _invariantWithInfo(onFinish, "Invalid completion function");
     {
         stdx::lock_guard<stdx::mutex> lk(_inProgressMutex);
         const auto insertResult = _inGetConnection.emplace(cbHandle);
         // We should never see the same CallbackHandle added twice
-        invariantWithInfo(insertResult.second, []() { return "Same CallbackHandle added twice"; });
+        _invariantWithInfo_inlock(insertResult.second, "Same CallbackHandle added twice");
     }
 
     LOG(2) << "startCommand: " << request.toString();
@@ -233,8 +250,8 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
         op = ownedOp.get();
 
         // Sanity check that we are getting a clean AsyncOp.
-        invariantWithInfo(!op->canceled(), []() { return "AsyncOp has inconsistent state"; });
-        invariantWithInfo(!op->timedOut(), []() { return "AsyncOp has inconsistent state"; });
+        _invariantWithInfo_inlock(!op->canceled(), "AsyncOp was not reset");
+        _invariantWithInfo_inlock(!op->timedOut(), "AsyncOp was not reset");
 
         // Now that we're inProgress, an external cancel can touch our op, but
         // not until we release the inProgressMutex.
@@ -244,7 +261,7 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
         op->_request = std::move(request);
         op->_onFinish = std::move(onFinish);
         op->_connectionPoolHandle = std::move(swConn.getValue());
-        op->_start = getConnectionStartTime;
+        op->startProgress(getConnectionStartTime);
 
         // This ditches the lock and gets us onto the strand (so we're
         // threadsafe)
@@ -266,7 +283,8 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
                 }
 
                 // The above conditional guarantees that the adjusted timeout will never underflow.
-                invariant(op->_request.timeout > getConnectionDuration);
+                _invariantWithInfo(op->_request.timeout > getConnectionDuration,
+                                   "timeout underflowed");
                 const auto adjustedTimeout = op->_request.timeout - getConnectionDuration;
                 const auto requestId = op->_request.id;
 
@@ -293,13 +311,7 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
 
                             LOG(2) << "Operation " << requestId << " timed out.";
 
-                            // An operation may be in mid-flight when it times out, so we
-                            // cancel any in-progress async calls but do not complete the operation
-                            // now.
-                            op->_timedOut = 1;
-                            if (op->_connection) {
-                                op->_connection->cancel();
-                            }
+                            op->timeOut();
                         } else {
                             LOG(2) << "Failed to time operation " << requestId
                                    << " out: " << ec.message();
@@ -369,6 +381,21 @@ bool NetworkInterfaceASIO::onNetworkThread() {
     return std::any_of(_serviceRunners.begin(),
                        _serviceRunners.end(),
                        [id](const stdx::thread& thread) { return id == thread.get_id(); });
+}
+
+template <typename Expression>
+void NetworkInterfaceASIO::_invariantWithInfo(Expression e, std::string msg) {
+    stdx::lock_guard<stdx::mutex> lk(_inProgressMutex);
+    _invariantWithInfo_inlock(e, msg);
+}
+
+template <typename Expression>
+void NetworkInterfaceASIO::_invariantWithInfo_inlock(Expression e, std::string msg) {
+    invariantWithInfo(e,
+                      [this, msg]() {
+                          return "NetworkInterfaceASIO invariant failure: " + msg +
+                              _getDiagnosticString_inlock();
+                      });
 }
 
 }  // namespace executor

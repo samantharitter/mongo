@@ -77,8 +77,11 @@ template <typename Expression, typename Callback>
 void invariantWithInfo(Expression e, Callback getInfo) {
     if (static_cast<bool>(e))
         return;
-    msgasserted(12345, getInfo());
+
+    Status status{ErrorCodes::InternalError, getInfo()};
+    fassertFailedWithStatus(34410, status);
 }
+
 
 /**
  * Implementation of the replication system's network interface using Christopher
@@ -239,6 +242,28 @@ private:
         friend class NetworkInterfaceASIO;
 
     public:
+        /**
+          * Describe the various states through which an AsyncOp transitions.
+          */
+        enum class State {
+            // A new or zeroed-out AsyncOp.
+            kUninitialized,
+            // An AsyncOp begins its progress when startProgress() is called.
+            kInProgress,
+            // An AsyncOp transitions to kTimedOut when timeOut() is called.
+            // Note that the AsyncOp can be in a kCanceled state and still be
+            // in-flight in NetworkInterfaceASIO.
+            kTimedOut,
+            // An AsyncOp transitions to kCanceled when cancel() is called.
+            // Note that the AsyncOp can be in a kCanceled state and still be
+            // in-flight in NetworkInterfaceASIO.
+            kCanceled,
+            // An AsyncOp is finished once its finish() method is called. Note
+            // that the AsyncOp can be in a kFinished state and still be in the
+            // NetworkInterface's set of in-progress operations.
+            kFinished,
+        };
+
         AsyncOp(NetworkInterfaceASIO* net,
                 const TaskExecutor::CallbackHandle& cbHandle,
                 const RemoteCommandRequest& request,
@@ -260,6 +285,7 @@ private:
 
         void cancel();
         bool canceled() const;
+        void timeOut();
         bool timedOut() const;
 
         const TaskExecutor::CallbackHandle& cbHandle() const;
@@ -286,6 +312,8 @@ private:
 
         const RemoteCommandRequest& request() const;
 
+        void startProgress(Date_t startTime);
+
         Date_t start() const;
 
         rpc::Protocol operationProtocol() const;
@@ -296,6 +324,11 @@ private:
 
         void setOnFinish(RemoteCommandCompletionFn&& onFinish);
 
+        std::string stateAsString() const;
+
+        // Returns a diagnostic string for logging.
+        std::string toString() const;
+
         asio::io_service::strand& strand() {
             return _strand;
         }
@@ -305,6 +338,10 @@ private:
         }
 
     private:
+        // Helper for logging
+        template <typename Expression>
+        void _invariantWithInfo(Expression e, std::string msg = "") const;
+
         NetworkInterfaceASIO* const _owner;
         // Information describing a task enqueued on the NetworkInterface
         // via a call to startCommand().
@@ -359,6 +396,8 @@ private:
          * will make those fields illegal to touch from callbacks.
          */
         asio::io_service::strand _strand;
+
+        std::atomic<State> _state;  // NOLINT
     };
 
     void _startCommand(AsyncOp* op);
@@ -404,6 +443,14 @@ private:
     void _signalWorkAvailable_inlock();
 
     void _asyncRunCommand(AsyncOp* op, NetworkOpHandler handler);
+
+    std::string _getDiagnosticString_inlock();
+
+    // Helper for debugging crashes
+    template <typename Expression>
+    void _invariantWithInfo(Expression e, std::string msg = "");
+    template <typename Expression>
+    void _invariantWithInfo_inlock(Expression e, std::string msg = "");
 
     Options _options;
 

@@ -280,7 +280,7 @@ void NetworkInterfaceASIO::_completeOperation(AsyncOp* op, const ResponseStatus&
 
     if (op->_inSetup) {
         // If we are in setup we should only be here if we failed to connect.
-        invariantWithInfo(!resp.isOK(), []() { return "Failed to connect in setup"; });
+        _invariantWithInfo(!resp.isOK(), "Failed to connect in setup");
         // If we fail during connection, we won't be able to access any of our members after calling
         // op->finish().
         LOG(1) << "Failed to connect to " << op->request().target << " - " << resp.getStatus();
@@ -311,7 +311,7 @@ void NetworkInterfaceASIO::_completeOperation(AsyncOp* op, const ResponseStatus&
         _inProgress.erase(iter);
     }
 
-    invariantWithInfo(static_cast<bool>(ownedOp), []() { return "Invalid AsyncOp"; });
+    _invariantWithInfo(static_cast<bool>(ownedOp), "Invalid AsyncOp");
 
     auto conn = std::move(op->_connectionPoolHandle);
     auto asioConn = static_cast<connection_pool_asio::ASIOConnection*>(conn.get());
