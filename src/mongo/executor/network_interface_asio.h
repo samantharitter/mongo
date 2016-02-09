@@ -79,9 +79,11 @@ void invariantWithInfo(Expression e, Callback getInfo) {
         return;
 
     Status status{ErrorCodes::InternalError, getInfo()};
-    fassertFailedWithStatus(34410, status);
+    fassertFailedWithStatus(34411, status);
 }
 
+// An AsyncOp can transition through at most 5 states.
+const int kMaxStateTransitions = 5;
 
 /**
  * Implementation of the replication system's network interface using Christopher
@@ -245,7 +247,9 @@ private:
         /**
           * Describe the various states through which an AsyncOp transitions.
           */
-        enum class State {
+        enum class State : unsigned char {
+            // A non-state placeholder.
+            kNoState,
             // A new or zeroed-out AsyncOp.
             kUninitialized,
             // An AsyncOp begins its progress when startProgress() is called.
@@ -285,7 +289,7 @@ private:
 
         void cancel();
         bool canceled() const;
-        void timeOut();
+        void timeOut_inlock();
         bool timedOut() const;
 
         const TaskExecutor::CallbackHandle& cbHandle() const;
@@ -322,9 +326,9 @@ private:
 
         void reset();
 
-        void setOnFinish(RemoteCommandCompletionFn&& onFinish);
+        void clearStateTransitions();
 
-        std::string stateAsString() const;
+        void setOnFinish(RemoteCommandCompletionFn&& onFinish);
 
         // Returns a diagnostic string for logging.
         std::string toString() const;
@@ -338,6 +342,22 @@ private:
         }
 
     private:
+        // Type to represent the internal id of this request
+        typedef uint64_t AsyncOpId;
+
+        // Return string representation of a given state.
+        std::string _stateToString(State state) const;
+
+        // Return a string representation of this op's state transitions.
+        std::string _stateString() const;
+
+        bool _hasSeenState(State state) const;
+
+        // Track and validate AsyncOp state transitions.
+        // Use the _inlock variant if already holding the access control lock.
+        void _transitionToState(State newState);
+        void _transitionToState_inlock(State newState);
+
         // Helper for logging
         template <typename Expression>
         void _invariantWithInfo(Expression e, std::string msg = "") const;
@@ -370,8 +390,7 @@ private:
 
         asio::ip::tcp::resolver _resolver;
 
-        bool _canceled = false;
-        bool _timedOut = false;
+        const AsyncOpId _id;
 
         /**
          * We maintain a shared_ptr to an access control object. This ensures that tangent
@@ -397,7 +416,9 @@ private:
          */
         asio::io_service::strand _strand;
 
-        std::atomic<State> _state;  // NOLINT
+        // We hold an array of states to show the path this AsyncOp has taken.
+        // Must be holding the access control's lock to edit.
+        State _states[kMaxStateTransitions];
     };
 
     void _startCommand(AsyncOp* op);

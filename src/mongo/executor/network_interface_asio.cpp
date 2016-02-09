@@ -50,6 +50,9 @@
 #include "mongo/util/net/ssl_manager.h"
 #include "mongo/util/time_support.h"
 
+// move this
+#include "mongo/util/table_formatter.h"
+
 namespace mongo {
 namespace executor {
 
@@ -191,6 +194,13 @@ Date_t NetworkInterfaceASIO::now() {
 void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHandle,
                                         const RemoteCommandRequest& request,
                                         const RemoteCommandCompletionFn& onFinish) {
+    // print out a table hooray
+    std::vector<std::vector<std::string>> rows;
+    rows.push_back({"Fruit", "Shape", "Color", "Size"});
+    rows.push_back({"Pineapple", "oblong", "yellow/green/brown", "large"});
+    rows.push_back({"Plum", "round", "purple", "small"});
+    // log() << "\n" << toTable(rows);
+
     _invariantWithInfo(onFinish, "Invalid completion function");
     {
         stdx::lock_guard<stdx::mutex> lk(_inProgressMutex);
@@ -249,9 +259,12 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
         auto ownedOp = conn->releaseAsyncOp();
         op = ownedOp.get();
 
-        // Sanity check that we are getting a clean AsyncOp.
-        _invariantWithInfo_inlock(!op->canceled(), "AsyncOp was not reset");
-        _invariantWithInfo_inlock(!op->timedOut(), "AsyncOp was not reset");
+        // This AsyncOp may be recycled. We expect timeout and canceled to be clean.
+        // If this op was most recently used to connect, its state transitions won't have been
+        // reset, so we do that here.
+        _invariantWithInfo_inlock(!op->canceled(), "AsyncOp was not reset, dirty canceled flag");
+        _invariantWithInfo_inlock(!op->timedOut(), "AsyncOp was not reset, dirty timeout flag");
+        op->clearStateTransitions();
 
         // Now that we're inProgress, an external cancel can touch our op, but
         // not until we release the inProgressMutex.
@@ -311,7 +324,7 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
 
                             LOG(2) << "Operation " << requestId << " timed out.";
 
-                            op->timeOut();
+                            op->timeOut_inlock();
                         } else {
                             LOG(2) << "Failed to time operation " << requestId
                                    << " out: " << ec.message();

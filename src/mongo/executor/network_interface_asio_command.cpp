@@ -233,7 +233,6 @@ void NetworkInterfaceASIO::_beginCommunication(AsyncOp* op) {
     // return to the connection pool's get() callback with _inSetup == false,
     // so we can proceed with user operations after they return to this
     // codepath.
-
     if (op->_inSetup) {
         log() << "Successfully connected to " << op->request().target.toString();
         op->_inSetup = false;
@@ -281,9 +280,11 @@ void NetworkInterfaceASIO::_completeOperation(AsyncOp* op, const ResponseStatus&
     if (op->_inSetup) {
         // If we are in setup we should only be here if we failed to connect.
         _invariantWithInfo(!resp.isOK(), "Failed to connect in setup");
-        // If we fail during connection, we won't be able to access any of our members after calling
-        // op->finish().
+        // If we fail during connection, we won't be able to access any of op's members after
+        // calling finish(), so we return here.
         LOG(1) << "Failed to connect to " << op->request().target << " - " << resp.getStatus();
+        op->finish(resp);
+        return;
     }
 
     if (!resp.isOK()) {
@@ -302,10 +303,8 @@ void NetworkInterfaceASIO::_completeOperation(AsyncOp* op, const ResponseStatus&
 
         auto iter = _inProgress.find(op);
 
-        // This can happen if we fail during setup.
-        if (iter == _inProgress.end()) {
-            return;
-        }
+        _invariantWithInfo_inlock(iter != _inProgress.end(),
+                                  "Could not find AsyncOp in _inProgress");
 
         ownedOp = std::move(iter->second);
         _inProgress.erase(iter);
