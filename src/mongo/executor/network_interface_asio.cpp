@@ -95,10 +95,10 @@ NetworkInterfaceASIO::NetworkInterfaceASIO(Options options)
 
 std::string NetworkInterfaceASIO::getDiagnosticString() {
     stdx::lock_guard<stdx::mutex> lk(_inProgressMutex);
-    return _getDiagnosticString_inlock();
+    return _getDiagnosticString_inlock(nullptr);
 }
 
-std::string NetworkInterfaceASIO::_getDiagnosticString_inlock() {
+std::string NetworkInterfaceASIO::_getDiagnosticString_inlock(AsyncOp* currentOp) {
     str::stream output;
 
     output << "\n      NetworkInterfaceASIO:\n";
@@ -106,10 +106,25 @@ std::string NetworkInterfaceASIO::_getDiagnosticString_inlock() {
     output << "\t Operations _inProgress: " << _inProgress.size() << "\n";
 
     if (_inProgress.size() > 0) {
-        output << "\t    State\t\tStarted\t\t\t\t\tRequest\n";
+        // Set up labels, first is placeholder for asterisk
+        std::vector<std::vector<std::string>> rows;
+        rows.push_back({"", "ID", "STATES", "START_TIME", "REQUEST"});
+
+        // Push AsyncOps
         for (auto&& kv : _inProgress) {
-            output << "\t    " << kv.first->toString() << "\n";
+            auto row = kv.first->getStringFields();
+            if (currentOp) {
+                // If this is the AsyncOp we blew up on, mark with an asterisk
+                if (*currentOp == *(kv.first)) {
+                    row[0] = "*";
+                }
+            }
+
+            rows.push_back(row);
         }
+
+        // Format as a table
+        output << "\n" << toTable(rows);
     }
 
     output << "\n";
@@ -194,13 +209,6 @@ Date_t NetworkInterfaceASIO::now() {
 void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHandle,
                                         const RemoteCommandRequest& request,
                                         const RemoteCommandCompletionFn& onFinish) {
-    // print out a table hooray
-    std::vector<std::vector<std::string>> rows;
-    rows.push_back({"Fruit", "Shape", "Color", "Size"});
-    rows.push_back({"Pineapple", "oblong", "yellow/green/brown", "large"});
-    rows.push_back({"Plum", "round", "purple", "small"});
-    // log() << "\n" << toTable(rows);
-
     _invariantWithInfo(onFinish, "Invalid completion function");
     {
         stdx::lock_guard<stdx::mutex> lk(_inProgressMutex);
@@ -262,8 +270,8 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
         // This AsyncOp may be recycled. We expect timeout and canceled to be clean.
         // If this op was most recently used to connect, its state transitions won't have been
         // reset, so we do that here.
-        _invariantWithInfo_inlock(!op->canceled(), "AsyncOp was not reset, dirty canceled flag");
-        _invariantWithInfo_inlock(!op->timedOut(), "AsyncOp was not reset, dirty timeout flag");
+        _invariantWithInfo_inlock(!op->canceled(), "AsyncOp has dirty canceled flag", op);
+        _invariantWithInfo_inlock(!op->timedOut(), "AsyncOp has dirty timeout flag", op);
         op->clearStateTransitions();
 
         // Now that we're inProgress, an external cancel can touch our op, but
@@ -275,6 +283,8 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
         op->_onFinish = std::move(onFinish);
         op->_connectionPoolHandle = std::move(swConn.getValue());
         op->startProgress(getConnectionStartTime);
+
+        log() << _getDiagnosticString_inlock(op);
 
         // This ditches the lock and gets us onto the strand (so we're
         // threadsafe)
@@ -296,8 +306,8 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
                 }
 
                 // The above conditional guarantees that the adjusted timeout will never underflow.
-                _invariantWithInfo(op->_request.timeout > getConnectionDuration,
-                                   "timeout underflowed");
+                _invariantWithInfo(
+                    op->_request.timeout > getConnectionDuration, "timeout underflowed", op);
                 const auto adjustedTimeout = op->_request.timeout - getConnectionDuration;
                 const auto requestId = op->_request.id;
 
@@ -397,17 +407,17 @@ bool NetworkInterfaceASIO::onNetworkThread() {
 }
 
 template <typename Expression>
-void NetworkInterfaceASIO::_invariantWithInfo(Expression e, std::string msg) {
+void NetworkInterfaceASIO::_invariantWithInfo(Expression e, std::string msg, AsyncOp* op) {
     stdx::lock_guard<stdx::mutex> lk(_inProgressMutex);
-    _invariantWithInfo_inlock(e, msg);
+    _invariantWithInfo_inlock(e, msg, op);
 }
 
 template <typename Expression>
-void NetworkInterfaceASIO::_invariantWithInfo_inlock(Expression e, std::string msg) {
+void NetworkInterfaceASIO::_invariantWithInfo_inlock(Expression e, std::string msg, AsyncOp* op) {
     invariantWithInfo(e,
-                      [this, msg]() {
+                      [this, msg, op]() {
                           return "NetworkInterfaceASIO invariant failure: " + msg +
-                              _getDiagnosticString_inlock();
+                              _getDiagnosticString_inlock(op);
                       });
 }
 

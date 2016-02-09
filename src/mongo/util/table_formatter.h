@@ -29,14 +29,6 @@
 #include <algorithm>
 #include <iomanip>
 
-// TODO: table options!
-// - maximum width of any column,
-//   with truncation or wrapping
-// - borders, on or off
-// - labels, on or off, if on we assume first row to be labels.
-// - left align or right align
-// - offset, from left
-
 /**
  * A tool to shape data into a table. Input may be any iterable type T of another
  * iterable type U of a string-like type S. For example, a vector of vectors of std::strings,
@@ -45,15 +37,13 @@
  *
  * Example usage:
  *     std::vector<std::vector<std::string>> rows;
- *     rows.push_back({ "Fruit", "Shape", "Color", "Size" });
- *     rows.push_back({ "Pineapple", "oblong", "yellow/green/brown", "large" });
- *     rows.push_back({ "Plum", "round", "purple", "small" });
+ *
+ *     rows.push_back({ "X_VALUE", "Y_VALUE" });
+ *     rows.push_back({ "0", "0" });
+ *     rows.push_back({ "10.3", "0" });
+ *     rows.push_back({ "-0.5", "2" });
  *
  *     std::cout << toTable(rows.cbegin(), rows.cend()) << std::endl;
- *
- * Prints:
- *
- *
  */
 template <typename T>
 std::string toTable(const T& rows) {
@@ -74,7 +64,7 @@ std::string toTable(const T& rows) {
     for (auto row : rows) {
         size_t i = 0;
         for (auto value : row) {
-            ss << std::setw(widths[i++] + 1);
+            ss << std::setw(widths[i++] + 3);
             ss << value;
         }
         ss << "\n";

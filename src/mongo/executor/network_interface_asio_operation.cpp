@@ -326,13 +326,23 @@ std::string NetworkInterfaceASIO::AsyncOp::_stateString() const {
     return s;
 }
 
+// TODO: typedef this as AsyncOpTableRow or something
+std::vector<std::string> NetworkInterfaceASIO::AsyncOp::getStringFields() const {
+    // We leave a placeholder for an asterisk
+    return {"", std::to_string(_id), _stateString(), _start.toString(), _request.toString()};
+}
+
 std::string NetworkInterfaceASIO::AsyncOp::toString() const {
     str::stream s;
-    s << _id << "\t\t";
-    s << _stateString() << "\t\t";
-    s << _start.toString() << "\t\t";
-    s << _request.toString() << "\n";
+    for (auto field : getStringFields()) {
+        s << field << "\t\t";
+    }
+    s << "\n";
     return s;
+}
+
+bool NetworkInterfaceASIO::AsyncOp::operator==(const AsyncOp& other) const {
+    return _id == other._id;
 }
 
 bool NetworkInterfaceASIO::AsyncOp::_hasSeenState(AsyncOp::State state) const {

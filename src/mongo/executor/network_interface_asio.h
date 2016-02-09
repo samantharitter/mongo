@@ -330,7 +330,8 @@ private:
 
         void setOnFinish(RemoteCommandCompletionFn&& onFinish);
 
-        // Returns a diagnostic string for logging.
+        // Returns diagnostic strings for logging.
+        std::vector<std::string> getStringFields() const;
         std::string toString() const;
 
         asio::io_service::strand& strand() {
@@ -340,6 +341,8 @@ private:
         asio::ip::tcp::resolver& resolver() {
             return _resolver;
         }
+
+        bool operator==(const AsyncOp& other) const;
 
     private:
         // Type to represent the internal id of this request
@@ -465,13 +468,13 @@ private:
 
     void _asyncRunCommand(AsyncOp* op, NetworkOpHandler handler);
 
-    std::string _getDiagnosticString_inlock();
+    std::string _getDiagnosticString_inlock(AsyncOp* currentOp);
 
     // Helper for debugging crashes
     template <typename Expression>
-    void _invariantWithInfo(Expression e, std::string msg = "");
+    void _invariantWithInfo(Expression e, std::string msg = "", AsyncOp* op = nullptr);
     template <typename Expression>
-    void _invariantWithInfo_inlock(Expression e, std::string msg = "");
+    void _invariantWithInfo_inlock(Expression e, std::string msg = "", AsyncOp* op = nullptr);
 
     Options _options;
 
