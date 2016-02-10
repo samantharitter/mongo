@@ -69,17 +69,22 @@ class ASIOImpl;
 
 class AsyncStreamInterface;
 
+#define INVARIANT_WITH_INFO(_Expression, _Callback)                           \
+    if (MONGO_unlikely(!(_Expression))) {                                     \
+        std::stringstream ss;                                                 \
+        ss << "Invariant failure at " << __FILE__ << ":" << __LINE__ << "\n"; \
+        ss << _Callback();                                                    \
+        Status status{ErrorCodes::InternalError, ss.str()};                   \
+        fassertFailedWithStatus(34411, status);                               \
+    }
+
 /**
  * Invariant with an error message. Callback should be a callable that returns
  * a std::string.
  */
 template <typename Expression, typename Callback>
-void invariantWithInfo(Expression e, Callback getInfo) {
-    if (static_cast<bool>(e))
-        return;
-
-    Status status{ErrorCodes::InternalError, getInfo()};
-    fassertFailedWithStatus(34411, status);
+void invariantWithInfo(Expression&& e, Callback&& getInfo) {
+    INVARIANT_WITH_INFO(e, getInfo);
 }
 
 // An AsyncOp can transition through at most 5 states.
@@ -363,7 +368,7 @@ private:
 
         // Helper for logging
         template <typename Expression>
-        void _invariantWithInfo(Expression e, std::string msg = "") const;
+        void _invariantWithInfo(Expression&& e, std::string msg = "") const;
 
         NetworkInterfaceASIO* const _owner;
         // Information describing a task enqueued on the NetworkInterface
@@ -472,9 +477,9 @@ private:
 
     // Helper for debugging crashes
     template <typename Expression>
-    void _invariantWithInfo(Expression e, std::string msg = "", AsyncOp* op = nullptr);
+    void _invariantWithInfo(Expression&& e, std::string msg = "", AsyncOp* op = nullptr);
     template <typename Expression>
-    void _invariantWithInfo_inlock(Expression e, std::string msg = "", AsyncOp* op = nullptr);
+    void _invariantWithInfo_inlock(Expression&& e, std::string msg = "", AsyncOp* op = nullptr);
 
     Options _options;
 

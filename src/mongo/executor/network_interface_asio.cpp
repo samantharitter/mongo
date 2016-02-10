@@ -284,8 +284,6 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
         op->_connectionPoolHandle = std::move(swConn.getValue());
         op->startProgress(getConnectionStartTime);
 
-        log() << _getDiagnosticString_inlock(op);
-
         // This ditches the lock and gets us onto the strand (so we're
         // threadsafe)
         op->_strand.post([this, op, getConnectionStartTime] {
@@ -407,13 +405,13 @@ bool NetworkInterfaceASIO::onNetworkThread() {
 }
 
 template <typename Expression>
-void NetworkInterfaceASIO::_invariantWithInfo(Expression e, std::string msg, AsyncOp* op) {
+void NetworkInterfaceASIO::_invariantWithInfo(Expression&& e, std::string msg, AsyncOp* op) {
     stdx::lock_guard<stdx::mutex> lk(_inProgressMutex);
     _invariantWithInfo_inlock(e, msg, op);
 }
 
 template <typename Expression>
-void NetworkInterfaceASIO::_invariantWithInfo_inlock(Expression e, std::string msg, AsyncOp* op) {
+void NetworkInterfaceASIO::_invariantWithInfo_inlock(Expression&& e, std::string msg, AsyncOp* op) {
     invariantWithInfo(e,
                       [this, msg, op]() {
                           return "NetworkInterfaceASIO invariant failure: " + msg +

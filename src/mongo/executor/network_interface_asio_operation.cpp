@@ -406,7 +406,7 @@ void NetworkInterfaceASIO::AsyncOp::_transitionToState_inlock(AsyncOp::State new
 }
 
 template <typename Expression>
-void NetworkInterfaceASIO::AsyncOp::_invariantWithInfo(Expression e, std::string msg) const {
+void NetworkInterfaceASIO::AsyncOp::_invariantWithInfo(Expression&& e, std::string msg) const {
     invariantWithInfo(e,
                       [this, msg]() {
                           return "AsyncOp invariant failure: " + msg + "\n\n\t Operation: " +
