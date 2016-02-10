@@ -52,8 +52,8 @@ using asio::ip::tcp;
 
 namespace {
 
-// Used to generate unique identifiers for AsyncOps for trying, because the same AsyncOp
-// might be used to run multiple requests.
+// Used to generate unique identifiers for AsyncOps, the same AsyncOp may
+// be used to run multiple distinct requests.
 AtomicUInt64 kAsyncOpIdCounter(0);
 
 // Metadata listener can be nullptr.
@@ -326,8 +326,7 @@ std::string NetworkInterfaceASIO::AsyncOp::_stateString() const {
     return s;
 }
 
-// TODO: typedef this as AsyncOpTableRow or something
-std::vector<std::string> NetworkInterfaceASIO::AsyncOp::getStringFields() const {
+NetworkInterfaceASIO::TableRow NetworkInterfaceASIO::AsyncOp::getStringFields() const {
     // We leave a placeholder for an asterisk
     return {"", std::to_string(_id), _stateString(), _start.toString(), _request.toString()};
 }

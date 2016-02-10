@@ -31,9 +31,8 @@
 
 /**
  * A tool to shape data into a table. Input may be any iterable type T of another
- * iterable type U of a string-like type S. For example, a vector of vectors of std::strings,
- * or an array of unordered_sets of StringDatas. Type S must support an ostream overload
- * and a size() method.
+ * iterable type U of a string-like type S, for example, a vector of vectors of
+ * std::strings. Type S must support an ostream overload and a size() method.
  *
  * Example usage:
  *     std::vector<std::vector<std::string>> rows;
@@ -43,7 +42,7 @@
  *     rows.push_back({ "10.3", "0" });
  *     rows.push_back({ "-0.5", "2" });
  *
- *     std::cout << toTable(rows.cbegin(), rows.cend()) << std::endl;
+ *     std::cout << toTable(rows) << std::endl;
  */
 template <typename T>
 std::string toTable(const T& rows) {

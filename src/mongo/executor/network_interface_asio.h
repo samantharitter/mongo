@@ -146,6 +146,7 @@ private:
     using ResponseStatus = TaskExecutor::ResponseStatus;
     using NetworkInterface::RemoteCommandCompletionFn;
     using NetworkOpHandler = stdx::function<void(std::error_code, size_t)>;
+    using TableRow = std::vector<std::string>;
 
     enum class State { kReady, kRunning, kShutdown };
 
@@ -336,7 +337,7 @@ private:
         void setOnFinish(RemoteCommandCompletionFn&& onFinish);
 
         // Returns diagnostic strings for logging.
-        std::vector<std::string> getStringFields() const;
+        TableRow getStringFields() const;
         std::string toString() const;
 
         asio::io_service::strand& strand() {

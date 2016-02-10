@@ -48,10 +48,8 @@
 #include "mongo/util/log.h"
 #include "mongo/util/net/sock.h"
 #include "mongo/util/net/ssl_manager.h"
-#include "mongo/util/time_support.h"
-
-// move this
 #include "mongo/util/table_formatter.h"
+#include "mongo/util/time_support.h"
 
 namespace mongo {
 namespace executor {
@@ -107,7 +105,7 @@ std::string NetworkInterfaceASIO::_getDiagnosticString_inlock(AsyncOp* currentOp
 
     if (_inProgress.size() > 0) {
         // Set up labels, first is placeholder for asterisk
-        std::vector<std::vector<std::string>> rows;
+        std::vector<TableRow> rows;
         rows.push_back({"", "ID", "STATES", "START_TIME", "REQUEST"});
 
         // Push AsyncOps
