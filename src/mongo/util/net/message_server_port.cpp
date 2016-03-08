@@ -55,6 +55,9 @@
 #include "mongo/util/net/ssl_manager.h"
 #include "mongo/util/scopeguard.h"
 
+// REMOVE ME
+#include <iostream>
+
 #ifdef __linux__  // TODO: consider making this ifndef _WIN32
 #include <sys/resource.h>
 #endif
@@ -197,25 +200,27 @@ private:
      */
     static void* handleIncomingMsg(void* arg) {
         TicketHolderReleaser connTicketReleaser(&Listener::globalTicketHolder);
-
+        std::cout << "1" << std::endl;
         invariant(arg);
         unique_ptr<MessagingPortWithHandler> portWithHandler(
             static_cast<MessagingPortWithHandler*>(arg));
         MessageHandler* const handler = portWithHandler->getHandler();
-
+        std::cout << "2" << std::endl;
         setThreadName(std::string(str::stream() << "conn" << portWithHandler->connectionId()));
         portWithHandler->psock->setLogLevel(logger::LogSeverity::Debug(1));
-
+        std::cout << "3" << std::endl;
         Message m;
         int64_t counter = 0;
         try {
+            std::cout << "4" << std::endl;
             handler->connected(portWithHandler.get());
             ON_BLOCK_EXIT([handler]() { handler->close(); });
-
+            std::cout << "5" << std::endl;
             while (!inShutdown()) {
+                std::cout << "6" << std::endl;
                 m.reset();
                 portWithHandler->psock->clearCounters();
-
+                std::cout << "7" << std::endl;
                 if (!portWithHandler->recv(m)) {
                     if (!serverGlobalParams.quiet) {
                         int conns = Listener::globalTicketHolder.used() - 1;
@@ -225,11 +230,11 @@ private:
                     }
                     break;
                 }
-
+                std::cout << "8" << std::endl;
                 handler->process(m, portWithHandler.get());
                 networkCounter.hit(portWithHandler->psock->getBytesIn(),
                                    portWithHandler->psock->getBytesOut());
-
+                std::cout << "9" << std::endl;
                 // Occasionally we want to see if we're using too much memory.
                 if ((counter++ & 0xf) == 0) {
                     markThreadIdle();
@@ -247,6 +252,7 @@ private:
             error() << "Uncaught std::exception: " << e.what() << ", terminating" << endl;
             dbexit(EXIT_UNCAUGHT);
         }
+        std::cout << "10" << std::endl;
         portWithHandler->shutdown();
 
 // Normal disconnect path.
@@ -255,7 +261,7 @@ private:
         if (manager)
             manager->cleanupThreadLocals();
 #endif
-
+        std::cout << "11" << std::endl;
         return NULL;
     }
 };
