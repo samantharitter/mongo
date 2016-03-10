@@ -127,12 +127,15 @@ void signalShutdown() {
 stdx::mutex shutdownLock;
 
 void exitCleanly(ExitCode code) {
+    std::cout << "exiting cleanly in mongos" << std::endl;
+    std::cout << "Signaling shutdown..." << std::endl;
     signalShutdown();
-
+    std::cout << "Taking the shutdown lock..." << std::endl;
     // Grab the shutdown lock to prevent concurrent callers
     stdx::lock_guard<stdx::mutex> lockguard(shutdownLock);
 
     {
+        std::cout << "Getting the operation context..." << std::endl;
         Client& client = cc();
         ServiceContext::UniqueOperationContext uniqueTxn;
         OperationContext* txn = client.getOperationContext();
@@ -140,17 +143,20 @@ void exitCleanly(ExitCode code) {
             uniqueTxn = client.makeOperationContext();
             txn = uniqueTxn.get();
         }
-
+        std::cout << "Cleaning up the cursor manager..." << std::endl;
         auto cursorManager = grid.getCursorManager();
         cursorManager->shutdown();
+        std::cout << "Shutting down the shard registry..." << std::endl;
         grid.shardRegistry()->shutdown();
+        std::cout << "Shutting down the catalog manager..." << std::endl;
         grid.catalogManager(txn)->shutDown(txn);
     }
-
+    std::cout << "Calling dbexit" << std::endl;
     dbexit(code);
 }
 
 void dbexit(ExitCode rc, const char* why) {
+    std::cout << "In dbexit, logging shutdown..." << std::endl;
     audit::logShutdown(ClientBasic::getCurrent());
 
 #if defined(_WIN32)
@@ -164,6 +170,7 @@ void dbexit(ExitCode rc, const char* why) {
 #endif
 
     log() << "dbexit: " << why << " rc:" << rc;
+    std::cout << "Calling quickExit" << std::endl;
     quickExit(rc);
 }
 

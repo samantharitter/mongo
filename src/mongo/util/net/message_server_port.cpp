@@ -199,6 +199,7 @@ private:
      * @return NULL
      */
     static void* handleIncomingMsg(void* arg) {
+        std::cout << "0" << std::endl;
         TicketHolderReleaser connTicketReleaser(&Listener::globalTicketHolder);
         std::cout << "1" << std::endl;
         invariant(arg);
