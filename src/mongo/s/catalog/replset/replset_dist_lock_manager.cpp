@@ -87,25 +87,27 @@ void ReplSetDistLockManager::startUp() {
 }
 
 void ReplSetDistLockManager::shutDown(OperationContext* txn, bool allowNetworking) {
+    std::cout << "in ReplSetDistLockManager::shutDown" << std::endl;
     invariant(allowNetworking);
     {
         stdx::lock_guard<stdx::mutex> lk(_mutex);
         _isShutDown = true;
         _shutDownCV.notify_all();
     }
-
+    std::cout << "joining _execThread" << std::endl;
     // Don't grab _mutex, otherwise will deadlock trying to join. Safe to read
     // _execThread since it is modified only at statrUp().
     if (_execThread && _execThread->joinable()) {
         _execThread->join();
         _execThread.reset();
     }
-
+    std::cout << "stopping pings" << std::endl;
     auto status = _catalog->stopPing(txn, _processID);
     if (!status.isOK()) {
         warning() << "error encountered while cleaning up distributed ping entry for " << _processID
                   << causedBy(status);
     }
+    std::cout << "done with ReplSetDistLockManager::shutDown, returning" << std::endl;
 }
 
 std::string ReplSetDistLockManager::getProcessID() {
