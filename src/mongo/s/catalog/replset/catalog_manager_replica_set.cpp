@@ -127,7 +127,7 @@ Status CatalogManagerReplicaSet::startup(OperationContext* txn, bool allowNetwor
 }
 
 void CatalogManagerReplicaSet::shutDown(OperationContext* txn, bool allowNetworking) {
-    std::cout << "in CatalogManagerReplicaSet::shutDown" << std::endl;
+    LOG(1) << "in CatalogManagerReplicaSet::shutDown";
     invariant(allowNetworking);
     LOG(1) << "CatalogManagerReplicaSet::shutDown() called.";
     {
@@ -136,9 +136,9 @@ void CatalogManagerReplicaSet::shutDown(OperationContext* txn, bool allowNetwork
     }
 
     invariant(_distLockManager);
-    std::cout << "shutting down the _distLockManager" << std::endl;
+    LOG(1) << "shutting down the _distLockManager";
     _distLockManager->shutDown(txn, allowNetworking);
-    std::cout << "returning from CatalogManagerReplicaSet::shutDown" << std::endl;
+    LOG(1) << "returning from CatalogManagerReplicaSet::shutDown";
 }
 
 Status CatalogManagerReplicaSet::shardCollection(OperationContext* txn,
