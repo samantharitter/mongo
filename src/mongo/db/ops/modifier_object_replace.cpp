@@ -28,6 +28,7 @@
 
 #include "mongo/db/ops/modifier_object_replace.h"
 
+#include "mongo/base/data_view.h"
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/mutable/document.h"
 #include "mongo/db/global_timestamp.h"
@@ -48,13 +49,13 @@ Status fixupTimestamps(const BSONObj& obj) {
 
         // Skip _id field -- we do not replace it
         if (e.type() == bsonTimestamp && e.fieldNameStringData() != idFieldName) {
-            // TODO(emilkie): This is not endian-safe.
-            unsigned long long& timestamp =
-                *(reinterpret_cast<unsigned long long*>(const_cast<char*>(e.value())));
+            auto timestampView = DataView(const_cast<char*>(e.value()));
+            unsigned long long timestamp = timestampView.read<LittleEndian<unsigned long long>>();
+
             if (timestamp == 0) {
                 // performance note, this locks a mutex:
                 Timestamp ts(getNextGlobalTimestamp());
-                timestamp = ts.asULL();
+                timestampView.write<LittleEndian<unsigned long long>>(ts.asULL());
             }
         }
     }
