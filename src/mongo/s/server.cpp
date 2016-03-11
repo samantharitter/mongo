@@ -134,6 +134,10 @@ void exitCleanly(ExitCode code) {
     // Grab the shutdown lock to prevent concurrent callers
     stdx::lock_guard<stdx::mutex> lockguard(shutdownLock);
 
+    // let's just try closing all listening sockets
+    std::cout << "closing all listening sockets" << std::endl;
+    ListeningSockets::get()->closeAll();
+
     {
         std::cout << "Getting the operation context..." << std::endl;
         Client& client = cc();
@@ -353,7 +357,8 @@ static ExitCode runMongosServer() {
         return EXIT_NET_ERROR;
     }
     server->run();
-
+    std::cout << "server->run() has returned, going to exit." << std::endl;
+    std::cout << "are we currently in shutdown? " << inShutdown() << std::endl;
     // MessageServer::run will return when exit code closes its socket
     return inShutdown() ? EXIT_CLEAN : EXIT_NET_ERROR;
 }
