@@ -80,6 +80,7 @@
 #include "mongo/util/log.h"
 #include "mongo/util/net/hostname_canonicalization_worker.h"
 #include "mongo/util/net/message.h"
+#include "mongo/util/net/message_port.h"
 #include "mongo/util/net/message_server.h"
 #include "mongo/util/net/ssl_manager.h"
 #include "mongo/util/ntservice.h"
@@ -132,19 +133,34 @@ void exitCleanly(ExitCode code) {
     // Grab the shutdown lock to prevent concurrent callers
     stdx::lock_guard<stdx::mutex> lockguard(shutdownLock);
 
-    {
-        Client& client = cc();
-        ServiceContext::UniqueOperationContext uniqueTxn;
-        OperationContext* txn = client.getOperationContext();
-        if (!txn) {
-            uniqueTxn = client.makeOperationContext();
-            txn = uniqueTxn.get();
-        }
+    // Add things here from db server shutdown
+    try {
+        log(LogComponent::kNetwork) << "shutdown: going to close listening sockets...";
+        ListeningSockets::get()->closeAll();
 
-        auto cursorManager = grid.getCursorManager();
-        cursorManager->shutdown();
-        grid.shardRegistry()->shutdown();
-        grid.catalogManager(txn)->shutDown(txn);
+        // This, too
+        /* must do this before unmapping mem or you may get a seg fault */
+        log(LogComponent::kNetwork) << "shutdown: going to close sockets...";
+        stdx::thread close_socket_thread(stdx::bind(MessagingPort::closeAllSockets, 0));
+        close_socket_thread.detach();
+
+        // todo, should this be in the try-catch?
+        {
+            Client& client = cc();
+            ServiceContext::UniqueOperationContext uniqueTxn;
+            OperationContext* txn = client.getOperationContext();
+            if (!txn) {
+                uniqueTxn = client.makeOperationContext();
+                txn = uniqueTxn.get();
+            }
+
+            auto cursorManager = grid.getCursorManager();
+            cursorManager->shutdown();
+            grid.shardRegistry()->shutdown();
+            grid.catalogManager(txn)->shutDown(txn);
+        }
+    } catch (const std::exception& e) {
+        severe() << "shutdown failed with std::exception: " << e.what();
     }
 
     dbexit(code);
