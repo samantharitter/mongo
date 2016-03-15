@@ -119,6 +119,11 @@ void signalShutdown() {
     shutdownInProgress.fetchAndAdd(1);
 }
 
+// this flag lets mongos know that the listener has gotten the shutdown memo
+stdx::mutex listenerShutdownLock;
+bool listenerShutdown;
+stdx::condition_variable listenerShutdownCV;
+
 // shutdownLock
 //
 // Protects:
@@ -128,21 +133,44 @@ void signalShutdown() {
 stdx::mutex shutdownLock;
 
 void exitCleanly(ExitCode code) {
-    signalShutdown();
+    signalShutdown();  // same as db
+
+    // wait for the listener to shut down before continuing
+    {
+        stdx::unique_lock<stdx::mutex> lk(listenerShutdownLock);
+        while (!listenerShutdown) {
+            listenerShutdownCV.wait(lk);
+        }
+    }
 
     // Grab the shutdown lock to prevent concurrent callers
-    stdx::lock_guard<stdx::mutex> lockguard(shutdownLock);
+    stdx::lock_guard<stdx::mutex> lockguard(shutdownLock);  // same as db
+
+    // we don't stop FTDC, db does
+
+    // we don't check the global storange engine, db does
+
+    // we don't getGlobalServiceContext() and kill all ops, db does
+
+    // we don't shut down repl coordinator, db does
 
     // Add things here from db server shutdown
     try {
+        // serverShutdown, from db, does:
+
+        // db closes all listening sockets
         log(LogComponent::kNetwork) << "shutdown: going to close listening sockets...";
         ListeningSockets::get()->closeAll();
 
-        // This, too
+        // we don't flush diaglog, db does
+
+        // db does this to close all sockets
         /* must do this before unmapping mem or you may get a seg fault */
         log(LogComponent::kNetwork) << "shutdown: going to close sockets...";
         stdx::thread close_socket_thread(stdx::bind(MessagingPort::closeAllSockets, 0));
         close_socket_thread.detach();
+
+        // we don't drop js scope cache, db does
 
         // todo, should this be in the try-catch?
         {

@@ -1253,6 +1253,12 @@ static void shutdownServer() {
 //  No restrictions
 stdx::mutex shutdownLock;
 
+// need these for compile, maybe they should just go in exit.h?
+stdx::mutex listenerShutdownLock;
+bool listenerShutdown;
+stdx::condition_variable listenerShutdownCV;
+
+
 void signalShutdown() {
     // Notify all threads shutdown has started
     shutdownInProgress.fetchAndAdd(1);

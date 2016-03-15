@@ -46,6 +46,7 @@
 #include "mongo/util/concurrency/ticketholder.h"
 #include "mongo/util/debug_util.h"
 #include "mongo/util/exit.h"
+#include "mongo/util/exit_mongos.h"
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
 #include "mongo/util/net/listen.h"
@@ -105,6 +106,11 @@ public:
         : Listener("", opts.ipList, opts.port), _handler(handler) {}
 
     virtual void accepted(std::shared_ptr<Socket> psocket, long long connectionId) {
+        // SAM: check shutdown here?
+        if (inShutdown()) {
+            // set the
+        }
+
         ScopeGuard sleepAfterClosingPort = MakeGuard(sleepmillis, 2);
         std::unique_ptr<MessagingPortWithHandler> portWithHandler(
             new MessagingPortWithHandler(psocket, _handler, connectionId));
@@ -114,6 +120,8 @@ public:
                   << Listener::globalTicketHolder.used() << endl;
             return;
         }
+
+        // SAM: check shutdown here?
 
         try {
 #ifndef __linux__  // TODO: consider making this ifdef _WIN32
@@ -143,7 +151,7 @@ public:
                           << "KB. We suggest 1MB" << endl;
             }
 
-
+            // SAM: check shutdown here?
             pthread_t thread;
             int failed = pthread_create(&thread, &attrs, &handleIncomingMsg, portWithHandler.get());
 
@@ -247,7 +255,14 @@ private:
             error() << "Uncaught std::exception: " << e.what() << ", terminating" << endl;
             dbexit(EXIT_UNCAUGHT);
         }
+
+        // Shut down the listener and notify the server of shutdown
         portWithHandler->shutdown();
+        {
+            stdx::unique_lock<stdx::mutex> lk(listenerShutdownLock);
+            listenerShutdown = true;
+            listenerShutdownCV.notify_one();
+        }
 
 // Normal disconnect path.
 #ifdef MONGO_CONFIG_SSL
