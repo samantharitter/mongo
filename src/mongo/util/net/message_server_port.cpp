@@ -123,7 +123,26 @@ public:
         try {
 #ifndef __linux__  // TODO: consider making this ifdef _WIN32
             {
-	      log() << "about to detach thread and bind to handleIncomingMsg";
+                log() << "about to detach thread and bind to handleIncomingMsg";
+                // what is portWithHandler here?
+                // - a unique_ptr to a MessagingPortWithHandler, created using:
+                //   - psocket is a shared_ptr to a Socket
+                //   - _handler is a MessageHandler*
+                //   - connectionId is a long long id
+                // Could constructor for MessagingPortWithHandler ever throw an exception or error?
+                // Like,
+                // could we ever end up with a partially constructed one?
+                // That constructor:
+                // - inherits from MessagingPort, so we call its constructor with the shared socket
+                //   That constructor:
+                //   - Moves the shared socket in
+                //   - calls remoteAddr() on the socket to make a SockAddr sa
+                //   - makes a HostAndPort with sa.getAddr(), sa.getPort() (ex safe)
+                //   - inserts the new MessagingPort into ports, which is a global thing that holds
+                //     s std::set of MessaginPort*s, and insert will:
+                //     - take a lock that it holds (safe, I think?)
+                //     - call insert on the set (ex safe)
+                // - then we call setConnectionId
                 stdx::thread thr(stdx::bind(&handleIncomingMsg, portWithHandler.get()));
                 thr.detach();
             }
@@ -151,7 +170,7 @@ public:
 
             // SAM: check shutdown here?
             pthread_t thread;
-	    log() << "about to pthread_create a thread and bind to handleIncomingMsg";
+            log() << "about to pthread_create a thread and bind to handleIncomingMsg";
             int failed = pthread_create(&thread, &attrs, &handleIncomingMsg, portWithHandler.get());
 
             pthread_attr_destroy(&attrs);
@@ -205,14 +224,16 @@ private:
     static void* handleIncomingMsg(void* arg) {
         log() << "entering handleIncomingMsg()";
 
-	{
-	  stdx::unique_lock<stdx::mutex> lk(listenerShutdownLock);
-	  if (inShutdown()) return NULL; // asfsdkgjdfgl
-	  log() << "incrementing activeListeners (was " << activeListeners << ") from top of handleIncomingMsg";
-	  ++activeListeners;
-	  log() << "there are now " << activeListeners << " active listeners";
-	  // we don't notify here.
-	}
+        {
+            stdx::unique_lock<stdx::mutex> lk(listenerShutdownLock);
+            if (inShutdown())
+                return NULL;  // asfsdkgjdfgl
+            log() << "incrementing activeListeners (was " << activeListeners
+                  << ") from top of handleIncomingMsg";
+            ++activeListeners;
+            log() << "there are now " << activeListeners << " active listeners";
+            // we don't notify here.
+        }
 
         TicketHolderReleaser connTicketReleaser(&Listener::globalTicketHolder);
 
@@ -228,14 +249,17 @@ private:
         int64_t counter = 0;
         try {
             handler->connected(portWithHandler.get());
-            ON_BLOCK_EXIT([handler]() { log() << "block is exiting ON_BLOCK_EXIT"; handler->close(); });
+            ON_BLOCK_EXIT([handler]() {
+                log() << "block is exiting ON_BLOCK_EXIT";
+                handler->close();
+            });
 
             while (!inShutdown()) {
                 m.reset();
                 portWithHandler->psock->clearCounters();
 
                 if (!portWithHandler->recv(m)) {
-		  log() << "Receive error from portWithHandler";
+                    log() << "Receive error from portWithHandler";
                     if (!serverGlobalParams.quiet) {
                         int conns = Listener::globalTicketHolder.used() - 1;
                         const char* word = (conns == 1 ? " connection" : " connections");
@@ -268,18 +292,30 @@ private:
         }
 
         // Shut down the listener and notify the server of shutdown
-	log() << "shutting down the portWithHandler and notifying the cv, there are currently " << activeListeners << " active listeners";
+        log() << "shutting down the portWithHandler and notifying the cv, there are currently "
+              << activeListeners << " active listeners";
         portWithHandler->shutdown();
-	// what does this do?
+        // what does this do?
+        // portWithHandler is a unique_ptr to a MessagingPortWithHandler
+        // MessagingPortWithHandler::shutdown() ->
+        // MessagingPort::shutdown() -
+        //   - just calls psock->close() psock is a shared_ptr<Socket>
+        // Socket::close() ->
+        //   - calls closesocket
+        // I don't think it's this.
+
+        // What else checks inShutdown() ?
+
         {
-	  // instead of a boolean, we need a counter.
-	  // when does it get incremented?
+            // instead of a boolean, we need a counter.
+            // when does it get incremented?
             stdx::unique_lock<stdx::mutex> lk(listenerShutdownLock);
-            //listenerShutdown = true;
-	    --activeListeners;
+            // listenerShutdown = true;
+            --activeListeners;
             listenerShutdownCV.notify_one();
         }
-	log() << "done shutting down the portWithHandler, there are " << activeListeners << " active listeners remaining";
+        log() << "done shutting down the portWithHandler, there are " << activeListeners
+              << " active listeners remaining";
 
 // Normal disconnect path.
 #ifdef MONGO_CONFIG_SSL
