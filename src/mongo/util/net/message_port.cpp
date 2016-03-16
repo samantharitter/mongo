@@ -205,7 +205,8 @@ bool MessagingPort::recv(Message& m) {
         logger::LogSeverity severity = psock->getLogLevel();
         if (!e.shouldPrint())
             severity = severity.lessSevere();
-        LOG(severity) << "SocketException: remote: " << remote() << " error: " << e;
+	log() << "caught socket exception in MessagingPort::recv";
+        log() << "SocketException: remote: " << remote() << " error: " << e;
         m.reset();
         return false;
     }

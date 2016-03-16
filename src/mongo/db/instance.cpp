@@ -1256,6 +1256,7 @@ stdx::mutex shutdownLock;
 // need these for compile, maybe they should just go in exit.h?
 stdx::mutex listenerShutdownLock;
 bool listenerShutdown;
+  int activeListeners = 0;
 stdx::condition_variable listenerShutdownCV;
 
 

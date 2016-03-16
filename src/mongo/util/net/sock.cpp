@@ -806,6 +806,7 @@ void Socket::handleSendError(int ret, const char* context) {
 }
 
 void Socket::handleRecvError(int ret, int len) {
+  log() << "socket::handleRecvError";
     if (ret == 0) {
         LOG(3) << "Socket recv() conn closed? " << remoteString() << endl;
         throw SocketException(SocketException::CLOSED, remoteString());
@@ -831,11 +832,11 @@ void Socket::handleRecvError(int ret, int len) {
     if (e == EAGAIN && _timeout > 0) {
 #endif
         // this is a timeout
-        LOG(_logLevel) << "Socket recv() timeout  " << remoteString() << endl;
+        log() << "Socket recv() timeout  " << remoteString() << endl;
         throw SocketException(SocketException::RECV_TIMEOUT, remoteString());
     }
 
-    LOG(_logLevel) << "Socket recv() " << errnoWithDescription(e) << " " << remoteString() << endl;
+    log() << "Socket recv() " << errnoWithDescription(e) << " " << remoteString() << endl;
     throw SocketException(SocketException::RECV_ERROR, remoteString());
 }
 

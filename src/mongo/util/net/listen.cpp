@@ -560,6 +560,25 @@ void Listener::initAndListen() {
         if (from.getType() != AF_UNIX)
             disableNagle(s);
 
+	// SAM: do we want to check inShutdown one more time here?  Hole?
+	// it's a relaxed load anyway... hm.
+	// want to avoid this scenario:
+	// - there is one other active listener
+	// - in this loop above, we check inShutdown() and it's false
+	// - right after, server.cpp starts shutdown, sets it to true
+	// - server.cpp thread waits on activeListeners.
+	// - the other active listener exits and wakes up server.cpp
+	// - server.cpp cleans shit up
+	// - then we run! ah!
+	// {
+	//   stdx::unique_lock<stdx::mutex> lk(listenerShutdownLock);
+	//   if (inShutdown()) return; // asfsdkgjdfgl
+	//   log() << "incrementing activeListeners (was " << activeListeners << ") in the listen.cpp file";
+	//   ++activeListeners;
+	//   log() << "there are now " << activeListeners << " active listeners, accepting() this new connection";
+	//   // we don't notify here.
+	// }
+
         std::shared_ptr<Socket> pnewSock(new Socket(s, from));
 #ifdef MONGO_CONFIG_SSL
         if (_ssl) {
@@ -568,6 +587,8 @@ void Listener::initAndListen() {
 #endif
         accepted(pnewSock, myConnectionNumber);
     }
+    log() << "the listener has exited, from listen.cpp";
+    // SAM: failsafe, set active listeners to 0?  Will we still have active threads?
 }
 #endif
 

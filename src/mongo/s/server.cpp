@@ -121,7 +121,8 @@ void signalShutdown() {
 
 // this flag lets mongos know that the listener has gotten the shutdown memo
 stdx::mutex listenerShutdownLock;
-bool listenerShutdown;
+int activeListeners = 0;
+  //bool listenerShutdown;
 stdx::condition_variable listenerShutdownCV;
 
 // shutdownLock
@@ -137,10 +138,13 @@ void exitCleanly(ExitCode code) {
 
     // wait for the listener to shut down before continuing
     {
+      log() << "Waiting for the listener to shut down...";
         stdx::unique_lock<stdx::mutex> lk(listenerShutdownLock);
-        while (!listenerShutdown) {
+        while (activeListeners > 0) {
+	  log() << "There are currently " << activeListeners << " active listeners, waiting...";
             listenerShutdownCV.wait(lk);
         }
+	log() << "There are currently " << activeListeners << " active listeners! Proceeding with cleanup.";
     }
 
     // Grab the shutdown lock to prevent concurrent callers

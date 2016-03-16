@@ -32,6 +32,8 @@ namespace mongo {
 
 extern stdx::mutex listenerShutdownLock;
 
+extern int activeListeners;
+
 // True when the listener has begun to shutdown, false if still running
 extern bool listenerShutdown;
 

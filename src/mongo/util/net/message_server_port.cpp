@@ -107,9 +107,6 @@ public:
 
     virtual void accepted(std::shared_ptr<Socket> psocket, long long connectionId) {
         // SAM: check shutdown here?
-        if (inShutdown()) {
-            // set the
-        }
 
         ScopeGuard sleepAfterClosingPort = MakeGuard(sleepmillis, 2);
         std::unique_ptr<MessagingPortWithHandler> portWithHandler(
@@ -126,6 +123,7 @@ public:
         try {
 #ifndef __linux__  // TODO: consider making this ifdef _WIN32
             {
+	      log() << "about to detach thread and bind to handleIncomingMsg";
                 stdx::thread thr(stdx::bind(&handleIncomingMsg, portWithHandler.get()));
                 thr.detach();
             }
@@ -153,6 +151,7 @@ public:
 
             // SAM: check shutdown here?
             pthread_t thread;
+	    log() << "about to pthread_create a thread and bind to handleIncomingMsg";
             int failed = pthread_create(&thread, &attrs, &handleIncomingMsg, portWithHandler.get());
 
             pthread_attr_destroy(&attrs);
@@ -204,6 +203,17 @@ private:
      * @return NULL
      */
     static void* handleIncomingMsg(void* arg) {
+        log() << "entering handleIncomingMsg()";
+
+	{
+	  stdx::unique_lock<stdx::mutex> lk(listenerShutdownLock);
+	  if (inShutdown()) return NULL; // asfsdkgjdfgl
+	  log() << "incrementing activeListeners (was " << activeListeners << ") from top of handleIncomingMsg";
+	  ++activeListeners;
+	  log() << "there are now " << activeListeners << " active listeners";
+	  // we don't notify here.
+	}
+
         TicketHolderReleaser connTicketReleaser(&Listener::globalTicketHolder);
 
         invariant(arg);
@@ -218,13 +228,14 @@ private:
         int64_t counter = 0;
         try {
             handler->connected(portWithHandler.get());
-            ON_BLOCK_EXIT([handler]() { handler->close(); });
+            ON_BLOCK_EXIT([handler]() { log() << "block is exiting ON_BLOCK_EXIT"; handler->close(); });
 
             while (!inShutdown()) {
                 m.reset();
                 portWithHandler->psock->clearCounters();
 
                 if (!portWithHandler->recv(m)) {
+		  log() << "Receive error from portWithHandler";
                     if (!serverGlobalParams.quiet) {
                         int conns = Listener::globalTicketHolder.used() - 1;
                         const char* word = (conns == 1 ? " connection" : " connections");
@@ -257,12 +268,18 @@ private:
         }
 
         // Shut down the listener and notify the server of shutdown
+	log() << "shutting down the portWithHandler and notifying the cv, there are currently " << activeListeners << " active listeners";
         portWithHandler->shutdown();
+	// what does this do?
         {
+	  // instead of a boolean, we need a counter.
+	  // when does it get incremented?
             stdx::unique_lock<stdx::mutex> lk(listenerShutdownLock);
-            listenerShutdown = true;
+            //listenerShutdown = true;
+	    --activeListeners;
             listenerShutdownCV.notify_one();
         }
+	log() << "done shutting down the portWithHandler, there are " << activeListeners << " active listeners remaining";
 
 // Normal disconnect path.
 #ifdef MONGO_CONFIG_SSL
