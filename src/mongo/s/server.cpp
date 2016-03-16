@@ -122,7 +122,7 @@ void signalShutdown() {
 // this flag lets mongos know that the listener has gotten the shutdown memo
 stdx::mutex listenerShutdownLock;
 int activeListeners = 0;
-  //bool listenerShutdown;
+// bool listenerShutdown;
 stdx::condition_variable listenerShutdownCV;
 
 // shutdownLock
@@ -138,13 +138,14 @@ void exitCleanly(ExitCode code) {
 
     // wait for the listener to shut down before continuing
     {
-      log() << "Waiting for the listener to shut down...";
+        log() << "Waiting for the listener to shut down...";
         stdx::unique_lock<stdx::mutex> lk(listenerShutdownLock);
         while (activeListeners > 0) {
-	  log() << "There are currently " << activeListeners << " active listeners, waiting...";
+            log() << "There are currently " << activeListeners << " active listeners, waiting...";
             listenerShutdownCV.wait(lk);
         }
-	log() << "There are currently " << activeListeners << " active listeners! Proceeding with cleanup.";
+        log() << "There are currently " << activeListeners
+              << " active listeners! Proceeding with cleanup.";
     }
 
     // Grab the shutdown lock to prevent concurrent callers
@@ -227,6 +228,7 @@ static BSONObj buildErrReply(const DBException& ex) {
 
 class ShardedMessageHandler : public MessageHandler {
 public:
+    // MyMessageHandler doesn't have a virtual dtor
     virtual ~ShardedMessageHandler() {}
 
     virtual void connected(AbstractMessagingPort* p) {
@@ -273,6 +275,7 @@ public:
     }
 
     virtual void close() {
+        log() << "inside of ShardedMessageServer::close(), about to call Client::destroy()";
         Client::destroy();
     }
 };
@@ -388,13 +391,17 @@ static ExitCode runMongosServer() {
     opts.ipList = serverGlobalParams.bind_ip;
 
     ShardedMessageHandler handler;
-    MessageServer* server = createServer(opts, &handler);
+    // I think this might be the issue, handler is on the stack?
+    // SAM'S THEORY: this MessageHandler is gonna get destroyed when we need it.
+    // MessageServer* server = createServer(opts, &handler);
+    // THEORY PART 2: this will leak, but will not cause a "pure virtual fn" error
+    MessageServer* server = createServr(opts, new ShardedMessageHandler());
     server->setAsTimeTracker();
     if (!server->setupSockets()) {
         return EXIT_NET_ERROR;
     }
     server->run();
-
+    log() << "server->run() returned, we will now exit.";
     // MessageServer::run will return when exit code closes its socket
     return inShutdown() ? EXIT_CLEAN : EXIT_NET_ERROR;
 }

@@ -42,6 +42,12 @@ bool inShutdown() {
     return myShutdownInProgress.loadRelaxed() != 0;
 }
 
+// need these for compile, maybe they should just go in exit.h?
+stdx::mutex listenerShutdownLock;
+bool listenerShutdown;
+int activeListeners = 0;
+stdx::condition_variable listenerShutdownCV;
+
 namespace {
 
 const long long kSleepMillis = 5000;

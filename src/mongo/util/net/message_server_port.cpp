@@ -252,6 +252,9 @@ private:
             ON_BLOCK_EXIT([handler]() {
                 log() << "block is exiting ON_BLOCK_EXIT";
                 handler->close();
+                log() << "in the ON_BLOCK_EXIT, successfully called handler->close()";
+                // when does the handler get cleaned up?
+                // when is the handler created?
             });
 
             while (!inShutdown()) {

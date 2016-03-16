@@ -37,6 +37,7 @@
 #include <string>
 
 #include "mongo/client/dbclientinterface.h"
+#include "mongo/stdx/condition_variable.h"
 #include "mongo/util/exit_code.h"
 
 namespace mongo {
@@ -46,6 +47,12 @@ class Client;
 bool inShutdown() {
     return false;
 }
+
+// need these for compile, maybe they should just go in exit.h?
+stdx::mutex listenerShutdownLock;
+bool listenerShutdown;
+int activeListeners = 0;
+stdx::condition_variable listenerShutdownCV;
 
 class OperationContext;
 

@@ -79,6 +79,12 @@ bool inShutdown() {
     return shuttingDown;
 }
 
+// need these for compile, maybe they should just go in exit.h?
+stdx::mutex listenerShutdownLock;
+bool listenerShutdown;
+int activeListeners = 0;
+stdx::condition_variable listenerShutdownCV;
+
 void signalShutdown() {}
 
 DBClientBase* createDirectClient(OperationContext* txn) {

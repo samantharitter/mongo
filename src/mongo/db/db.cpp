@@ -458,6 +458,7 @@ static void _initAndListen(int listenPort) {
     options.port = listenPort;
     options.ipList = serverGlobalParams.bind_ip;
 
+    // SAM'S THEORY: this MyMessageHandler is gonna get leaked.
     MessageServer* server = createServer(options, new MyMessageHandler());
     server->setAsTimeTracker();
 
