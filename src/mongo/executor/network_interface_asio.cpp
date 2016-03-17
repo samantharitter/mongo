@@ -382,11 +382,23 @@ void NetworkInterfaceASIO::cancelAllCommands() {
 const auto kMaxTimerDuration = duration_cast<Milliseconds>(asio::steady_timer::duration::max());
 
 void NetworkInterfaceASIO::setAlarm(Date_t when, const stdx::function<void()>& action) {
+    log() << "in NetworkInterfaceASIO, scheduling an alarm to expire at " << when;
+
+    auto currentTime = now();
+    log() << "now is " << currentTime;
+    auto timerDuration = when - currentTime;
+    log() << "timerDuration (when - now) is " << timerDuration;
+    auto safeDuration = std::min(timerDuration, kMaxTimerDuration);
+    log() << "safe duration (no overflow) is " << safeDuration;
+    log() << "max timer duration is " << kMaxTimerDuration;
+
     // "alarm" must stay alive until it expires, hence the shared_ptr.
-    auto alarm = std::make_shared<asio::steady_timer>(_io_service,
-                                                      std::min(when - now(), kMaxTimerDuration));
-    alarm->async_wait([alarm, this, action](std::error_code ec) {
+    auto alarm = std::make_shared<asio::steady_timer>(_io_service, safeDuration);
+    alarm->async_wait([alarm, when, this, action](std::error_code ec) {
+        log() << "Timer set for " << when << " has expired";
+        log() << "the time is now " << now();
         if (!ec) {
+            log() << "no error condition";
             return action();
         } else if (ec != asio::error::operation_aborted) {
             // When the network interface is shut down, it will cancel all pending

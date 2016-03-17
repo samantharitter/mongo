@@ -250,6 +250,8 @@ StatusWith<TaskExecutor::CallbackHandle> ThreadPoolTaskExecutor::scheduleWorkAt(
         return cbHandle;
     }
     lk.unlock();
+
+    log() << "about to set an alarm to expire at " << when;
     _net->setAlarm(when,
                    [this, when, cbHandle] {
                        auto cbState =
@@ -257,7 +259,14 @@ StatusWith<TaskExecutor::CallbackHandle> ThreadPoolTaskExecutor::scheduleWorkAt(
                        if (cbState->canceled.load()) {
                            return;
                        }
-                       invariant(now() >= when);
+
+                       auto currentTime = now();
+                       if (currentTime >= when) {
+                           log() << "about to invariant, now is " << currentTime << ", when is "
+                                 << when;
+                           invariant(currentTime >= when);
+                       }
+
                        stdx::unique_lock<stdx::mutex> lk(_mutex);
                        if (cbState->canceled.load()) {
                            return;
