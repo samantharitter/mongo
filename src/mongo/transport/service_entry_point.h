@@ -43,16 +43,12 @@ class ServiceEntryPoint {
     MONGO_DISALLOW_COPYING(ServiceEntryPoint);
 
 public:
-    /**
-     * Construct a new ServiceEntryPoint.
-     */
-    ServiceEntryPoint() {}
-    virtual ~ServiceEntryPoint() {}
+    virtual ~ServiceEntryPoint() = default;
 
     /**
      * Begin running a new Session. This method returns immediately.
      */
-    virtual void startSession(Session session) = 0;
+    virtual void startSession(Session&& session) = 0;
 };
 
 }  // namespace mongo

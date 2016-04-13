@@ -33,7 +33,7 @@
 namespace mongo {
 
 /**
- * This POD type contains data needed to associate Messages with Endpoints
+ * This type contains data needed to associate Messages with Endpoints
  * (on the transport side) and Messages with Client objects (on the database side).
  */
 struct Session {

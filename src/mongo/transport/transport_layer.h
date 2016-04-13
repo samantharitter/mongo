@@ -31,8 +31,11 @@
 #include "mongo/base/status.h"
 #include "mongo/util/net/message.h"
 #include "mongo/transport/session.h"
+#include "mongo/transport/ticket.h"
 
 namespace mongo {
+
+namespace transport {
 
 /**
  * The TransportLayer moves Messages between transport::Endpoints and the database.
@@ -51,53 +54,86 @@ class TransportLayer {
     MONGO_DISALLOW_COPYING(TransportLayer);
 
 public:
-    /**
-     * Construct a new TransportLayer.
-     */
-    TransportLayer();
+    virtual ~TransportLayer() = default;
 
     /**
-     * Source (receive) a new Message for this Session. The new Message is placed in
-     * the given Message buffer.
+     * Source (receive) a new Message for this Session.
      *
-     * This method may be implemented in a blocking or non-blocking fashion. In either
-     * case, it returns a Deferred which may be immediately populated (if blocking) or
-     * populated in the future (if non-blocking). Callers should assume that this
-     * method may block.
+     * This method returns a work Ticket. The caller must complete the Ticket by
+     * passing it to either TransportLayer::wait() or TransportLayer::asyncWait().
      *
-     * If the TransportLayer is unable to source a Message, it will return a failed
-     * status, and the passed-in Message buffer may be left in an invalid state.
+     * If the given Session is invalid, the returned Ticket will contain an error
+     * status.
+     *
+     * Upon completion, the returned Ticket will be populated with a status. If the
+     * TransportLayer is unable to source a Message, this will be a failed status,
+     * and the passed-in Message buffer may be left in an invalid state.
      */
-    Deferred<Status> sourceMessage(Message& message, Session session);
+    virtual Ticket sourceMessage(Message& message, Session session) = 0;
 
     /**
      * Sink (send) a new Message for this Session. This method should be used
      * to send replies to a given host.
      *
-     * This method may be implemented in a blocking or non-blocking fashion. Callers
-     * should assume that this method may block.
+     * This method returns a work Ticket. The caller must complete the Ticket by
+     * passing it to either TransportLayer::wait() or TransportLayer::asyncWait().
      *
-     * This method does NOT take ownership of the sunk Message.
+     * If the given Session is invalid, the returned Ticket will contain an error
+     * status.
+     *
+     * Upon completion, the returned Ticket will be populated with a status. If the
+     * TransportLayer is unable to sink the given Message, this will be a failed status,
+     * and the passed-in Message buffer may be left in an invalid state.
+     *
+     * This method does NOT take ownership of the sunk Message, which must be cleaned
+     * up by the caller.
      */
-    void sinkMessage(Message& message, Session session);
+    virtual Ticket sinkMessage(Message& message, Session session) = 0;
 
     /**
-     * End the given Session. Any future calls to sourceMessage() or sinkMessage()
-     * for this Session will fail.
+     * Perform a synchronous wait on the given work Ticket. When this call returns,
+     * the Ticket will be populated with the results of its work.
+     *
+     * This thread may be used by the TransportLayer to run other Tickets that were
+     * enqueued prior to this call.
      */
-    void end(Session session);
+    virtual Status wait(Ticket&& ticket) = 0;
 
     /**
-     * End all active sessions in the TransportLayer.
+     * Callback for Tickets that are run via asyncWait().
      */
-    void endAllSessions();
+    using TicketCallback = stdx::function<void(Status)>;
+
+    /**
+     * Perform an asynchronous wait on the given work Ticket. Once the Ticket has been
+     * completed, the passed-in callback will be invoked.
+     *
+     * This thread will not be used by the TransportLayer to perform work. The callback
+     * passed to asyncWait() may be run on any thread.
+     */
+    virtual void asyncWait(Ticket&& ticket, TicketCallback callback) = 0;
+
+    /**
+     * End the given Session. Future calls to sourceMessage() or sinkMessage()
+     * for this Session will fail. Tickets for this Session that have already been
+     * started via wait() or asyncWait() will complete, but may return a failed status.
+     */
+    virtual void end(Session session) = 0;
+
+    /**
+     * End all active sessions in the TransportLayer. Tickets that have already been
+     * started via wait() or asyncWait() will complete, but may return a failed status.
+     */
+    virtual void endAllSessions() = 0;
 
     /**
      * Shut the TransportLayer down. After this point, the TransportLayer will
      * end all active sessions and won't accept new transport::Endpoints. Any
      * future calls to sourceMessage() or sinkMessage() will fail.
      */
-    void shutdown();
+    virtual void shutdown() = 0;
 };
+
+}  // namespace transport
 
 }  // namespace mongo

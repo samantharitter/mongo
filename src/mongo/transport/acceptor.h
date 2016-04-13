@@ -44,11 +44,7 @@ class Endpoint;
  */
 class Acceptor {
 public:
-    /**
-     * Construct a new Acceptor.
-     */
-    Acceptor() {}
-    virtual ~Acceptor();
+    virtual ~Acceptor() = default;
 
     /**
      * Callback that the Acceptor should invoke when it generates new Endpoints.
@@ -68,6 +64,6 @@ public:
     virtual void shutdown() = 0;
 };
 
-}  // transport
+}  // namespace transport
 
 }  // namespace mongo

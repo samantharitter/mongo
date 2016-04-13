@@ -28,6 +28,8 @@
 
 #pragma once
 
+#include "mongo/stdx/functional.h"
+#include "mongo/transport/session.h"
 #include "mongo/util/net/message.h"
 
 namespace mongo {
@@ -35,37 +37,30 @@ namespace mongo {
 namespace transport {
 
 /**
- * A transport Endpoint is a source and sink for Message objects.
- *
- * Endpoints are created by Acceptor objects and owned and managed by the
- * TransportLayer.
+ * A Ticket represents some work to be done within the TransportLayer.
+ * Run Tickets by passing them in a call to either TransportLayer::wait()
+ * or TransportLayer::asyncWait();
  */
-class Endpoint {
+class Ticket {
 public:
-    virtual ~Endpoint() = default;
-
     /**
-     * Callback for blocking work to be done on this endpoint.
+     * Return the current status for this Ticket.
      */
-    using WorkHandle = stdx::function<Status(Message&)>;
+    Status getStatus();
 
     /**
-     * Set up a work handle to Source (receive) a new Message from this Endpoint.
-     * When the handle is run, the new Message is placed in the given Message buffer.
-     * If the Endpoint is unable to source a Message, it will return a failed
-     * status, and the passed-in Message may be left in an invalid state.
+     * Run this ticket to completion. Afterwards, its status will be set.
      *
-     * The work handle returned by this method is blocking.
+     * This method should only be called by the TransportLayer.
      */
-    WorkHandle sourceMessage(Message& message) = 0;
+    void run();
 
-    /**
-     * Set up a work handle to sink (send) a new Message into this Endpoint.
-     * If the Endpoint is unable to sink the Message, it will return a failed status.
-     *
-     * The work handle returned by this method is blocking.
-     */
-    WorkHandle sinkMessage(const Message& message) = 0;
+private:
+    Status _status;
+    Session _session;
+    Message& _message;
+
+    Endpoint::WorkHandle _work;
 };
 
 }  // namespace transport
