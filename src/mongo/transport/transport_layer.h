@@ -30,7 +30,7 @@
 
 #include "mongo/base/status.h"
 #include "mongo/util/net/message.h"
-#include "mongo/util/net/session.h"
+#include "mongo/transport/session.h"
 
 namespace mongo {
 
