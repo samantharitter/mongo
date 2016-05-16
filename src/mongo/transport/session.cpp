@@ -26,68 +26,62 @@
  *    it in the license file.
  */
 
-#pragma once
+#include "mongo/platform/basic.h"
 
-#include "mongo/base/disallow_copying.h"
-#include "mongo/util/net/hostandport.h"
+#include "mongo/transport/session.h"
+
+#include "mongo/platform/atomic_word.h"
+#include "mongo/transport/transport_layer.h"
 
 namespace mongo {
 namespace transport {
 
-class TransportLayer;
+namespace {
 
-/**
- * This type contains data needed to associate Messages with connections
- * (on the transport side) and Messages with Client objects (on the database side).
- */
-class Session {
-    MONGO_DISALLOW_COPYING(Session);
+AtomicUInt64 sessionIdCounter(0);
 
-public:
-    /**
-     * Type to indicate the internal id for this session.
-     */
-    using SessionId = uint64_t;
+}  // namespace
 
-    /**
-     * Construct a new session.
-     */
-    Session(HostAndPort remote, HostAndPort local, TransportLayer* tl);
+Session::Session(HostAndPort remote, HostAndPort local, TransportLayer* tl)
+    : _id(sessionIdCounter.addAndFetch(1)), _remote(remote), _local(local), _tl(tl) {}
 
-    /**
-     * Destroys a session, calling end() for this session in its TransportLayer.
-     */
-    ~Session();
+Session::~Session() {
+    if (_tl != nullptr) {
+        invariant(_tl);
+        _tl->end(*this);
+    }
+}
 
-    /**
-     * Move constructor and assignment operator.
-     */
-    Session(Session&& other);
-    Session& operator=(Session&& other);
+Session::Session(Session&& other)
+    : _id(other._id),
+      _remote(std::move(other._remote)),
+      _local(std::move(other._local)),
+      _tl(other._tl) {
+    // We do not want to call tl->end() on moved-from Sessions.
+    other._tl = nullptr;
+}
 
-    /**
-     * Return the id for this session.
-     */
-    SessionId id() const;
+Session& Session::operator=(Session&& other) {
+    _id = other._id;
+    _remote = std::move(other._remote);
+    _local = std::move(other._local);
+    _tl = other._tl;
+    _tl = nullptr;
 
-    /**
-     * Return the remote host for this session.
-     */
-    const HostAndPort& remote() const;
+    return *this;
+}
 
-    /**
-     * Return the local host information for this session.
-     */
-    const HostAndPort& local() const;
+Session::SessionId Session::id() const {
+    return _id;
+}
 
-private:
-    SessionId _id;
+const HostAndPort& Session::remote() const {
+    return _remote;
+}
 
-    HostAndPort _remote;
-    HostAndPort _local;
-
-    TransportLayer* _tl;
-};
+const HostAndPort& Session::local() const {
+    return _local;
+}
 
 }  // namespace transport
 }  // namespace mongo
