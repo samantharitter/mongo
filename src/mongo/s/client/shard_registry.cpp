@@ -138,9 +138,12 @@ void ShardRegistry::updateReplSetHosts(const ConnectionString& newConnString) {
     _data.rebuildShardIfExists(newConnString, _shardFactory.get());
 }
 
+// remove
+#include <iostream>
+
 bool ShardRegistry::reload(OperationContext* txn) {
     stdx::unique_lock<stdx::mutex> reloadLock(_reloadMutex);
-
+    std::cout << "Reloading registry..." << std::endl;
     if (_reloadState == ReloadState::Reloading) {
         // Another thread is already in the process of reloading so no need to do duplicate work.
         // There is also an issue if multiple threads are allowed to call getAllShards()
@@ -151,6 +154,7 @@ bool ShardRegistry::reload(OperationContext* txn) {
         } while (_reloadState == ReloadState::Reloading);
 
         if (_reloadState == ReloadState::Idle) {
+            std::cout << "reloadState is are idle, returing false" << std::endl;
             return false;
         }
         // else proceed to reload since an error occured on the last reload attempt.
@@ -170,7 +174,7 @@ bool ShardRegistry::reload(OperationContext* txn) {
         _inReloadCV.notify_all();
     });
 
-
+    std::cout << "adding config shard" << std::endl;
     ShardRegistryData newData(txn, _shardFactory.get());
     newData.addConfigShard(_data.getConfigShard());
     _data.swap(newData);

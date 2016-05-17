@@ -55,7 +55,7 @@
 namespace mongo {
 
 using namespace transport;
-using namespace std::placeholders;
+using namespace stdx::placeholders;
 
 // using Harness = ServiceEntryPointTestSuite::MockTLHarness;
 using SessionId = Session::SessionId;
@@ -148,15 +148,33 @@ Status ServiceEntryPointTestSuite::MockTLHarness::wait(Ticket ticket) {
 }
 
 void ServiceEntryPointTestSuite::MockTLHarness::asyncWait(Ticket ticket, TicketCallback callback) {
-    return _asyncWait(std::move(ticket), std::move(callback));  // todo, std::forward?
+    return _asyncWait(std::move(ticket), std::move(callback));
+}
+
+std::string ServiceEntryPointTestSuite::MockTLHarness::getX509SubjectName(const Session& session) {
+    return "mock";
+}
+
+void ServiceEntryPointTestSuite::MockTLHarness::registerTags(const Session& session) {}
+
+int ServiceEntryPointTestSuite::MockTLHarness::numOpenSessions() {
+    return 0;
+}
+
+int ServiceEntryPointTestSuite::MockTLHarness::numAvailableSessions() {
+    return 0;
+}
+
+int ServiceEntryPointTestSuite::MockTLHarness::numCreatedSessions() {
+    return 0;
 }
 
 void ServiceEntryPointTestSuite::MockTLHarness::end(const Session& session) {
     return _end(session);
 }
 
-void ServiceEntryPointTestSuite::MockTLHarness::endAllSessions() {
-    return _endAllSessions();
+void ServiceEntryPointTestSuite::MockTLHarness::endAllSessions(Session::TagMask tags) {
+    return _endAllSessions(tags);
 }
 
 void ServiceEntryPointTestSuite::MockTLHarness::shutdown() {
@@ -183,13 +201,13 @@ Status ServiceEntryPointTestSuite::MockTLHarness::_waitOnceThenError(transport::
 Ticket ServiceEntryPointTestSuite::MockTLHarness::_defaultSource(const Session& s,
                                                                  Message* m,
                                                                  Date_t d) {
-    return Ticket(stdx::make_unique<ServiceEntryPointTestSuite::MockTicket>(s, m, d));
+    return Ticket(this, stdx::make_unique<ServiceEntryPointTestSuite::MockTicket>(s, m, d));
 }
 
 Ticket ServiceEntryPointTestSuite::MockTLHarness::_defaultSink(const Session& s,
                                                                const Message&,
                                                                Date_t d) {
-    return Ticket(stdx::make_unique<ServiceEntryPointTestSuite::MockTicket>(s, d));
+    return Ticket(this, stdx::make_unique<ServiceEntryPointTestSuite::MockTicket>(s, d));
 }
 
 Ticket ServiceEntryPointTestSuite::MockTLHarness::_sinkOnceThenError(const Session& s,
@@ -224,7 +242,7 @@ void ServiceEntryPointTestSuite::setServiceEntryPoint(ServiceEntryPointFactory f
 
 // Start a Session and error on get-Message
 void ServiceEntryPointTestSuite::noLifeCycleTest() {
-    std::promise<SessionId> testComplete;
+    stdx::promise<SessionId> testComplete;
     auto testFuture = testComplete.get_future();
 
     _tl->_resetHooks();
@@ -245,7 +263,7 @@ void ServiceEntryPointTestSuite::noLifeCycleTest() {
 
 // Partial cycle: get-Message, handle-Message, error on send-Message
 void ServiceEntryPointTestSuite::halfLifeCycleTest() {
-    std::promise<bool> testComplete;
+    stdx::promise<bool> testComplete;
     auto testFuture = testComplete.get_future();
 
     _tl->_resetHooks();
@@ -274,7 +292,7 @@ void ServiceEntryPointTestSuite::halfLifeCycleTest() {
 
 // Perform a full get-Message, handle-Message, send-Message cycle
 void ServiceEntryPointTestSuite::fullLifeCycleTest() {
-    std::promise<bool> testComplete;
+    stdx::promise<bool> testComplete;
     auto testFuture = testComplete.get_future();
 
     _tl->_resetHooks();
@@ -308,10 +326,10 @@ void ServiceEntryPointTestSuite::interruptingSessionTest() {
     stdx::mutex cvLock;
     stdx::condition_variable cv;
 
-    std::promise<bool> startB;
+    stdx::promise<bool> startB;
     auto startBFuture = startB.get_future();
 
-    std::promise<bool> testComplete;
+    stdx::promise<bool> testComplete;
     auto testFuture = testComplete.get_future();
 
     _tl->_resetHooks();
@@ -381,7 +399,7 @@ void ServiceEntryPointTestSuite::burstStressTest(int numSessions,
                                                  int numCycles,
                                                  Milliseconds delay) {
     AtomicWord<int> ended{0};
-    std::promise<bool> allSessionsComplete;
+    stdx::promise<bool> allSessionsComplete;
     auto allCompleteFuture = allSessionsComplete.get_future();
 
     stdx::mutex cyclesLock;

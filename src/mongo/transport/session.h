@@ -29,7 +29,9 @@
 #pragma once
 
 #include "mongo/base/disallow_copying.h"
+#include "mongo/transport/ticket.h"
 #include "mongo/util/net/hostandport.h"
+#include "mongo/util/net/message.h"
 
 namespace mongo {
 namespace transport {
@@ -48,6 +50,13 @@ public:
      * Type to indicate the internal id for this session.
      */
     using SessionId = uint64_t;
+
+    /**
+     * Tags for groups of connections.
+     */
+    using TagMask = unsigned;
+    static const TagMask kEmptyTagMask;
+    static const TagMask kKeepOpen;
 
     /**
      * Construct a new session.
@@ -80,11 +89,51 @@ public:
      */
     const HostAndPort& local() const;
 
+    /**
+     * Return the X509 subject name for this connection (SSL only).
+     */
+    std::string getX509SubjectName() const;
+
+    /**
+     * Set this session's tags. This Session will register
+     * its new tags with its TransportLayer.
+     */
+    void setTags(TagMask tags);
+
+    /**
+     * Get this session's tags.
+     */
+    TagMask getTags() const;
+
+    /**
+     * Source (receive) a new Message for this Session.
+     *
+     * This method will forward to sourceMessage on this Session's transport layer.
+     */
+    Ticket sourceMessage(Message* message, Date_t expiration = Ticket::kNoExpirationDate);
+
+    /**
+     * Sink (send) a new Message for this Session. This method should be used
+     * to send replies to a given host.
+     *
+     * This method will forward to sinkMessage on this Session's transport layer.
+     */
+    Ticket sinkMessage(const Message& message, Date_t expiration = Ticket::kNoExpirationDate);
+
+    /**
+     * The TransportLayer for this Session.
+     */
+    TransportLayer* getTransportLayer() const;
+
 private:
     SessionId _id;
 
     HostAndPort _remote;
     HostAndPort _local;
+
+    std::string _x509SubjectName;
+
+    TagMask _tags;
 
     TransportLayer* _tl;
 };

@@ -52,6 +52,9 @@ AtomicUInt32 shutdownFlag;
 std::stack<stdx::function<void()>> shutdownTasks;
 stdx::thread::id shutdownTasksThreadId;
 
+stdx::mutex waitForShutdownMutex;
+stdx::condition_variable waitForShutdownCV;
+
 void runTasks(decltype(shutdownTasks) tasks) {
     while (!tasks.empty()) {
         const auto& task = tasks.top();
@@ -69,6 +72,14 @@ MONGO_COMPILER_NORETURN void logAndQuickExit(ExitCode code) {
     quickExit(code);
 }
 
+void setShutdownFlag() {
+    {
+        stdx::lock_guard<stdx::mutex> lk(waitForShutdownMutex);
+        shutdownFlag.fetchAndAdd(1);
+    }
+    waitForShutdownCV.notify_all();
+}
+
 }  // namespace
 
 bool inShutdown() {
@@ -77,6 +88,11 @@ bool inShutdown() {
 
 bool inShutdownStrict() {
     return shutdownFlag.load() != 0;
+}
+
+void waitForShutdown() {
+    stdx::unique_lock<stdx::mutex> lk(waitForShutdownMutex);
+    waitForShutdownCV.wait(lk, [] { return inShutdown(); });
 }
 
 void registerShutdownTask(stdx::function<void()> task) {
@@ -105,7 +121,7 @@ void shutdown(ExitCode code) {
             logAndQuickExit(code);
         }
 
-        shutdownFlag.fetchAndAdd(1);
+        setShutdownFlag();
         shutdownTasksInProgress = true;
         shutdownTasksThreadId = stdx::this_thread::get_id();
 
@@ -133,7 +149,7 @@ void shutdownNoTerminate() {
         if (inShutdown())
             return;
 
-        shutdownFlag.fetchAndAdd(1);
+        setShutdownFlag();
         shutdownTasksInProgress = true;
         shutdownTasksThreadId = stdx::this_thread::get_id();
 

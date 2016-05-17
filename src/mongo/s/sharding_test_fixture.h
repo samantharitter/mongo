@@ -92,7 +92,7 @@ protected:
 
     executor::TaskExecutor* executor() const;
 
-    MessagingPortMock* getMessagingPort() const;
+    MessagingPortMock* getMessagingPort() const;  // can we remove?
 
     DistLockManagerMock* distLock() const;
 

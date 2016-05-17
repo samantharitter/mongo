@@ -30,7 +30,9 @@
 #include "mongo/platform/basic.h"
 
 #include "mongo/db/dbmessage.h"
+#include "mongo/db/operation_context.h"
 #include "mongo/platform/strnlen.h"
+#include "mongo/transport/session.h"
 
 namespace mongo {
 
@@ -42,7 +44,7 @@ string Message::toString() const {
     ss << "op: " << networkOpToString(operation()) << " len: " << size();
     if (operation() >= 2000 && operation() < 2100) {
         DbMessage d(*this);
-        ss << " ns: " << d.getns();
+        // TODO fix this? ss << " ns: " << d.getns();
         switch (operation()) {
             case dbUpdate: {
                 int flags = d.pullInt();
@@ -173,7 +175,7 @@ OpQueryReplyBuilder::OpQueryReplyBuilder() : _buffer(32768) {
     _buffer.skip(sizeof(QueryResult::Value));
 }
 
-void OpQueryReplyBuilder::send(AbstractMessagingPort* destination,
+void OpQueryReplyBuilder::send(transport::Session* session,
                                int queryResultFlags,
                                Message& requestMsg,
                                int nReturned,
@@ -181,12 +183,15 @@ void OpQueryReplyBuilder::send(AbstractMessagingPort* destination,
                                long long cursorId) {
     Message response;
     putInMessage(&response, queryResultFlags, nReturned, startingFrom, cursorId);
-    destination->reply(requestMsg, response, requestMsg.header().getId());
+
+    response.header().setId(nextMessageId());
+    response.header().setResponseToMsgId(requestMsg.header().getId());
+
+    uassertStatusOK(session->sinkMessage(response).wait());
 }
 
-void OpQueryReplyBuilder::sendCommandReply(AbstractMessagingPort* destination,
-                                           Message& requestMsg) {
-    send(destination, /*queryFlags*/ 0, requestMsg, /*nReturned*/ 1);
+void OpQueryReplyBuilder::sendCommandReply(transport::Session* session, Message& requestMsg) {
+    send(session, /*queryFlags*/ 0, requestMsg, /*nReturned*/ 1);
 }
 
 void OpQueryReplyBuilder::putInMessage(
@@ -203,7 +208,7 @@ void OpQueryReplyBuilder::putInMessage(
 }
 
 void replyToQuery(int queryResultFlags,
-                  AbstractMessagingPort* p,
+                  transport::Session* session,
                   Message& requestMsg,
                   const void* data,
                   int size,
@@ -212,15 +217,19 @@ void replyToQuery(int queryResultFlags,
                   long long cursorId) {
     OpQueryReplyBuilder reply;
     reply.bufBuilderForResults().appendBuf(data, size);
-    reply.send(p, queryResultFlags, requestMsg, nReturned, startingFrom, cursorId);
+    reply.send(session, queryResultFlags, requestMsg, nReturned, startingFrom, cursorId);
 }
 
 void replyToQuery(int queryResultFlags,
-                  AbstractMessagingPort* p,
+                  transport::Session* session,
                   Message& requestMsg,
                   const BSONObj& responseObj) {
-    replyToQuery(
-        queryResultFlags, p, requestMsg, (void*)responseObj.objdata(), responseObj.objsize(), 1);
+    replyToQuery(queryResultFlags,
+                 session,
+                 requestMsg,
+                 (void*)responseObj.objdata(),
+                 responseObj.objsize(),
+                 1);
 }
 
 void replyToQuery(int queryResultFlags, Message& m, DbResponse& dbresponse, BSONObj obj) {

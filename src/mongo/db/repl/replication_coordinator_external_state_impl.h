@@ -40,6 +40,7 @@
 #include "mongo/stdx/thread.h"
 
 namespace mongo {
+
 namespace repl {
 
 class SnapshotThread;

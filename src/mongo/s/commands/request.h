@@ -37,11 +37,15 @@ namespace mongo {
 class Client;
 class OperationContext;
 
+namespace transport {
+class Session;
+}  // namespace transport
+
 class Request {
     MONGO_DISALLOW_COPYING(Request);
 
 public:
-    Request(Message& m, AbstractMessagingPort* p);
+    Request(Message& m, transport::Session* session);
 
     const char* getns() const {
         return _d.getns();
@@ -71,8 +75,8 @@ public:
     DbMessage& d() {
         return _d;
     }
-    AbstractMessagingPort* p() const {
-        return _p;
+    transport::Session* session() {
+        return _session;
     }
 
     void process(OperationContext* txn, int attempt = 0);
@@ -84,7 +88,7 @@ private:
 
     Message& _m;
     DbMessage _d;
-    AbstractMessagingPort* const _p;
+    transport::Session* _session;
 
     int32_t _id;
 

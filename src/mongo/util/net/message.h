@@ -559,6 +559,10 @@ public:
         return _freeIt;
     }
 
+    const char* buf() const {
+        return _buf;
+    }
+
     char* buf() {
         return _buf;
     }

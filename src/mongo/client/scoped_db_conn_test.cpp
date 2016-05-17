@@ -44,7 +44,6 @@
 #include "mongo/util/fail_point_service.h"
 #include "mongo/util/log.h"
 #include "mongo/util/net/listen.h"
-#include "mongo/util/net/message_server.h"
 #include "mongo/util/net/socket_exception.h"
 #include "mongo/util/quick_exit.h"
 #include "mongo/util/time_support.h"
@@ -75,6 +74,7 @@ namespace {
 const string TARGET_HOST = "localhost:27017";
 const int TARGET_PORT = 27017;
 
+// TODO, fix.
 class DummyMessageHandler final : public MessageHandler {
 public:
     virtual void connected(AbstractMessagingPort* p) {}

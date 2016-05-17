@@ -26,40 +26,39 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
+#pragma once
 
-#include "mongo/transport/ticket.h"
-#include "mongo/transport/ticket_impl.h"
-#include "mongo/transport/transport_layer.h"
+#include <vector>
+
+#include "mongo/base/disallow_copying.h"
+#include "mongo/transport/service_entry_point.h"
 
 namespace mongo {
+
 namespace transport {
-
-const Date_t Ticket::kNoExpirationDate{Date_t::max()};
-
-Ticket::Ticket(TransportLayer* tl, std::unique_ptr<TicketImpl> ticket)
-    : _tl(tl), _ticket(std::move(ticket)) {}
-
-Ticket::~Ticket() = default;
-
-Ticket::Ticket(Ticket&&) = default;
-Ticket& Ticket::operator=(Ticket&&) = default;
-
-Session::SessionId Ticket::sessionId() const {
-    return _ticket->sessionId();
-}
-
-Date_t Ticket::expiration() const {
-    return _ticket->expiration();
-}
-
-TicketImpl* Ticket::impl() const {
-    return _ticket.get();
-}
-
-Status Ticket::wait() && {
-    return _tl->wait(std::move(*this));
-}
-
+class Session;
+class TransportLayer;
 }  // namespace transport
+
+/**
+ * The entry point from the TransportLayer into Mongos. startSession() spawns and
+ * detaches a new thread for each incoming connection (transport::Session).
+ */
+class ServiceEntryPointMongos : public ServiceEntryPoint {
+    MONGO_DISALLOW_COPYING(ServiceEntryPointMongos);
+
+public:
+    ServiceEntryPointMongos(transport::TransportLayer* tl);
+
+    virtual ~ServiceEntryPointMongos() = default;
+
+    void startSession(transport::Session&& session) override;
+
+private:
+    void _runSession(transport::Session&& session);
+    void _sessionLoop(transport::Session* session);
+
+    transport::TransportLayer* _tl;
+};
+
 }  // namespace mongo
