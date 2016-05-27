@@ -75,7 +75,7 @@ Session& Session::operator=(Session&& other) {
     return *this;
 }
 
-const Session::TagMask Session::kEmptyTagMask = 0xffffffff;
+const Session::TagMask Session::kEmptyTagMask = 0;
 const Session::TagMask Session::kKeepOpen = 1;
 
 Session::SessionId Session::id() const {

@@ -139,10 +139,12 @@ private:
      * Connection object, to associate Session ids with AbstractMessagingPorts.
      */
     struct Connection {
-        Connection(std::unique_ptr<AbstractMessagingPort> amp, bool ended, Session::TagMask tags)
-            : amp(std::move(amp)), ended(ended), tags(tags) {}
+        Connection(std::unique_ptr<AbstractMessagingPort> port, bool ended, Session::TagMask tags)
+            : amp(std::move(port)), connectionId(amp->connectionId()), ended(ended), tags(tags) {}
 
         std::unique_ptr<AbstractMessagingPort> amp;
+
+        const long long connectionId;
 
         boost::optional<std::string> x509SubjectName;
         bool ended;

@@ -197,12 +197,19 @@ void TransportLayerLegacy::_endSession_inlock(
 void TransportLayerLegacy::endAllSessions(Session::TagMask tags) {
     {
         stdx::lock_guard<stdx::mutex> lk(_connectionsMutex);
-        for (auto conn = _connections.begin(); conn != _connections.end(); conn++) {
+        auto&& conn = _connections.begin();
+        while (conn != _connections.end()) {
+            // If we erase this connection below, we invalidate our iterator, use a placeholder.
+            auto placeholder = conn;
+            placeholder++;
+
             if (conn->second.tags & tags) {
-                LOG(3) << "Skip closing connection # " << conn->second.amp->connectionId();
+                LOG(3) << "Skip closing connection for connection # " << conn->second.connectionId;
             } else {
                 _endSession_inlock(conn);
             }
+
+            conn = placeholder;
         }
     }
 }
