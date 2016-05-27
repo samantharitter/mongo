@@ -42,6 +42,9 @@
 namespace mongo {
 namespace repl {
 
+// remove
+#include <iostream>
+
 class CmdReplSetRequestVotes : public ReplSetCommand {
 public:
     CmdReplSetRequestVotes() : ReplSetCommand("replSetRequestVotes") {}
@@ -70,6 +73,8 @@ private:
         transport::Session* session = txn->getClient()->session();
         if (session) {
             originalTag = session->getTags();
+            std::cout << "attempting to set tags to keep open for session " << session->id()
+                      << std::endl;
             session->setTags(originalTag | transport::Session::kKeepOpen);
         }
 

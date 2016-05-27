@@ -745,6 +745,9 @@ bool isHeartbeatRequestV1(const BSONObj& cmdObj) {
 
 }  // namespace
 
+// remove
+#include <iostream>
+
 MONGO_FP_DECLARE(rsDelayHeartbeatResponse);
 
 /* { replSetHeartbeat : <setname> } */
@@ -776,6 +779,8 @@ public:
         transport::Session* session = txn->getClient()->session();
         if (session) {
             originalTag = session->getTags();
+            std::cout << "attempting to set tags to keep open for session " << session->id()
+                      << std::endl;
             session->setTags(originalTag | transport::Session::kKeepOpen);
         }
 

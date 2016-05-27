@@ -167,6 +167,7 @@ void ServiceEntryPointMongod::_sessionLoop(Session* session) {
 
             // If this is an exhaust cursor, don't source more Messages
             if (dbresponse.exhaustNS.size() > 0 && setExhaustMessage(&inMessage, dbresponse)) {
+                log() << "we are in exhaust";
                 inExhaust = true;
             } else {
                 inExhaust = false;

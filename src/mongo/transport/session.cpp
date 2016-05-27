@@ -94,7 +94,15 @@ std::string Session::getX509SubjectName() const {
     return _tl->getX509SubjectName(*this);
 }
 
+// remove
+#include <iostream>
+
 void Session::setTags(TagMask tags) {
+    std::string name = "empty";
+    if (tags & kKeepOpen)
+        name = "keep open";
+
+    std::cout << "setting tags for session " << _id << " (" << name << ")" << std::endl;
     _tags = tags;
     _tl->registerTags(*this);
 }

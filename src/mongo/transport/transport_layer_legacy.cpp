@@ -195,6 +195,7 @@ void TransportLayerLegacy::_endSession_inlock(
 }
 
 void TransportLayerLegacy::endAllSessions(Session::TagMask tags) {
+    log() << "transport layer, ending all sessions";
     {
         stdx::lock_guard<stdx::mutex> lk(_connectionsMutex);
         auto&& conn = _connections.begin();
@@ -204,7 +205,7 @@ void TransportLayerLegacy::endAllSessions(Session::TagMask tags) {
             placeholder++;
 
             if (conn->second.tags & tags) {
-                LOG(3) << "Skip closing connection for connection # " << conn->second.connectionId;
+                log() << "Skip closing connection for connection # " << conn->second.connectionId;
             } else {
                 _endSession_inlock(conn);
             }
