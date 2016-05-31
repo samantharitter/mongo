@@ -48,6 +48,14 @@ class Client;
 class OperationContext;
 class OpObserver;
 
+namespace transport {
+class Session;
+class TransportLayer;
+class TransportLayerManager;
+}  // namespace transport
+
+typedef long long ConnectionId;
+
 /**
  * Classes that implement this interface can receive notification on killOp.
  *
@@ -207,9 +215,9 @@ public:
      *
      * The "desc" string is used to set a descriptive name for the client, used in logging.
      *
-     * If supplied, "p" is the communication channel used for communicating with the client.
+     * If supplied, "session" is the transport::Session used for communicating with the client.
      */
-    UniqueClient makeClient(std::string desc, AbstractMessagingPort* p = nullptr);
+    UniqueClient makeClient(std::string desc, transport::Session* session = nullptr);
 
     /**
      * Creates a new OperationContext on "client".
@@ -299,6 +307,22 @@ public:
     void registerKillOpListener(KillOpListenerInterface* listener);
 
     //
+    // Network.
+    //
+
+    /**
+     * Get the master TransportLayer. Routes to any other TransportLayers that
+     * may be in use within this service.
+     */
+    transport::TransportLayer* getTransportLayer() const;
+
+    /**
+     * Add a new TransportLayer to this service context. The new TransportLayer will
+     * be added to the TransportLayerManager accessible via getTransportLayer().
+     */
+    void addTransportLayer(std::unique_ptr<transport::TransportLayer> tl);
+
+    //
     // Global OpObserver.
     //
 
@@ -368,6 +392,11 @@ private:
      */
     void _killOperation_inlock(OperationContext* opCtx, ErrorCodes::Error killCode);
 
+
+    /**
+     * The TransportLayerManager.
+     */
+    std::unique_ptr<transport::TransportLayerManager> _transportLayerManager;
 
     /**
      * Vector of registered observers.

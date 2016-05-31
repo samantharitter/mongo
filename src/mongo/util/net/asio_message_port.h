@@ -77,6 +77,7 @@ public:
     void reply(Message& received, Message& response) override;
 
     void say(Message& toSend, int responseTo = 0) override;
+    void say(const Message& toSend) override;
 
     void send(const char* data, int len, const char*) override;
     void send(const std::vector<std::pair<char*, int>>& data, const char*) override;

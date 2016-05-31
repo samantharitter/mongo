@@ -34,8 +34,8 @@
 #include <string>
 #include <vector>
 
-
 #include "mongo/db/client.h"
+#include "mongo/transport/session.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/ntservice.h"
 #include "mongo/util/text.h"
@@ -122,6 +122,6 @@ TEST(NtService, RegressionSERVER_7252) {
 
 // CRUTCHES!
 namespace mongo {
-void Client::initThread(const char* desc, AbstractMessagingPort* mp) {}
+void Client::initThread(const char* desc, transport::Session* session) {}
 void removeControlCHandler() {}
 }  // namespace mongo

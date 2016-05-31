@@ -219,6 +219,7 @@ bool MessagingPort::call(Message& toSend, Message& response) {
     say(toSend);
     bool success = recv(response);
     if (success) {
+        verify(!response.empty());
         if (response.header().getResponseToMsgId() != toSend.header().getId()) {
             response.reset();
             uasserted(40134, "Response ID did not match the sent message ID.");
@@ -228,9 +229,20 @@ bool MessagingPort::call(Message& toSend, Message& response) {
 }
 
 void MessagingPort::say(Message& toSend, int responseTo) {
-    verify(!toSend.empty());
+    invariant(!toSend.empty());
     toSend.header().setId(nextMessageId());
     toSend.header().setResponseToMsgId(responseTo);
+
+    auto buf = toSend.buf();
+    if (buf) {
+        send(buf, MsgData::ConstView(buf).getLen(), "say");
+    } else {
+        send(toSend.dataBuffers(), "say");
+    }
+}
+
+void MessagingPort::say(const Message& toSend) {
+    invariant(!toSend.empty());
     auto buf = toSend.buf();
     if (buf) {
         send(buf, MsgData::ConstView(buf).getLen(), "say");

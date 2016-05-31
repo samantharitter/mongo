@@ -38,9 +38,10 @@
 
 #include "mongo/base/init.h"
 #include "mongo/db/commands/server_status.h"
+#include "mongo/db/service_context.h"
+#include "mongo/transport/transport_layer.h"
 #include "mongo/util/concurrency/synchronization.h"
 #include "mongo/util/log.h"
-#include "mongo/util/net/listen.h"
 
 namespace mongo {
 
@@ -58,7 +59,7 @@ stdx::mutex tcmallocCleanupLock;
  *  favorable times. Ideally would do some milder cleanup or scavenge...
  */
 void threadStateChange() {
-    if (Listener::globalTicketHolder.used() <= kManyClients)
+    if (getGlobalServiceContext()->getTransportLayer()->numOpenSessions() <= kManyClients)
         return;
 
 #if MONGO_HAVE_GPERFTOOLS_GET_THREAD_CACHE_SIZE

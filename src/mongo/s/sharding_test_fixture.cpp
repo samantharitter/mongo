@@ -92,7 +92,7 @@ void ShardingTestFixture::setUp() {
     _service->setPreciseClockSource(stdx::make_unique<ClockSourceMock>());
     _service->setTickSource(stdx::make_unique<TickSourceMock>());
     _messagePort = stdx::make_unique<MessagingPortMock>();
-    _client = _service->makeClient("ShardingTestFixture", _messagePort.get());
+    _client = _service->makeClient("ShardingTestFixture", nullptr); // TODO fix this.
     _opCtx = _client->makeOperationContext();
 
     // Set up executor pool used for most operations.

@@ -66,6 +66,7 @@ public:
     bool call(Message& toSend, Message& response) override;
 
     void say(Message& toSend, int responseTo = 0) override;
+    void say(const Message& toSend) override;
 
     unsigned remotePort() const override {
         return _psock->remotePort();

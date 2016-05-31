@@ -32,6 +32,7 @@
 
 #include "mongo/config.h"
 #include "mongo/logger/log_severity.h"
+#include "mongo/stdx/functional.h"
 #include "mongo/util/net/message.h"
 #include "mongo/util/net/sockaddr.h"
 #include "mongo/util/time_support.h"
@@ -54,7 +55,7 @@ public:
     /**
      * Used when closing sockets. This value will not close any tagged sockets.
      */
-    static const Tag kSkipAllMask = 0xffffffff;
+    static const Tag kSkipAllMask;
 
     /**
      * Sets the maximum amount of time (in ms) to wait for io operations to run.
@@ -86,6 +87,11 @@ public:
      * Sends the message.
      */
     virtual void say(Message& toSend, int responseTo = 0) = 0;
+
+    /**
+     * Sends the message (does not set headers).
+     */
+    virtual void say(const Message& toSend) = 0;
 
     /**
      * Sends the data over the socket.

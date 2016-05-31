@@ -425,6 +425,16 @@ void ASIOMessagingPort::say(Message& toSend, int responseTo) {
     }
 }
 
+void ASIOMessagingPort::say(const Message& toSend) {
+    invariant(!toSend.empty());
+    auto buf = toSend.buf();
+    if (buf) {
+        send(buf, MsgData::ConstView(buf).getLen(), nullptr);
+    } else {
+        send(toSend.dataBuffers(), nullptr);
+    }
+}
+
 unsigned ASIOMessagingPort::remotePort() const {
     return _remote.port();
 }
