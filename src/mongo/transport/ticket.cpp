@@ -30,13 +30,15 @@
 
 #include "mongo/transport/ticket.h"
 #include "mongo/transport/ticket_impl.h"
+#include "mongo/transport/transport_layer.h"
 
 namespace mongo {
 namespace transport {
 
 const Date_t Ticket::kNoExpirationDate{Date_t::max()};
 
-Ticket::Ticket(std::unique_ptr<TicketImpl> ticket) : _ticket(std::move(ticket)) {}
+Ticket::Ticket(TransportLayer* tl, std::unique_ptr<TicketImpl> ticket)
+    : _tl(tl), _ticket(std::move(ticket)) {}
 
 Ticket::~Ticket() = default;
 
@@ -51,9 +53,12 @@ Date_t Ticket::expiration() const {
     return _ticket->expiration();
 }
 
-// TODO should this actually be const?
 TicketImpl* Ticket::impl() const {
     return _ticket.get();
+}
+
+Status Ticket::wait()&& {
+    return _tl->wait(std::move(*this));
 }
 
 }  // namespace transport

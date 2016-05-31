@@ -29,13 +29,13 @@
 #pragma once
 
 #include "mongo/base/disallow_copying.h"
-#include "mongo/transport/session.h"
 #include "mongo/util/time_support.h"
 
 namespace mongo {
 namespace transport {
 
 class TicketImpl;
+class TransportLayer;
 
 /**
  * A Ticket represents some work to be done within the TransportLayer.
@@ -48,14 +48,14 @@ class Ticket {
 public:
     friend class TransportLayer;
 
-    using SessionId = Session::SessionId;
+    using SessionId = uint64_t;
 
     /**
      * Indicates that there is no expiration time by when a ticket needs to complete.
      */
     static const Date_t kNoExpirationDate;
 
-    Ticket(std::unique_ptr<TicketImpl> ticket);
+    Ticket(TransportLayer* tl, std::unique_ptr<TicketImpl> ticket);
     ~Ticket();
 
     /**
@@ -74,6 +74,11 @@ public:
      */
     Date_t expiration() const;
 
+    /**
+     * Wait for this ticket to be filled.
+     */
+    Status wait() &&;
+
 protected:
     /**
      * Return a non-owning pointer to the underlying TicketImpl type
@@ -81,6 +86,7 @@ protected:
     TicketImpl* impl() const;
 
 private:
+    TransportLayer* _tl;
     std::unique_ptr<TicketImpl> _ticket;
 };
 

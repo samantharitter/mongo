@@ -43,7 +43,11 @@ AtomicUInt64 sessionIdCounter(0);
 }  // namespace
 
 Session::Session(HostAndPort remote, HostAndPort local, TransportLayer* tl)
-    : _id(sessionIdCounter.addAndFetch(1)), _remote(remote), _local(local), _tl(tl) {}
+    : _id(sessionIdCounter.addAndFetch(1)),
+      _remote(remote),
+      _local(local),
+      _tags(kEmptyTagMask),
+      _tl(tl) {}
 
 Session::~Session() {
     if (_tl != nullptr) {
@@ -71,6 +75,9 @@ Session& Session::operator=(Session&& other) {
     return *this;
 }
 
+const Session::TagMask Session::kEmptyTagMask = 0;
+const Session::TagMask Session::kKeepOpen = 1;
+
 Session::SessionId Session::id() const {
     return _id;
 }
@@ -81,6 +88,31 @@ const HostAndPort& Session::remote() const {
 
 const HostAndPort& Session::local() const {
     return _local;
+}
+
+std::string Session::getX509SubjectName() const {
+    return _tl->getX509SubjectName(*this);
+}
+
+void Session::setTags(TagMask tags) {
+    _tags = tags;
+    _tl->registerTags(*this);
+}
+
+Session::TagMask Session::getTags() const {
+    return _tags;
+}
+
+Ticket Session::sourceMessage(Message* message, Date_t expiration) {
+    return _tl->sourceMessage(*this, message, expiration);
+}
+
+Ticket Session::sinkMessage(const Message& message, Date_t expiration) {
+    return _tl->sinkMessage(*this, message, expiration);
+}
+
+TransportLayer* Session::getTransportLayer() const {
+    return _tl;
 }
 
 }  // namespace transport

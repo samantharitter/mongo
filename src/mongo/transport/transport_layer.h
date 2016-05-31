@@ -28,6 +28,8 @@
 
 #pragma once
 
+#include <boost/optional.hpp>
+
 #include "mongo/base/status.h"
 #include "mongo/stdx/functional.h"
 #include "mongo/transport/session.h"
@@ -118,6 +120,39 @@ public:
     virtual void asyncWait(Ticket ticket, TicketCallback callback) = 0;
 
     /**
+     * Tag this Session within the TransportLayer with the tags currently assigned to the
+     * Session. If endAllSessions() is called with a matching
+     * Session::TagMask, this Session will not be ended.
+     *
+     * Before calling this method, use Session::setTags() to set the desired TagMask.
+     */
+    virtual void registerTags(const Session& session) = 0;
+
+    /**
+     * Return the stored X509 subject name for this session. If the session does not
+     * exist in this TransportLayer, returns "".
+     */
+    virtual std::string getX509SubjectName(const Session& session) = 0;
+
+    /**
+     * Returns the number of sessions currently open in the transport layer.
+     */
+    virtual int numOpenSessions() = 0;
+
+    /**
+     * Returns the number of available sessions we could still open. Only relevant
+     * when we are operating under a transport::Session limit (for example, in the
+     * legacy implementation, we respect a maximum number of connections). If there
+     * is no session limit, returns std::numeric_limits<int>.
+     */
+    virtual int numAvailableSessions() = 0;
+
+    /**
+     * Returns the total number of sessions that have been created by this TransportLayer.
+     */
+    virtual int numCreatedSessions() = 0;
+
+    /**
      * End the given Session. Tickets for this Session that have already been
      * started via wait() or asyncWait() will complete, but may return a failed Status.
      * Future calls to wait() or asyncWait() for this Session will fail. If this
@@ -134,8 +169,11 @@ public:
      * End all active sessions in the TransportLayer. Tickets that have already been
      * started via wait() or asyncWait() will complete, but may return a failed Status.
      * This method is synchronous and will not return until all sessions have ended.
+     *
+     * If a TagMask is provided, endAllSessions() will skip over sessions with matching
+     * tags and leave them open.
      */
-    virtual void endAllSessions() = 0;
+    virtual void endAllSessions(Session::TagMask tags = Session::kEmptyTagMask) = 0;
 
     /**
      * Shut the TransportLayer down. After this point, the TransportLayer will
