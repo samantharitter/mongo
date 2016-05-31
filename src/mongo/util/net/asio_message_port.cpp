@@ -54,40 +54,6 @@ const char kGET[] = "GET";
 const int kHeaderLen = sizeof(MSGHEADER::Value);
 const int kInitialMessageSize = 1024;
 
-class ASIOPorts {
-public:
-    void closeAll(AbstractMessagingPort::Tag skipMask) {
-        stdx::lock_guard<stdx::mutex> lock_guard(mutex);
-        for (auto&& port : _portSet) {
-            if (port->getTag() & skipMask) {
-                LOG(3) << "Skip closing connection # " << port->connectionId();
-                continue;
-            }
-            LOG(3) << "Closing connection # " << port->connectionId();
-            port->shutdown();
-        }
-    }
-
-    void insert(ASIOMessagingPort* p) {
-        stdx::lock_guard<stdx::mutex> lock_guard(mutex);
-        _portSet.insert(p);
-    }
-
-    void erase(ASIOMessagingPort* p) {
-        stdx::lock_guard<stdx::mutex> lock_guard(mutex);
-        _portSet.erase(p);
-    }
-
-private:
-    stdx::mutex mutex;
-    std::unordered_set<ASIOMessagingPort*> _portSet;
-};
-
-// We "new" this so it will still be around when other automatic global vars are being destructed
-// during termination. TODO: This is an artifact from MessagingPort and should be removed when we
-// decide where to put networking global state.
-ASIOPorts& asioPorts = *(new ASIOPorts());
-
 #ifdef MONGO_CONFIG_SSL
 struct ASIOSSLContextPair {
     ASIOSSLContext server;
@@ -108,10 +74,6 @@ MONGO_INITIALIZER_WITH_PREREQUISITES(ASIOSSLContextSetup, ("SSLManager"))(Initia
 #endif
 
 }  // namespace
-
-void ASIOMessagingPort::closeSockets(AbstractMessagingPort::Tag skipMask) {
-    asioPorts.closeAll(skipMask);
-}
 
 ASIOMessagingPort::ASIOMessagingPort(int fd, SockAddr farEnd)
     : _service(),
@@ -146,7 +108,6 @@ ASIOMessagingPort::ASIOMessagingPort(int fd, SockAddr farEnd)
                                            farEnd.getType() == AF_UNIX ? 0 : IPPROTO_TCP),
             fd) {
 #endif  // MONGO_CONFIG_SSL
-    asioPorts.insert(this);
     _remote = HostAndPort(farEnd.getAddr(), farEnd.getPort());
     _timer.expires_at(decltype(_timer)::time_point::max());
     _setTimerCallback();
@@ -178,7 +139,6 @@ ASIOMessagingPort::ASIOMessagingPort(Milliseconds timeout, logger::LogSeverity l
 #else
       _sock(_service) {
 #endif  // MONGO_CONFIG_SSL
-    asioPorts.insert(this);
     if (*_timeout == Milliseconds(0)) {
         _timeout = boost::none;
     }
@@ -188,7 +148,6 @@ ASIOMessagingPort::ASIOMessagingPort(Milliseconds timeout, logger::LogSeverity l
 
 ASIOMessagingPort::~ASIOMessagingPort() {
     shutdown();
-    asioPorts.erase(this);
 }
 
 void ASIOMessagingPort::setTimeout(Milliseconds millis) {

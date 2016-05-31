@@ -644,11 +644,6 @@ void Listener::checkTicketNumbers() {
     globalTicketHolder.resize(want);
 }
 
-void Listener::closeMessagingPorts(AbstractMessagingPort::Tag skipMask) {
-    ASIOMessagingPort::closeSockets(skipMask);
-    MessagingPort::closeSockets(skipMask);
-}
-
 TicketHolder Listener::globalTicketHolder(DEFAULT_MAX_CONN);
 AtomicInt64 Listener::globalConnectionNumber;
 

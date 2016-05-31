@@ -143,11 +143,6 @@ private:
     long long _connectionId;
     AbstractMessagingPort::Tag _tag;
     std::shared_ptr<Socket> _psock;
-
-
-public:
-    static void closeSockets(AbstractMessagingPort::Tag skipMask = kSkipAllMask);
 };
-
 
 }  // namespace mongo

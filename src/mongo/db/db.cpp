@@ -123,7 +123,6 @@
 #include "mongo/util/log.h"
 #include "mongo/util/net/hostname_canonicalization_worker.h"
 #include "mongo/util/net/listen.h"
-#include "mongo/util/net/message_server.h"
 #include "mongo/util/net/ssl_manager.h"
 #include "mongo/util/ntservice.h"
 #include "mongo/util/options_parser/startup_options.h"
@@ -167,63 +166,6 @@ ntservice::NtServiceDefaultStrings defaultServiceStrings = {
 #endif
 
 Timer startupSrandTimer;
-
-class MyMessageHandler : public MessageHandler {
-public:
-    virtual void connected(AbstractMessagingPort* p) {
-        Client::initThread("conn", p);
-    }
-
-    virtual void process(Message& m, AbstractMessagingPort* port) {
-        while (true) {
-            if (inShutdown()) {
-                log() << "got request after shutdown()" << endl;
-                break;
-            }
-
-            DbResponse dbresponse;
-            {
-                auto opCtx = getGlobalServiceContext()->makeOperationContext(&cc());
-                assembleResponse(opCtx.get(), m, dbresponse, port->remote());
-
-                // opCtx must go out of scope here so that the operation cannot show up in currentOp
-                // results after the response reaches the client
-            }
-
-            if (!dbresponse.response.empty()) {
-                port->reply(m, dbresponse.response, dbresponse.responseToMsgId);
-                if (dbresponse.exhaustNS.size() > 0) {
-                    MsgData::View header = dbresponse.response.header();
-                    QueryResult::View qr = header.view2ptr();
-                    long long cursorid = qr.getCursorId();
-                    if (cursorid) {
-                        verify(dbresponse.exhaustNS.size() && dbresponse.exhaustNS[0]);
-                        string ns = dbresponse.exhaustNS;  // before reset() free's it...
-                        m.reset();
-                        BufBuilder b(512);
-                        b.appendNum((int)0 /*size set later in appendData()*/);
-                        b.appendNum(header.getId());
-                        b.appendNum(header.getResponseToMsgId());
-                        b.appendNum((int)dbGetMore);
-                        b.appendNum((int)0);
-                        b.appendStr(ns);
-                        b.appendNum((int)0);  // ntoreturn
-                        b.appendNum(cursorid);
-                        m.appendData(b.buf(), b.len());
-                        b.decouple();
-                        DEV log() << "exhaust=true sending more";
-                        continue;  // this goes back to top loop
-                    }
-                }
-            }
-            break;
-        }
-    }
-
-    virtual void close() {
-        Client::destroy();
-    }
-};
 
 static void logStartup(OperationContext* txn) {
     BSONObjBuilder toLog;

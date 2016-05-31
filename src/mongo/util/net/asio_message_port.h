@@ -118,8 +118,6 @@ public:
 
     bool secure(SSLManagerInterface* ssl, const std::string& remoteHost) override;
 
-    static void closeSockets(AbstractMessagingPort::Tag skipMask = kSkipAllMask);
-
 private:
     void _setTimerCallback();
     asio::error_code _read(char* buf, std::size_t size);
