@@ -13,16 +13,25 @@ env.CppUnitTest(
 )
 
 env.Library(
-    target='service_entry_point_test_suite',
+    target='transport_layer_common',
     source=[
-        'service_entry_point_test_suite.cpp',
         'session.cpp',
         'ticket.cpp',
-        'transport_layer.cpp',
+        'transport_layer.cpp'
     ],
     LIBDEPS=[
         '$BUILD_DIR/mongo/util/foundation',
         '$BUILD_DIR/mongo/util/net/network',
+    ],
+)
+
+env.Library(
+    target='transport_layer_manager',
+    source=[
+        'transport_layer_manager.cpp',
+    ],
+    LIBDEPS=[
+        'transport_layer_common',
     ],
 )
 
