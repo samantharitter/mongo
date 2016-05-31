@@ -36,6 +36,17 @@ env.Library(
 )
 
 env.Library(
+    target='transport_layer_legacy',
+    source=[
+        'transport_layer_legacy.cpp',
+    ],
+    LIBDEPS=[
+        'transport_layer_common',
+        '$BUILD_DIR/mongo/db/stats/counters',
+    ],
+)
+
+env.Library(
     target='service_entry_point_test_suite',
     source=[
         'service_entry_point_test_suite.cpp',

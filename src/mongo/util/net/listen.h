@@ -56,7 +56,7 @@ public:
     void initAndListen();  // never returns unless error (start a thread)
 
     /* spawn a thread, etc., then return */
-    virtual void accepted(AbstractMessagingPort* mp) = 0;
+    virtual void accepted(std::unique_ptr<AbstractMessagingPort> mp) = 0;
 
     const int _port;
 
