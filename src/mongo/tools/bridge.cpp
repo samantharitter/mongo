@@ -401,8 +401,12 @@ int bridgeMain(int argc, char** argv, char** envp) {
     startSignalProcessingThread();
 
     listener = stdx::make_unique<BridgeListener>();
-    listener->setupSockets();
-    listener->initAndListen();
+    if (!listener->setupSockets() || !listener->beginListening()) {
+        log() << "Failed to set up sockets for listening";
+        return EXIT_NET_ERROR;
+    }
+
+    listener->acceptConnections();
 
     return EXIT_CLEAN;
 }

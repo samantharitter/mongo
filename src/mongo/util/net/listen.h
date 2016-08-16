@@ -47,11 +47,17 @@ const int DEFAULT_MAX_CONN = 1000000;
 
 class ServiceContext;
 
+/**
+ * Listens for incoming connections to the server. The listener is owned by
+ * a TransportLayer.
+ */
 class Listener {
     MONGO_DISALLOW_COPYING(Listener);
 
 public:
-    /** Obtain the Listener for a provided ServiceContext. */
+    /**
+     * Obtain the Listener for a provided ServiceContext.
+     */
     static Listener* get(ServiceContext* context);
 
     Listener(const std::string& name,
@@ -63,31 +69,51 @@ public:
 
     virtual ~Listener();
 
-    void initAndListen();  // never returns unless error (start a thread)
+    /**
+     * Allocate sockets for the listener and set _setupSocketsSuccessful to true
+     * iff the process was successful. Returns _setupSocketsSuccessful.
+     */
+    bool setupSockets();
 
-    /* spawn a thread, etc., then return */
+    /**
+     * Call listen on sockets, then return. This method may only be called
+     * after a successful call to setupSockets(). Returns true if successful,
+     * false if an error occured.
+     *
+     * This method will wake up any threads blocked in waitUntilListening().
+     */
+    bool beginListening();
+
+    /**
+     * Begin accepting connections to the server. This method does not return
+     * unless there is an error. This method may only be called after a successful
+     * call to beginListening().
+     */
+    void acceptConnections();
+
+    /**
+     * Handle a newly-accepted connection. This method must be implemented by
+     * derived classes.
+     */
     virtual void accepted(std::unique_ptr<AbstractMessagingPort> mp) = 0;
 
     const int _port;
 
     /**
-     * Allocate sockets for the listener and set _setupSocketsSuccessful to true
-     * iff the process was successful.
-     * Returns _setupSocketsSuccessful.
-     */
-    bool setupSockets();
-
-    /**
-     * Blocks until initAndListen has been called on this instance and gotten far enough that
-     * it is ready to receive incoming network requests.
+     * Blocks until beginListening() has been called on this instance and gotten far enough that
+     * the listener is ready to receive incoming network requests.
      */
     void waitUntilListening() const;
 
+    /**
+     * Shut down the listener.
+     */
     void shutdown();
 
 private:
     std::vector<SockAddr> _mine;
     std::vector<SOCKET> _socks;
+    SOCKET _maxfd;
     std::string _name;
     std::string _ip;
     bool _setupSocketsSuccessful;

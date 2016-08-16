@@ -83,6 +83,12 @@ Status TransportLayerLegacy::setup() {
         return {ErrorCodes::InternalError, "Failed to set up sockets"};
     }
 
+    // Begin listening (but not accepting) now to allow connections immediately after forking.
+    if (!_listener->beginListening()) {
+        error() << "Failed to listen on sockets during startup.";
+        return {ErrorCodes::InternalError, "Failed to listen on sockets"};
+    }
+
     return Status::OK();
 }
 
@@ -91,7 +97,7 @@ Status TransportLayerLegacy::start() {
         return {ErrorCodes::InternalError, "TransportLayer is already running"};
     }
 
-    _listenerThread = stdx::thread([this]() { _listener->initAndListen(); });
+    _listenerThread = stdx::thread([this]() { _listener->acceptConnections(); });
 
     return Status::OK();
 }

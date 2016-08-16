@@ -282,7 +282,10 @@ static ExitCode runMongosServer() {
                                                                  serverGlobalParams.port + 1000,
                                                                  getGlobalServiceContext(),
                                                                  new NoAdminAccess()));
-        dbWebServer->setupSockets();
+        if (!dbWebServer->setupSockets() || !dbWebServer->beginListening()) {
+            error() << "Error starting dbWebServer for mongos";
+            return EXIT_SHARDING_ERROR;
+        }
 
         stdx::thread web(stdx::bind(&webServerListenThread, dbWebServer));
         web.detach();

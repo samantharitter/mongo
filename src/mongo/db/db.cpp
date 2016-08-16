@@ -536,7 +536,7 @@ static ExitCode _initAndListen(int listenPort) {
                                           serverGlobalParams.port + 1000,
                                           getGlobalServiceContext(),
                                           new RestAdminAccess()));
-        if (!dbWebServer->setupSockets()) {
+        if (!dbWebServer->setupSockets() || !dbWebServer->beginListening()) {
             error() << "Failed to set up sockets for HTTP interface during startup.";
             return EXIT_NET_ERROR;
         }
