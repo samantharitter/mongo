@@ -63,12 +63,8 @@ struct ASIOSSLContextPair {
 const auto sslDecoration = SSLManagerInterface::declareDecoration<ASIOSSLContextPair>();
 
 MONGO_INITIALIZER_WITH_PREREQUISITES(ASIOSSLContextSetup, ("SSLManager"))(InitializerContext*) {
-    if (getSSLManager()) {
-        sslDecoration(getSSLManager())
-            .server.init(SSLManagerInterface::ConnectionDirection::kIncoming);
-        sslDecoration(getSSLManager())
-            .client.init(SSLManagerInterface::ConnectionDirection::kOutgoing);
-    }
+    sslDecoration(getSSLManager()).server.init(SSLManagerInterface::ConnectionDirection::kIncoming);
+    sslDecoration(getSSLManager()).client.init(SSLManagerInterface::ConnectionDirection::kOutgoing);
     return Status::OK();
 }
 #endif
@@ -92,9 +88,9 @@ ASIOMessagingPort::ASIOMessagingPort(int fd, SockAddr farEnd)
 #ifdef MONGO_CONFIG_SSL
       _context(ASIOSSLContext()),
       _sslSock(_service,
-               getSSLManager() ? sslDecoration(getSSLManager()).server.getContext()
-                               : _context->getContext()) {
-    if (getSSLManager()) {
+               SSLEnabled() ? sslDecoration(getSSLManager()).server.getContext()
+                            : _context->getContext()) {
+    if (SSLEnabled()) {
         _context = boost::none;
     }
     _sslSock.lowest_layer().assign(
@@ -130,9 +126,9 @@ ASIOMessagingPort::ASIOMessagingPort(Milliseconds timeout, logger::LogSeverity l
 #ifdef MONGO_CONFIG_SSL
       _context(ASIOSSLContext()),
       _sslSock(_service,
-               getSSLManager() ? sslDecoration(getSSLManager()).client.getContext()
-                               : _context->getContext()) {
-    if (getSSLManager()) {
+               SSLEnabled() ? sslDecoration(getSSLManager()).client.getContext()
+                            : _context->getContext()) {
+    if (SSLEnabled()) {
         _context = boost::none;
     }
 #else

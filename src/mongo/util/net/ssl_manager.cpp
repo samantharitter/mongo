@@ -356,6 +356,10 @@ void setupFIPS() {
 }
 }  // namespace
 
+bool SSLEnabled() {
+    return getSSLGlobalParams().sslMode.load() != SSLParams::SSLModes::SSLMode_disabled;
+}
+
 // Global variable indicating if this is a server or a client instance
 bool isSSLServer = false;
 
@@ -385,9 +389,7 @@ MONGO_INITIALIZER(SetupOpenSSL)(InitializerContext*) {
 
 MONGO_INITIALIZER_WITH_PREREQUISITES(SSLManager, ("SetupOpenSSL"))(InitializerContext*) {
     stdx::lock_guard<SimpleMutex> lck(sslManagerMtx);
-    if (sslGlobalParams.sslMode.load() != SSLParams::SSLMode_disabled) {
-        theSSLManager = new SSLManager(sslGlobalParams, isSSLServer);
-    }
+    theSSLManager = new SSLManager(sslGlobalParams, isSSLServer);
     return Status::OK();
 }
 
@@ -431,7 +433,7 @@ SSLConnection::SSLConnection(SSL_CTX* context, Socket* sock, const char* initial
     ssl = SSL_new(context);
 
     std::string sslErr =
-        NULL != getSSLManager() ? getSSLManager()->getSSLErrorMessage(ERR_get_error()) : "";
+        SSLEnabled() ? getSSLManager()->getSSLErrorMessage(ERR_get_error()) : "SSL is not enabled";
     massert(15861, "Error creating new SSL object " + sslErr, ssl);
 
     BIO_new_bio_pair(&internalBIO, BUFFER_SIZE, &networkBIO, BUFFER_SIZE);
