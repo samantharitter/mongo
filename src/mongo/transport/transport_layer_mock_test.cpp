@@ -228,13 +228,6 @@ TEST_F(TransportLayerMockTest, WaitTLShutdown) {
     ASSERT_EQUALS(status.code(), ErrorCodes::ShutdownInProgress);
 }
 
-// end() closes the session
-TEST_F(TransportLayerMockTest, EndSession) {
-    Session* session = tl()->createSession();
-    tl()->end(*session);
-    ASSERT(session->ended());
-}
-
 std::vector<Session*> createSessions(TransportLayerMock* tl) {
     int numSessions = 10;
     std::vector<Session*> sessions;
@@ -247,7 +240,7 @@ std::vector<Session*> createSessions(TransportLayerMock* tl) {
 
 void assertEnded(std::vector<Session*> sessions) {
     for (auto session : sessions) {
-        ASSERT(session->ended());
+        // TODO assert that further attempts to use the session fail with closed error
     }
 }
 

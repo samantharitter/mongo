@@ -176,5 +176,7 @@ TransportLayerMock::~TransportLayerMock() {
     shutdown();
 }
 
+void TransportLayerMock::_destroy(Session& session) {}
+
 }  // namespace transport
 }  // namespace mongo

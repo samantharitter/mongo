@@ -89,6 +89,8 @@ public:
     void shutdown() override;
 
 private:
+    void _destroy(Session& session) override;
+
     void _handleNewConnection(std::unique_ptr<AbstractMessagingPort> amp);
 
     Status _runTicket(Ticket ticket);
@@ -154,6 +156,7 @@ private:
         Session::TagMask tags;
         bool inUse;
         bool ended;
+        bool destroy;
     };
 
     ServiceEntryPoint* _sep;
