@@ -124,6 +124,9 @@ public:
             (*i)->shutdown();
         }
     }
+    int count() {
+        return ports.size();
+    }
     void insert(MessagingPort* p) {
         scoped_lock bl(m);
         ports.insert(p);
@@ -142,6 +145,10 @@ void MessagingPort::closeAllSockets(unsigned mask) {
     ports.closeAll(mask);
 }
 
+int MessagingPort::openPorts() {
+    return ports.count();
+}
+
 MessagingPort::MessagingPort(int fd, const SockAddr& remote)
     : psock(new Socket(fd, remote)), piggyBackData(0) {
     ports.insert(this);
@@ -153,7 +160,8 @@ MessagingPort::MessagingPort(double timeout, logger::LogSeverity ll)
     piggyBackData = 0;
 }
 
-MessagingPort::MessagingPort(boost::shared_ptr<Socket> sock) : psock(sock), piggyBackData(0) {
+MessagingPort::MessagingPort(std::unique_ptr<Socket> sock)
+    : psock(std::move(sock)), piggyBackData(0) {
     ports.insert(this);
 }
 
@@ -191,7 +199,9 @@ bool MessagingPort::recv(Message& m) {
             LOG(psock->getLogLevel()) << msg;
             std::stringstream ss;
             ss << "HTTP/1.0 200 OK\r\nConnection: close\r\nContent-Type: "
-                  "text/plain\r\nContent-Length: " << msg.size() << "\r\n\r\n" << msg;
+                  "text/plain\r\nContent-Length: "
+               << msg.size() << "\r\n\r\n"
+               << msg;
             string s = ss.str();
             send(s.c_str(), s.size(), "http");
             return false;
@@ -277,8 +287,8 @@ bool MessagingPort::recv(const Message& toSend, Message& response) {
             break;
         error() << "MessagingPort::call() wrong id got:" << std::hex
                 << (unsigned)response.header().getResponseTo()
-                << " expect:" << (unsigned)toSend.header().getId() << '\n' << std::dec
-                << "  toSend op: " << (unsigned)toSend.operation() << '\n'
+                << " expect:" << (unsigned)toSend.header().getId() << '\n'
+                << std::dec << "  toSend op: " << (unsigned)toSend.operation() << '\n'
                 << "  response msgid:" << (unsigned)response.header().getId() << '\n'
                 << "  response len:  " << (unsigned)response.header().getLen() << '\n'
                 << "  response op:  " << response.operation() << '\n'
@@ -291,8 +301,8 @@ bool MessagingPort::recv(const Message& toSend, Message& response) {
 
 void MessagingPort::say(Message& toSend, int responseTo) {
     verify(!toSend.empty());
-    mmm(log() << "*  say()  thr:" << GetCurrentThreadId() << endl;)
-        toSend.header().setId(nextMessageId());
+    mmm(log() << "*  say()  thr:" << GetCurrentThreadId() << endl;) toSend.header().setId(
+        nextMessageId());
     toSend.header().setResponseTo(responseTo);
 
     if (piggyBackData && piggyBackData->len()) {

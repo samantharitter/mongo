@@ -32,9 +32,9 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/thread/thread.hpp>
 #include <boost/filesystem/operations.hpp>
 #include <boost/shared_ptr.hpp>
+#include <boost/thread/thread.hpp>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -188,7 +188,7 @@ void testExhaust() {
 class MyMessageHandler : public MessageHandler {
 public:
     virtual void connected(AbstractMessagingPort* p) {
-        Client::initThread("conn", p);
+        Client::initThread("connSKFJSLKFJSLKFJLSKFJSLKFJSLFKJSFLKJSFLKJSFLKJSF", p);
     }
 
     virtual void process(Message& m, AbstractMessagingPort* port, LastError* le) {
@@ -334,7 +334,8 @@ static void checkForPartialIndexes(OperationContext* txn, Database* db) {
                              " the index was created on a newer version of MongoDB, then it may not"
                              " contain index entries for all documents in the collection. The index"
                              " may need to be dropped and recreated to avoid missing documents when"
-                             " it is used to answer queries." << startupWarningsLog;
+                             " it is used to answer queries."
+                          << startupWarningsLog;
             }
         }
     }
@@ -714,9 +715,8 @@ int main(int argc, char* argv[], char** envp) {
 }
 #endif
 
-MONGO_INITIALIZER_GENERAL(ForkServer,
-                          ("EndStartupOptionHandling"),
-                          ("default"))(InitializerContext* context) {
+MONGO_INITIALIZER_GENERAL(ForkServer, ("EndStartupOptionHandling"), ("default"))
+(InitializerContext* context) {
     mongo::forkServerOrDie();
     return Status::OK();
 }
@@ -830,9 +830,8 @@ MONGO_INITIALIZER_WITH_PREREQUISITES(CreateReplicationManager, ("SetGlobalEnviro
 }
 
 #ifdef MONGO_SSL
-MONGO_INITIALIZER_GENERAL(setSSLManagerType,
-                          MONGO_NO_PREREQUISITES,
-                          ("SSLManager"))(InitializerContext* context) {
+MONGO_INITIALIZER_GENERAL(setSSLManagerType, MONGO_NO_PREREQUISITES, ("SSLManager"))
+(InitializerContext* context) {
     isSSLServer = true;
     return Status::OK();
 }

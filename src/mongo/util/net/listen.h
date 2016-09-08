@@ -31,8 +31,8 @@
 
 #include <boost/noncopyable.hpp>
 #include <boost/shared_ptr.hpp>
-#include <boost/thread/mutex.hpp>
 #include <boost/thread/condition_variable.hpp>
+#include <boost/thread/mutex.hpp>
 #include <set>
 #include <string>
 #include <vector>
@@ -56,7 +56,7 @@ public:
     void initAndListen();  // never returns unless error (start a thread)
 
     /* spawn a thread, etc., then return */
-    virtual void accepted(boost::shared_ptr<Socket> psocket, long long connectionId);
+    virtual void accepted(std::unique_ptr<Socket> psocket, long long connectionId);
     virtual void acceptedMP(MessagingPort* mp);
 
     const int _port;
@@ -106,6 +106,19 @@ public:
      * it is ready to receive incoming network requests.
      */
     void waitUntilListening() const;
+
+    /**
+     * Returns the number of active threads spawned by this listener.
+     */
+    std::size_t getNumberOfActiveWorkerThreads() const {
+        return _nWorkers.load();
+    }
+
+protected:
+    /**
+     * Derived classes should increment and decrement this counter.
+     */
+    AtomicWord<std::size_t> _nWorkers;
 
 private:
     std::vector<SockAddr> _mine;

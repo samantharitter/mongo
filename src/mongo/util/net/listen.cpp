@@ -37,8 +37,8 @@
 #include <boost/scoped_array.hpp>
 #include <boost/shared_ptr.hpp>
 
-#include "mongo/db/server_options.h"
 #include "mongo/base/owned_pointer_vector.h"
+#include "mongo/db/server_options.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/log.h"
 #include "mongo/util/net/message_port.h"
@@ -53,14 +53,14 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/un.h>
 #ifdef __openbsd__
 #include <sys/uio.h>
 #endif
@@ -123,6 +123,7 @@ vector<SockAddr> ipToAddrs(const char* ips, int port, bool useUnixSockets) {
 
 Listener::Listener(const string& name, const string& ip, int port, bool logConnect)
     : _port(port),
+      _nWorkers(0),
       _name(name),
       _ip(ip),
       _setupSocketsSuccessful(false),
@@ -319,7 +320,8 @@ void Listener::initAndListen() {
                     if (x == EMFILE || x == ENFILE) {
                         // Connection still in listen queue but we can't accept it yet
                         error() << "Out of file descriptors. Waiting one second before trying to "
-                                   "accept more connections." << warnings;
+                                   "accept more connections."
+                                << warnings;
                         sleepsecs(1);
                     }
                 }
@@ -343,13 +345,13 @@ void Listener::initAndListen() {
                       << myConnectionNumber << " (" << conns << word << " now open)" << endl;
             }
 
-            boost::shared_ptr<Socket> pnewSock(new Socket(s, from));
+            std::unique_ptr<Socket> pnewSock(new Socket(s, from));
 #ifdef MONGO_SSL
             if (_ssl) {
                 pnewSock->secureAccepted(_ssl);
             }
 #endif
-            accepted(pnewSock, myConnectionNumber);
+            accepted(std::move(pnewSock), myConnectionNumber);
         }
     }
 }
@@ -540,7 +542,8 @@ void Listener::initAndListen() {
                 if (x == EMFILE || x == ENFILE) {
                     // Connection still in listen queue but we can't accept it yet
                     error() << "Out of file descriptors. Waiting one second before"
-                               " trying to accept more connections." << warnings;
+                               " trying to accept more connections."
+                            << warnings;
                     sleepsecs(1);
                 }
             }
@@ -558,13 +561,13 @@ void Listener::initAndListen() {
                   << " (" << conns << word << " now open)" << endl;
         }
 
-        boost::shared_ptr<Socket> pnewSock(new Socket(s, from));
+        std::unique_ptr<Socket> pnewSock(new Socket(s, from));
 #ifdef MONGO_SSL
         if (_ssl) {
             pnewSock->secureAccepted(_ssl);
         }
 #endif
-        accepted(pnewSock, myConnectionNumber);
+        accepted(std::move(pnewSock), myConnectionNumber);
     }
 }
 #endif
@@ -581,8 +584,8 @@ void Listener::waitUntilListening() const {
     }
 }
 
-void Listener::accepted(boost::shared_ptr<Socket> psocket, long long connectionId) {
-    MessagingPort* port = new MessagingPort(psocket);
+void Listener::accepted(std::unique_ptr<Socket> psocket, long long connectionId) {
+    MessagingPort* port = new MessagingPort(std::move(psocket));
     port->setConnectionId(connectionId);
     acceptedMP(port);
 }

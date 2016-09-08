@@ -90,7 +90,7 @@ public:
     // no data sent, then we detect that the other side is down
     MessagingPort(double so_timeout = 0, logger::LogSeverity logLevel = logger::LogSeverity::Log());
 
-    MessagingPort(boost::shared_ptr<Socket> socket);
+    MessagingPort(std::unique_ptr<Socket> socket);
 
     virtual ~MessagingPort();
 
@@ -128,7 +128,7 @@ public:
     virtual SockAddr remoteAddr() const;
     virtual SockAddr localAddr() const;
 
-    boost::shared_ptr<Socket> psock;
+    std::unique_ptr<Socket> psock;
 
     void send(const char* data, int len, const char* context) {
         psock->send(data, len, context);
@@ -168,6 +168,7 @@ private:
     mutable HostAndPort _remoteParsed;
 
 public:
+    static int openPorts();
     static void closeAllSockets(unsigned tagMask = 0xffffffff);
 
     friend class PiggyBackData;

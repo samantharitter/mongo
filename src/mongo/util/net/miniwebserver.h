@@ -69,7 +69,7 @@ public:
     }
 
 private:
-    void accepted(boost::shared_ptr<Socket> psocket, long long connectionId);
+    void accepted(std::unique_ptr<Socket> psocket, long long connectionId);
     static bool fullReceive(const char* buf);
 };
 

@@ -55,8 +55,8 @@
 #include "mongo/db/curop.h"
 #include "mongo/db/dbwebserver.h"
 #include "mongo/db/instance.h"
-#include "mongo/db/json.h"
 #include "mongo/db/jsobj.h"
+#include "mongo/db/json.h"
 #include "mongo/db/lasterror.h"
 #include "mongo/db/repl/handshake_args.h"
 #include "mongo/db/repl/replication_coordinator_global.h"
@@ -67,8 +67,8 @@
 #include "mongo/util/concurrency/thread_name.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/file_allocator.h"
-#include "mongo/util/mongoutils/str.h"
 #include "mongo/util/log.h"
+#include "mongo/util/mongoutils/str.h"
 
 namespace mongo {
 
@@ -89,11 +89,11 @@ void Client::initThread(const char* desc, AbstractMessagingPort* mp) {
     invariant(currentClient.get() == 0);
 
     string fullDesc;
-    if (mp != NULL) {
-        fullDesc = str::stream() << desc << mp->connectionId();
-    } else {
-        fullDesc = desc;
-    }
+    // if (mp != NULL) {
+    // fullDesc = str::stream() << desc << mp->connectionId();
+    // } else {
+    fullDesc = desc;
+    //}
 
     setThreadName(fullDesc.c_str());
     mongo::lastError.initThread();

@@ -35,6 +35,7 @@
 #include <boost/scoped_ptr.hpp>
 #include <boost/thread/thread.hpp>
 #include <fstream>
+#include <limits>
 
 #include "mongo/base/status.h"
 #include "mongo/db/audit.h"
@@ -42,6 +43,7 @@
 #include "mongo/db/auth/authorization_manager.h"
 #include "mongo/db/auth/authorization_session.h"
 #include "mongo/db/background.h"
+#include "mongo/db/catalog/index_create.h"
 #include "mongo/db/clientcursor.h"
 #include "mongo/db/commands.h"
 #include "mongo/db/commands/fsync.h"
@@ -53,10 +55,10 @@
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/dbhelpers.h"
 #include "mongo/db/dbmessage.h"
-#include "mongo/db/storage/storage_engine.h"
-#include "mongo/db/operation_context_impl.h"
-#include "mongo/db/global_optime.h"
+#include "mongo/db/exec/delete.h"
+#include "mongo/db/exec/update.h"
 #include "mongo/db/global_environment_experiment.h"
+#include "mongo/db/global_optime.h"
 #include "mongo/db/instance.h"
 #include "mongo/db/introspect.h"
 #include "mongo/db/json.h"
@@ -64,21 +66,20 @@
 #include "mongo/db/matcher/matcher.h"
 #include "mongo/db/mongod_options.h"
 #include "mongo/db/namespace_string.h"
-#include "mongo/db/catalog/index_create.h"
-#include "mongo/db/exec/delete.h"
-#include "mongo/db/exec/update.h"
+#include "mongo/db/operation_context_impl.h"
 #include "mongo/db/ops/delete_request.h"
 #include "mongo/db/ops/insert.h"
 #include "mongo/db/ops/parsed_delete.h"
 #include "mongo/db/ops/parsed_update.h"
-#include "mongo/db/ops/update_lifecycle_impl.h"
 #include "mongo/db/ops/update_driver.h"
+#include "mongo/db/ops/update_lifecycle_impl.h"
 #include "mongo/db/ops/update_request.h"
 #include "mongo/db/query/find.h"
 #include "mongo/db/query/get_executor.h"
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/repl/replication_coordinator_global.h"
 #include "mongo/db/stats/counters.h"
+#include "mongo/db/storage/storage_engine.h"
 #include "mongo/db/storage_options.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/platform/process_id.h"
@@ -105,6 +106,10 @@ using std::ofstream;
 using std::string;
 using std::stringstream;
 using std::vector;
+
+#if !defined(__has_feature)
+#define __has_feature(x) 0
+#endif
 
 // for diaglog
 inline void opread(Message& m) {
@@ -415,8 +420,12 @@ void assembleResponse(OperationContext* txn,
                     const ShardedConnectionInfo* connInfo = ShardedConnectionInfo::get(false);
                     uassert(18663,
                             str::stream() << "legacy writeOps not longer supported for "
-                                          << "versioned connections, ns: " << string(ns) << ", op: "
-                                          << opToString(op) << ", remote: " << remote.toString(),
+                                          << "versioned connections, ns: "
+                                          << string(ns)
+                                          << ", op: "
+                                          << opToString(op)
+                                          << ", remote: "
+                                          << remote.toString(),
                             connInfo == NULL);
                 }
 
@@ -862,7 +871,8 @@ static void convertSystemIndexInsertsToCommands(DbMessage& d, BSONArrayBuilder* 
                 !indexNsElement.eoo());
         uassert(ErrorCodes::TypeMismatch,
                 str::stream() << "Expected \"ns\" field to have type String, not "
-                              << typeName(indexNsElement.type()) << " while inserting into "
+                              << typeName(indexNsElement.type())
+                              << " while inserting into "
                               << d.getns(),
                 indexNsElement.type() == String);
         const StringData nsToIndex(indexNsElement.valueStringData());
@@ -1021,12 +1031,63 @@ static void shutdownServer() {
     log(LogComponent::kNetwork) << "shutdown: going to close listening sockets..." << endl;
     ListeningSockets::get()->closeAll();
 
-    log(LogComponent::kNetwork) << "shutdown: going to flush diaglog..." << endl;
-    _diaglog.flush();
-
     /* must do this before unmapping mem or you may get a seg fault */
     log(LogComponent::kNetwork) << "shutdown: going to close sockets..." << endl;
     boost::thread close_socket_thread(stdx::bind(MessagingPort::closeAllSockets, 0));
+
+#if __has_feature(address_sanitizer)
+    // When running under address sanitizer, we get false positive leaks due to disorder around
+    // the lifecycle of a connection and request. When we are running under ASAN, we try a lot
+    // harder to dry up the server from active connections before going on to really shut down.
+    log(LogComponent::kNetwork)
+        << "shutdown: waiting for all sockets to close because ASAN is active..." << endl;
+
+    // Close all sockets in a detached thread, and then wait for the number of active
+    // tickets to reach zero. Give this job a 10 second deadline. If we haven't
+    // drained all active operations within that deadline, just keep going
+    // with shutdown: the OS will do it for us when the process terminates.
+
+    unsigned long long start = curTimeMillis64();
+    unsigned long long timeout = 10000;
+
+    while (true) {
+        int connected = Listener::globalTicketHolder.used();
+        if (connected == 0 && MessagingPort::openPorts() == 0) {
+            log(LogComponent::kNetwork) << "shutdown: no open sockets." << endl;
+            break;
+        }
+
+        if (connected == 0) {
+            log(LogComponent::kNetwork) << "connected is 0 but still have "
+                                        << MessagingPort::openPorts() << " things in ports" << endl;
+        }
+
+        unsigned long long elapsedMillis;
+        unsigned long long now = curTimeMillis64();
+
+        // Note: curTimeMillis64() can wrap.
+        if (now < start) {
+            elapsedMillis = now + (std::numeric_limits<unsigned long long>::max() - start);
+        } else {
+            elapsedMillis = now - start;
+        }
+
+        if (elapsedMillis >= timeout) {
+            log(LogComponent::kNetwork) << "shutdown: exhausted grace period for"
+                                        << " active sockets to drain; continuing with shutdown... ";
+            break;
+        }
+
+        log(LogComponent::kNetwork) << "shutdown: still waiting on " << connected
+                                    << " active sockets in " << MessagingPort::openPorts()
+                                    << " ports to drain... ";
+
+        sleepmillis(250);
+    }
+#endif
+
+    log(LogComponent::kNetwork) << "shutdown: going to flush diaglog..." << endl;
+    _diaglog.flush();
 
     getGlobalEnvironment()->shutdownGlobalStorageEngineCleanly();
 }

@@ -64,6 +64,9 @@
 
 namespace mongo {
 
+TSP_DECLARE(TicketHolderReleaser, connTicketReleaser);
+TSP_DEFINE(TicketHolderReleaser, connTicketReleaser);
+
 using boost::scoped_ptr;
 using std::endl;
 
@@ -73,10 +76,10 @@ class MessagingPortWithHandler : public MessagingPort {
     MONGO_DISALLOW_COPYING(MessagingPortWithHandler);
 
 public:
-    MessagingPortWithHandler(const boost::shared_ptr<Socket>& socket,
+    MessagingPortWithHandler(std::unique_ptr<Socket> socket,
                              MessageHandler* handler,
                              long long connectionId)
-        : MessagingPort(socket), _handler(handler) {
+        : MessagingPort(std::move(socket)), _handler(handler) {
         setConnectionId(connectionId);
     }
 
@@ -103,10 +106,10 @@ public:
     PortMessageServer(const MessageServer::Options& opts, MessageHandler* handler)
         : Listener("", opts.ipList, opts.port), _handler(handler) {}
 
-    virtual void accepted(boost::shared_ptr<Socket> psocket, long long connectionId) {
+    virtual void accepted(std::unique_ptr<Socket> psocket, long long connectionId) {
         ScopeGuard sleepAfterClosingPort = MakeGuard(sleepmillis, 2);
         std::auto_ptr<MessagingPortWithHandler> portWithHandler(
-            new MessagingPortWithHandler(psocket, _handler, connectionId));
+            new MessagingPortWithHandler(std::move(psocket), _handler, connectionId));
 
         if (!Listener::globalTicketHolder.tryAcquire()) {
             log() << "connection refused because too many open connections: "
@@ -194,22 +197,33 @@ private:
      * @return NULL
      */
     static void* handleIncomingMsg(void* arg) {
-        TicketHolderReleaser connTicketReleaser(&Listener::globalTicketHolder);
+        // connTicketReleaser.get()->reset(&Listener::globalTicketHolder);
+        // TicketHolderReleaser connTicketReleaser(&Listener::globalTicketHolder);
+
+        connTicketReleaser.reset(new TicketHolderReleaser(&Listener::globalTicketHolder));
 
         invariant(arg);
         scoped_ptr<MessagingPortWithHandler> portWithHandler(
             static_cast<MessagingPortWithHandler*>(arg));
         MessageHandler* const handler = portWithHandler->getHandler();
 
-        setThreadName(std::string(str::stream() << "conn" << portWithHandler->connectionId()));
+        setThreadName("a");
+        // setThreadName(std::string(
+        //     str::stream() <<
+        //     "sdgsdfsdgsdfsdfsdfsdfsdfsdfsdfsdfsdfsdfsdfrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+        //                      "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+        //                      "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+        //                      "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrconn"
+        //                   << portWithHandler->connectionId()));
         portWithHandler->psock->setLogLevel(logger::LogSeverity::Debug(1));
 
         Message m;
         int64_t counter = 0;
-        try {
-            LastError* le = new LastError();
-            lastError.reset(le);  // lastError now has ownership
 
+        LastError* le = new LastError();
+        lastError.reset(le);  // lastError now has ownership
+
+        try {
             handler->connected(portWithHandler.get());
 
             while (!inShutdown()) {
@@ -259,6 +273,9 @@ private:
             manager->cleanupThreadLocals();
 #endif
         handler->disconnected(portWithHandler.get());
+
+        lastError.release();
+        delete le;
 
         return NULL;
     }

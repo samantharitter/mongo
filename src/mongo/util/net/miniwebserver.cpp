@@ -128,7 +128,7 @@ bool MiniWebServer::fullReceive(const char* buf) {
     return false;
 }
 
-void MiniWebServer::accepted(boost::shared_ptr<Socket> psock, long long connectionId) {
+void MiniWebServer::accepted(std::unique_ptr<Socket> psock, long long connectionId) {
     char buf[4096];
     int len = 0;
     try {
