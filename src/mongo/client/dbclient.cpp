@@ -90,25 +90,6 @@ using std::vector;
 using executor::RemoteCommandRequest;
 using executor::RemoteCommandResponse;
 
-namespace {
-
-#ifdef MONGO_CONFIG_SSL
-static SimpleMutex s_mtx;
-static SSLManagerInterface* s_sslMgr(NULL);
-
-SSLManagerInterface* sslManager() {
-    stdx::lock_guard<SimpleMutex> lk(s_mtx);
-    if (s_sslMgr) {
-        return s_sslMgr;
-    }
-
-    s_sslMgr = getSSLManager();
-    return s_sslMgr;
-}
-#endif
-
-}  // namespace
-
 AtomicInt64 DBClientBase::ConnectionIdSequence;
 
 /* --- dbclientcommands --- */
@@ -441,7 +422,7 @@ void DBClientWithCommands::_auth(const BSONObj& params) {
     std::string clientName = "";
 #ifdef MONGO_CONFIG_SSL
     if (SSLEnabled()) {
-        clientName = sslManager()->getSSLConfiguration().clientSubjectName;
+        clientName = getSSLManager()->getSSLConfiguration().clientSubjectName;
     }
 #endif
 
@@ -915,7 +896,7 @@ Status DBClientConnection::connectSocketOnly(const HostAndPort& serverAddress) {
 
     if (sslMode == SSLParams::SSLMode_preferSSL || sslMode == SSLParams::SSLMode_requireSSL) {
         uassert(40312, "SSL is not enabled; cannot create an SSL connection", SSLEnabled());
-        if (!_port->secure(sslManager(), serverAddress.host())) {
+        if (!_port->secure(getSSLManager(), serverAddress.host())) {
             return Status(ErrorCodes::SSLHandshakeFailed, "Failed to initialize SSL on connection");
         }
     }

@@ -388,7 +388,6 @@ MONGO_INITIALIZER(SetupOpenSSL)(InitializerContext*) {
 }
 
 MONGO_INITIALIZER_WITH_PREREQUISITES(SSLManager, ("SetupOpenSSL"))(InitializerContext*) {
-    stdx::lock_guard<SimpleMutex> lck(sslManagerMtx);
     theSSLManager = new SSLManager(sslGlobalParams, isSSLServer);
     return Status::OK();
 }
@@ -399,10 +398,7 @@ std::unique_ptr<SSLManagerInterface> SSLManagerInterface::create(const SSLParams
 }
 
 SSLManagerInterface* getSSLManager() {
-    stdx::lock_guard<SimpleMutex> lck(sslManagerMtx);
-    if (theSSLManager)
-        return theSSLManager;
-    return NULL;
+    return theSSLManager;
 }
 
 std::string getCertificateSubjectName(X509* cert) {
@@ -509,6 +505,11 @@ SSLManager::SSLManager(const SSLParams& params, bool isServer)
       _weakValidation(params.sslWeakCertificateValidation),
       _allowInvalidCertificates(params.sslAllowInvalidCertificates),
       _allowInvalidHostnames(params.sslAllowInvalidHostnames) {
+    // If we are running with SSL disabled (sslMode != disabled) then do nothing.
+    if (params.sslMode.load() == SSLParams::SSLModes::SSLMode_disabled) {
+        return;
+    }
+
     if (!_initSynchronousSSLContext(&_clientContext, params, ConnectionDirection::kOutgoing)) {
         uasserted(16768, "ssl initialization problem");
     }
@@ -535,6 +536,7 @@ SSLManager::SSLManager(const SSLParams& params, bool isServer)
             uasserted(16562, "ssl initialization problem");
         }
 
+        log() << "about to read keyfile from " << params.sslPEMKeyFile;
         if (!_parseAndValidateCertificate(params.sslPEMKeyFile,
                                           &_sslConfiguration.serverSubjectName,
                                           &_sslConfiguration.serverCertificateExpirationDate)) {
