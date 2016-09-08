@@ -294,12 +294,12 @@ private:
         setThreadName(std::string(str::stream() << "conn" << portWithHandler->connectionId()));
         portWithHandler->psock->setLogLevel(logger::LogSeverity::Debug(1));
 
+        LastError* le = new LastError();
+        lastError.reset(le);  // lastError now has ownership
+
         Message m;
         int64_t counter = 0;
         try {
-            LastError* le = new LastError();
-            lastError.reset(le);  // lastError now has ownership
-
             handler->connected(portWithHandler.get());
 
             while (!inShutdown()) {
@@ -349,6 +349,9 @@ private:
             manager->cleanupThreadLocals();
 #endif
         handler->disconnected(portWithHandler.get());
+
+        lastError.release();
+        delete le;
 
         return NULL;
     }
