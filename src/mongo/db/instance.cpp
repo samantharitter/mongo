@@ -35,6 +35,7 @@
 #include <boost/scoped_ptr.hpp>
 #include <boost/thread/thread.hpp>
 #include <fstream>
+#include <limits>
 
 #include "mongo/base/status.h"
 #include "mongo/db/audit.h"
@@ -105,6 +106,10 @@ using std::ofstream;
 using std::string;
 using std::stringstream;
 using std::vector;
+
+#if !defined(__has_feature)
+#define __has_feature(x) 0
+#endif
 
 // for diaglog
 inline void opread(Message& m) {
@@ -1021,12 +1026,62 @@ static void shutdownServer() {
     log(LogComponent::kNetwork) << "shutdown: going to close listening sockets..." << endl;
     ListeningSockets::get()->closeAll();
 
-    log(LogComponent::kNetwork) << "shutdown: going to flush diaglog..." << endl;
-    _diaglog.flush();
-
-    /* must do this before unmapping mem or you may get a seg fault */
     log(LogComponent::kNetwork) << "shutdown: going to close sockets..." << endl;
     boost::thread close_socket_thread(stdx::bind(MessagingPort::closeAllSockets, 0));
+
+#if __has_feature(address_sanitizer)
+    // When running under address sanitizer, we get false positive leaks due to disorder around
+    // the lifecycle of a connection and request. When we are running under ASAN, we try a lot
+    // harder to dry up the server from active connections before going on to really shut down.
+    log(LogComponent::kNetwork)
+        << "shutdown: waiting for all sockets to close because ASAN is active..." << endl;
+
+    // Close all sockets in a detached thread, and then wait for the number of active
+    // tickets to reach zero. Give this job a 10 second deadline. If we haven't
+    // drained all active operations within that deadline, just keep going
+    // with shutdown: the OS will do it for us when the process terminates.
+
+    unsigned long long start = curTimeMillis64();
+    unsigned long long timeout = 10000;
+
+    while (true) {
+        int connected = Listener::globalTicketHolder.used();
+        if (connected == 0 && MessagingPort::openPorts() == 0) {
+            log(LogComponent::kNetwork) << "shutdown: no open sockets." << endl;
+            break;
+        }
+
+        if (connected == 0) {
+            log(LogComponent::kNetwork) << "connected is 0 but still have "
+                                        << MessagingPort::openPorts() << " things in ports" << endl;
+        }
+
+        unsigned long long elapsedMillis;
+        unsigned long long now = curTimeMillis64();
+
+        // Note: curTimeMillis64() can wrap.
+        if (now < start) {
+            elapsedMillis = now + (std::numeric_limits<unsigned long long>::max() - start);
+        } else {
+            elapsedMillis = now - start;
+        }
+
+        if (elapsedMillis >= timeout) {
+            log(LogComponent::kNetwork) << "shutdown: exhausted grace period for"
+                                        << " active sockets to drain; continuing with shutdown... ";
+            break;
+        }
+
+        log(LogComponent::kNetwork) << "shutdown: still waiting on " << connected
+                                    << " active sockets in " << MessagingPort::openPorts()
+                                    << " ports to drain... ";
+
+        sleepmillis(250);
+    }
+#endif
+
+    log(LogComponent::kNetwork) << "shutdown: going to flush diaglog..." << endl;
+    _diaglog.flush();
 
     getGlobalEnvironment()->shutdownGlobalStorageEngineCleanly();
 }

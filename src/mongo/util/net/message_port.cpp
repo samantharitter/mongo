@@ -124,6 +124,9 @@ public:
             (*i)->shutdown();
         }
     }
+    int count() {
+        return ports.size();
+    }
     void insert(MessagingPort* p) {
         scoped_lock bl(m);
         ports.insert(p);
@@ -140,6 +143,10 @@ Ports& ports = *(new Ports());
 
 void MessagingPort::closeAllSockets(unsigned mask) {
     ports.closeAll(mask);
+}
+
+int MessagingPort::openPorts() {
+    return ports.count();
 }
 
 MessagingPort::MessagingPort(int fd, const SockAddr& remote)

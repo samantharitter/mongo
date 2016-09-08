@@ -168,6 +168,7 @@ private:
     mutable HostAndPort _remoteParsed;
 
 public:
+    static int openPorts();
     static void closeAllSockets(unsigned tagMask = 0xffffffff);
 
     friend class PiggyBackData;

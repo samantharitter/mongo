@@ -103,6 +103,95 @@ public:
     PortMessageServer(const MessageServer::Options& opts, MessageHandler* handler)
         : Listener("", opts.ipList, opts.port), _handler(handler) {}
 
+#if __has_feature(address_sanitizer)
+    // ASAN will report indirect leaks if there are open connection threads when we shut down.
+    // To allow us to wait for networking threads to exit completely, we spawn an intermediate
+    // helper thread that waits to join the networking thread before decrementing the listener's
+    // ticket count.
+    static void* doubleThread(void *arg) {
+        std::auto_ptr<MessagingPortWithHandler> portWithHandler(static_cast<MessagingPortWithHandler*>(arg));
+
+        try {
+            pthread_attr_t attrs;
+            pthread_attr_init(&attrs);
+            pthread_attr_setdetachstate(&attrs, PTHREAD_CREATE_JOINABLE);
+
+            static const size_t STACK_SIZE =
+                1024 * 1024;  // if we change this we need to update the warning
+
+            struct rlimit limits;
+            verify(getrlimit(RLIMIT_STACK, &limits) == 0);
+            if (limits.rlim_cur > STACK_SIZE) {
+                size_t stackSizeToSet = STACK_SIZE;
+                pthread_attr_setstacksize(&attrs, stackSizeToSet);
+            } else if (limits.rlim_cur < 1024 * 1024) {
+                warning() << "Stack size set to " << (limits.rlim_cur / 1024)
+                          << "KB. We suggest 1MB" << endl;
+            }
+
+            pthread_t thread;
+            int failed = pthread_create(&thread, &attrs, &handleIncomingMsg, portWithHandler.get());
+
+            pthread_attr_destroy(&attrs);
+
+            if (failed) {
+                Listener::globalTicketHolder.release();
+                log() << "(ASAN) second pthread_create call failed: " << errnoWithDescription(failed) << endl;
+                return NULL;
+            }
+
+            // This will now be cleaned up by handleIncomingMsg.
+            portWithHandler.release();
+
+            // Wait for thread to join, then release ticket so we don't leak.
+            pthread_join(thread, NULL);
+            Listener::globalTicketHolder.release();
+
+        } catch (...) {
+            Listener::globalTicketHolder.release();
+            log() << "(ASAN) unknown error accepting new socket" << endl;
+        }
+
+        return NULL;
+    }
+
+    virtual void accepted(boost::shared_ptr<Socket> psocket, long long connectionId) {
+        ScopeGuard sleepAfterClosingPort = MakeGuard(sleepmillis, 2);
+        std::auto_ptr<MessagingPortWithHandler> portWithHandler(
+            new MessagingPortWithHandler(psocket, _handler, connectionId));
+
+        if (!Listener::globalTicketHolder.tryAcquire()) {
+            log() << "connection refused because too many open connections: "
+                  << Listener::globalTicketHolder.used() << endl;
+            return;
+        }
+
+        try {
+            // ASAN only runs on linux builds, so use pthread_create.
+            pthread_attr_t attrs;
+            pthread_attr_init(&attrs);
+            pthread_attr_setdetachstate(&attrs, PTHREAD_CREATE_DETACHED);
+
+            pthread_t thread;
+            int failed = pthread_create(&thread, &attrs, &doubleThread, portWithHandler.get());
+
+            pthread_attr_destroy(&attrs);
+
+            if (failed) {
+                Listener::globalTicketHolder.release();
+                log() << "(ASAN) first pthread_create call failed: " << errnoWithDescription(failed) << endl;
+                return;
+            }
+
+            portWithHandler.release();
+            sleepAfterClosingPort.Dismiss();
+        } catch (...) {
+            Listener::globalTicketHolder.release();
+            log() << "(ASAN) unknown error spawning intermediate thread" << endl;
+        }
+    }
+#else
+
     virtual void accepted(boost::shared_ptr<Socket> psocket, long long connectionId) {
         ScopeGuard sleepAfterClosingPort = MakeGuard(sleepmillis, 2);
         std::auto_ptr<MessagingPortWithHandler> portWithHandler(
@@ -129,10 +218,8 @@ public:
             verify(getrlimit(RLIMIT_STACK, &limits) == 0);
             if (limits.rlim_cur > STACK_SIZE) {
                 size_t stackSizeToSet = STACK_SIZE;
-#if !__has_feature(address_sanitizer)
                 if (DEBUG_BUILD)
                     stackSizeToSet /= 2;
-#endif
                 pthread_attr_setstacksize(&attrs, stackSizeToSet);
             } else if (limits.rlim_cur < 1024 * 1024) {
                 warning() << "Stack size set to " << (limits.rlim_cur / 1024)
@@ -161,6 +248,7 @@ public:
             log() << "unknown error accepting new socket" << endl;
         }
     }
+#endif // __has_feature(address_sanitizer)
 
     virtual void setAsTimeTracker() {
         Listener::setAsTimeTracker();
@@ -194,8 +282,10 @@ private:
      * @return NULL
      */
     static void* handleIncomingMsg(void* arg) {
+#if !__has_feature(address_sanitizer)
+        // On ASAN listener tickets are released by a helper thread.
         TicketHolderReleaser connTicketReleaser(&Listener::globalTicketHolder);
-
+#endif
         invariant(arg);
         scoped_ptr<MessagingPortWithHandler> portWithHandler(
             static_cast<MessagingPortWithHandler*>(arg));
