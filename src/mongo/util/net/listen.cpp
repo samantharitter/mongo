@@ -35,7 +35,6 @@
 #include "mongo/util/net/listen.h"
 
 #include <boost/scoped_array.hpp>
-#include <boost/shared_ptr.hpp>
 
 #include "mongo/db/server_options.h"
 #include "mongo/base/owned_pointer_vector.h"
@@ -75,7 +74,6 @@
 
 namespace mongo {
 
-using boost::shared_ptr;
 using std::endl;
 using std::string;
 using std::vector;
@@ -343,13 +341,13 @@ void Listener::initAndListen() {
                       << myConnectionNumber << " (" << conns << word << " now open)" << endl;
             }
 
-            boost::shared_ptr<Socket> pnewSock(new Socket(s, from));
+            std::unique_ptr<Socket> pnewSock(new Socket(s, from));
 #ifdef MONGO_SSL
             if (_ssl) {
                 pnewSock->secureAccepted(_ssl);
             }
 #endif
-            accepted(pnewSock, myConnectionNumber);
+            accepted(std::move(pnewSock), myConnectionNumber);
         }
     }
 }
@@ -558,13 +556,13 @@ void Listener::initAndListen() {
                   << " (" << conns << word << " now open)" << endl;
         }
 
-        boost::shared_ptr<Socket> pnewSock(new Socket(s, from));
+        std::unique_ptr<Socket> pnewSock(new Socket(s, from));
 #ifdef MONGO_SSL
         if (_ssl) {
             pnewSock->secureAccepted(_ssl);
         }
 #endif
-        accepted(pnewSock, myConnectionNumber);
+        accepted(std::move(pnewSock), myConnectionNumber);
     }
 }
 #endif
@@ -581,8 +579,8 @@ void Listener::waitUntilListening() const {
     }
 }
 
-void Listener::accepted(boost::shared_ptr<Socket> psocket, long long connectionId) {
-    MessagingPort* port = new MessagingPort(psocket);
+void Listener::accepted(std::unique_ptr<Socket> psocket, long long connectionId) {
+    MessagingPort* port = new MessagingPort(std::move(psocket));
     port->setConnectionId(connectionId);
     acceptedMP(port);
 }

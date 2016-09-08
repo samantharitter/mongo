@@ -31,8 +31,6 @@
 
 #include "mongo/platform/basic.h"
 
-#include <boost/shared_ptr.hpp>
-
 #include "mongo/db/jsobj.h"
 #include "mongo/util/net/listen.h"
 #include "mongo/util/net/message.h"
@@ -69,7 +67,7 @@ public:
     }
 
 private:
-    void accepted(boost::shared_ptr<Socket> psocket, long long connectionId);
+    void accepted(std::unique_ptr<Socket> psocket, long long connectionId);
     static bool fullReceive(const char* buf);
 };
 

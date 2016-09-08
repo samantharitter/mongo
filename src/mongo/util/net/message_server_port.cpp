@@ -73,10 +73,10 @@ class MessagingPortWithHandler : public MessagingPort {
     MONGO_DISALLOW_COPYING(MessagingPortWithHandler);
 
 public:
-    MessagingPortWithHandler(const boost::shared_ptr<Socket>& socket,
+    MessagingPortWithHandler(std::unique_ptr<Socket> socket,
                              MessageHandler* handler,
                              long long connectionId)
-        : MessagingPort(socket), _handler(handler) {
+        : MessagingPort(std::move(socket)), _handler(handler) {
         setConnectionId(connectionId);
     }
 
@@ -155,10 +155,10 @@ public:
         return NULL;
     }
 
-    virtual void accepted(boost::shared_ptr<Socket> psocket, long long connectionId) {
+    virtual void accepted(std::unique_ptr<Socket> psocket, long long connectionId) {
         ScopeGuard sleepAfterClosingPort = MakeGuard(sleepmillis, 2);
         std::auto_ptr<MessagingPortWithHandler> portWithHandler(
-            new MessagingPortWithHandler(psocket, _handler, connectionId));
+                                                                new MessagingPortWithHandler(std::move(psocket), _handler, connectionId));
 
         if (!Listener::globalTicketHolder.tryAcquire()) {
             log() << "connection refused because too many open connections: "
@@ -192,10 +192,10 @@ public:
     }
 #else
 
-    virtual void accepted(boost::shared_ptr<Socket> psocket, long long connectionId) {
+    virtual void accepted(std::unique_ptr<Socket> psocket, long long connectionId) {
         ScopeGuard sleepAfterClosingPort = MakeGuard(sleepmillis, 2);
         std::auto_ptr<MessagingPortWithHandler> portWithHandler(
-            new MessagingPortWithHandler(psocket, _handler, connectionId));
+                                                                new MessagingPortWithHandler(std::move(psocket), _handler, connectionId));
 
         if (!Listener::globalTicketHolder.tryAcquire()) {
             log() << "connection refused because too many open connections: "
