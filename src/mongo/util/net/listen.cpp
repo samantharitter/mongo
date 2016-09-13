@@ -79,10 +79,6 @@
 
 namespace mongo {
 
-namespace {
-const auto getListener = ServiceContext::declareDecoration<Listener*>();
-}  // namespace
-
 using std::shared_ptr;
 using std::string;
 using std::vector;
@@ -126,40 +122,20 @@ vector<SockAddr> ipToAddrs(const char* ips, int port, bool useUnixSockets) {
     return out;
 }
 
-Listener* Listener::get(ServiceContext* ctx) {
-    return getListener(ctx);
-}
-
-Listener::Listener(const string& name,
-                   const string& ip,
-                   int port,
-                   ServiceContext* ctx,
-                   bool setAsServiceCtxDecoration,
-                   bool logConnect)
+Listener::Listener(const string& name, const string& ip, int port, bool logConnect)
     : _port(port),
+      _maxfd(0),
       _name(name),
       _ip(ip),
       _setupSocketsSuccessful(false),
       _logConnect(logConnect),
-      _ready(false),
-      _ctx(ctx),
-      _setAsServiceCtxDecoration(setAsServiceCtxDecoration) {
+      _ready(false) {
 #ifdef MONGO_CONFIG_SSL
     _ssl = getSSLManager();
 #endif
-    if (setAsServiceCtxDecoration) {
-        auto& listener = getListener(ctx);
-        invariant(!listener);
-        listener = this;
-    }
 }
 
-Listener::~Listener() {
-    if (_setAsServiceCtxDecoration) {
-        auto& listener = getListener(_ctx);
-        listener = nullptr;
-    }
-}
+Listener::~Listener() {}
 
 bool Listener::setupSockets() {
     checkTicketNumbers();
@@ -234,36 +210,36 @@ bool Listener::setupSockets() {
         socketGuard.Dismiss();
     }
 
+    if (!_beginListening()) {
+        return _setupSocketsSuccessful;
+    }
+
     _setupSocketsSuccessful = true;
     return _setupSocketsSuccessful;
 }
 
-
-#if !defined(_WIN32)
-void Listener::initAndListen() {
-    if (!_setupSocketsSuccessful) {
-        return;
-    }
-
-    SOCKET maxfd = 0;  // needed for select()
+bool Listener::_beginListening() {
+    _maxfd = 0;
     for (unsigned i = 0; i < _socks.size(); i++) {
         if (::listen(_socks[i], SOMAXCONN) != 0) {
             error() << "listen(): listen() failed " << errnoWithDescription();
-            return;
+            return false;
         }
 
         ListeningSockets::get()->add(_socks[i]);
 
-        if (_socks[i] > maxfd) {
-            maxfd = _socks[i];
+        if (_socks[i] > _maxfd) {
+            _maxfd = _socks[i];
         }
     }
 
-    if (maxfd >= FD_SETSIZE) {
-        error() << "socket " << maxfd << " is higher than " << FD_SETSIZE - 1 << "; not supported"
+#if !defined(_WIN32)
+    if (_maxfd >= FD_SETSIZE) {
+        error() << "socket " << _maxfd << " is higher than " << FD_SETSIZE - 1 << "; not supported "
                 << warnings;
-        return;
+        return false;
     }
+#endif
 
 #ifdef MONGO_CONFIG_SSL
     _logListen(_port, _ssl);
@@ -271,12 +247,14 @@ void Listener::initAndListen() {
     _logListen(_port, false);
 #endif
 
-    {
-        // Wake up any threads blocked in waitUntilListening()
-        stdx::lock_guard<stdx::mutex> lock(_readyMutex);
-        _ready = true;
-        _readyCondition.notify_all();
-    }
+    _ready = true;
+
+    return true;
+}
+
+#if !defined(_WIN32)
+void Listener::acceptConnections() {
+    invariant(_ready);
 
     struct timeval maxSelectTime;
     // The check against _finished allows us to actually stop the listener by signalling it through
@@ -291,7 +269,7 @@ void Listener::initAndListen() {
 
         maxSelectTime.tv_sec = 0;
         maxSelectTime.tv_usec = 250000;
-        const int ret = select(maxfd + 1, fds, nullptr, nullptr, &maxSelectTime);
+        const int ret = select(_maxfd + 1, fds, nullptr, nullptr, &maxSelectTime);
 
         if (ret == 0) {
             continue;
@@ -417,32 +395,8 @@ public:
     }
 };
 
-void Listener::initAndListen() {
-    if (!_setupSocketsSuccessful) {
-        return;
-    }
-
-    for (unsigned i = 0; i < _socks.size(); i++) {
-        if (::listen(_socks[i], SOMAXCONN) != 0) {
-            error() << "listen(): listen() failed " << errnoWithDescription();
-            return;
-        }
-
-        ListeningSockets::get()->add(_socks[i]);
-    }
-
-#ifdef MONGO_CONFIG_SSL
-    _logListen(_port, _ssl);
-#else
-    _logListen(_port, false);
-#endif
-
-    {
-        // Wake up any threads blocked in waitUntilListening()
-        stdx::lock_guard<stdx::mutex> lock(_readyMutex);
-        _ready = true;
-        _readyCondition.notify_all();
-    }
+void Listener::acceptConnections() {
+    invariant(_ready);
 
     OwnedPointerVector<EventHolder> eventHolders;
     std::unique_ptr<WSAEVENT[]> events(new WSAEVENT[_socks.size()]);
@@ -580,13 +534,6 @@ void Listener::initAndListen() {
 void Listener::_logListen(int port, bool ssl) {
     log() << _name << (_name.size() ? " " : "") << "waiting for connections on port " << port
           << (ssl ? " ssl" : "");
-}
-
-void Listener::waitUntilListening() const {
-    stdx::unique_lock<stdx::mutex> lock(_readyMutex);
-    while (!_ready) {
-        _readyCondition.wait(lock);
-    }
 }
 
 void Listener::_accepted(const std::shared_ptr<Socket>& psocket, long long connectionId) {

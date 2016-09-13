@@ -91,7 +91,7 @@ Status TransportLayerLegacy::start() {
         return {ErrorCodes::InternalError, "TransportLayer is already running"};
     }
 
-    _listenerThread = stdx::thread([this]() { _listener->initAndListen(); });
+    _listenerThread = stdx::thread([this]() { _listener->acceptConnections(); });
 
     return Status::OK();
 }

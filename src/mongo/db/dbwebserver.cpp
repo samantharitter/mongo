@@ -653,7 +653,7 @@ vector<DbWebHandler*>* DbWebHandler::_handlers = 0;
 void webServerListenThread(std::shared_ptr<DbWebServer> dbWebServer) {
     Client::initThread("websvr");
 
-    dbWebServer->initAndListen();
+    dbWebServer->acceptConnections();
 }
 
 }  // namespace mongo
