@@ -46,34 +46,34 @@ std::unique_ptr<ServiceEntryPoint> mockSEPFactory(transport::TransportLayer* tl)
 
 }  // namespace
 
-TEST_F(ServiceEntryPointTestSuite, NoLifeCycleTest) {
-    setServiceEntryPoint(&mockSEPFactory);
-    noLifeCycleTest();
-}
+// TEST_F(ServiceEntryPointTestSuite, NoLifeCycleTest) {
+//     setServiceEntryPoint(&mockSEPFactory);
+//     noLifeCycleTest();
+// }
 
-TEST_F(ServiceEntryPointTestSuite, HalfLifeCycleTest) {
-    setServiceEntryPoint(&mockSEPFactory);
-    halfLifeCycleTest();
-}
+// TEST_F(ServiceEntryPointTestSuite, HalfLifeCycleTest) {
+//     setServiceEntryPoint(&mockSEPFactory);
+//     halfLifeCycleTest();
+// }
 
-TEST_F(ServiceEntryPointTestSuite, FullLifeCycleTest) {
-    setServiceEntryPoint(&mockSEPFactory);
-    fullLifeCycleTest();
-}
+// TEST_F(ServiceEntryPointTestSuite, FullLifeCycleTest) {
+//     setServiceEntryPoint(&mockSEPFactory);
+//     fullLifeCycleTest();
+// }
 
 TEST_F(ServiceEntryPointTestSuite, InterruptingSessionTest) {
     setServiceEntryPoint(&mockSEPFactory);
     interruptingSessionTest();
 }
 
-TEST_F(ServiceEntryPointTestSuite, BurstStressTest) {
-    setServiceEntryPoint(&mockSEPFactory);
-    burstStressTest();
-}
+// TEST_F(ServiceEntryPointTestSuite, BurstStressTest) {
+//     setServiceEntryPoint(&mockSEPFactory);
+//     burstStressTest();
+// }
 
-TEST_F(ServiceEntryPointTestSuite, LongSessionStressTest) {
-    setServiceEntryPoint(&mockSEPFactory);
-    longSessionStressTest();
-}
+// TEST_F(ServiceEntryPointTestSuite, LongSessionStressTest) {
+//     setServiceEntryPoint(&mockSEPFactory);
+//     longSessionStressTest();
+// }
 
 }  // namespace mongo
