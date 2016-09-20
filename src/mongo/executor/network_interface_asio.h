@@ -317,10 +317,7 @@ private:
         // debugging stuff
         bool _finishOp = false;
         bool _runB = false;
-
-        stdx::mutex _releaseMutex;
-        stdx::condition_variable _releaseCV;
-        bool _runRelease = true;
+        bool _runRelease = false;
 
     private:
         NetworkInterfaceASIO* const _owner;

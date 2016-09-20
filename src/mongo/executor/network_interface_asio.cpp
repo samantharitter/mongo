@@ -116,7 +116,8 @@ void NetworkInterfaceASIO::startup() {
                 _io_service.run();
             } catch (...) {
                 severe() << "Uncaught exception in NetworkInterfaceASIO IO "
-                            "worker thread of type: " << exceptionToStatus();
+                            "worker thread of type: "
+                         << exceptionToStatus();
                 fassertFailed(28820);
             }
         });
@@ -206,108 +207,131 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
             return;
         }
 
-        auto conn = static_cast<connection_pool_asio::ASIOConnection*>(swConn.getValue().get());
+        auto conn = static_cast<connection_pool_asio::ASIOConnection*>(swConn.getValue().release());
 
-        AsyncOp* op = nullptr;
+        {
+            stdx::unique_lock<stdx::mutex> lk(_inProgressMutex);
+            const auto eraseCount = _inGetConnection.erase(cbHandle);
 
-        stdx::unique_lock<stdx::mutex> lk(_inProgressMutex);
+            // If we didn't find the request, we've been canceled
+            if (eraseCount == 0) {
+                lk.unlock();
 
-        const auto eraseCount = _inGetConnection.erase(cbHandle);
+                onFinish({ErrorCodes::CallbackCanceled, "Callback canceled"});
 
-        // If we didn't find the request, we've been canceled
-        if (eraseCount == 0) {
-            lk.unlock();
+                // Though we were canceled, we know that the stream is fine, so indicate success.
+                conn->indicateSuccess();
 
-            onFinish({ErrorCodes::CallbackCanceled, "Callback canceled"});
+                signalWorkAvailable();
 
-            // Though we were canceled, we know that the stream is fine, so indicate success.
-            conn->indicateSuccess();
-
-            signalWorkAvailable();
-
-            return;
+                return;
+            }
         }
 
-        // We can't release the AsyncOp until we know we were not canceled.
-        auto ownedOp = conn->releaseAsyncOp();
-        op = ownedOp.get();
+        auto condition = [this, conn]() {
+            std::cout << "START COMMAND: can we run release? " << conn->_impl->_runRelease
+                      << std::endl;
+            return conn->_impl->_runRelease;
+        };
 
-        // Sanity check that we are getting a clean AsyncOp.
-        invariant(!op->canceled());
-        invariant(!op->timedOut());
+        auto releaseCB = [this, conn, cbHandle, request, onFinish, getConnectionStartTime]() {
+            std::cout << "START COMMAND: going to run release" << std::endl;
+            stdx::unique_lock<stdx::mutex> lk(_inProgressMutex);
 
-        // Now that we're inProgress, an external cancel can touch our op, but
-        // not until we release the inProgressMutex.
-        _inProgress.emplace(op, std::move(ownedOp));
+            // We can't release the AsyncOp until we know we were not canceled.
+            AsyncOp* op = nullptr;
+            auto ownedOp = conn->releaseAsyncOp();
+            op = ownedOp.get();
 
-        op->_cbHandle = std::move(cbHandle);
-        op->_request = std::move(request);
-        op->_onFinish = std::move(onFinish);
-        op->_connectionPoolHandle = std::move(swConn.getValue());
-        op->_start = getConnectionStartTime;
+            // Sanity check that we are getting a clean AsyncOp.
+            invariant(!op->canceled());
+            invariant(!op->timedOut());
 
-        // This ditches the lock and gets us onto the strand (so we're
-        // threadsafe)
-        op->_strand.post([this, op, getConnectionStartTime] {
-            // Set timeout now that we have the correct request object
-            if (op->_request.timeout != RemoteCommandRequest::kNoTimeout) {
-                // Subtract the time it took to get the connection from the pool from the request
-                // timeout.
-                auto getConnectionDuration = now() - getConnectionStartTime;
-                if (getConnectionDuration >= op->_request.timeout) {
-                    // We only assume that the request timer is guaranteed to fire *after* the
-                    // timeout duration - but make no stronger assumption. It is thus possible that
-                    // we have already exceeded the timeout. In this case we timeout the operation
-                    // manually.
-                    return _completeOperation(op,
-                                              {ErrorCodes::ExceededTimeLimit,
-                                               "Remote command timed out while waiting to get a "
-                                               "connection from the pool."});
+            // Now that we're inProgress, an external cancel can touch our op, but
+            // not until we release the inProgressMutex.
+            _inProgress.emplace(op, std::move(ownedOp));
+
+            op->_cbHandle = std::move(cbHandle);
+            op->_request = std::move(request);
+            op->_onFinish = std::move(onFinish);
+            // op->_connectionPoolHandle = std::move(swConn.getValue());
+            op->_connectionPoolHandle.reset(conn);
+            op->_start = getConnectionStartTime;
+
+            // This ditches the lock and gets us onto the strand (so we're
+            // threadsafe)
+            op->_strand.post([this, op, getConnectionStartTime] {
+                // Set timeout now that we have the correct request object
+                if (op->_request.timeout != RemoteCommandRequest::kNoTimeout) {
+                    // Subtract the time it took to get the connection from the pool from the
+                    // request
+                    // timeout.
+                    auto getConnectionDuration = now() - getConnectionStartTime;
+                    if (getConnectionDuration >= op->_request.timeout) {
+                        // We only assume that the request timer is guaranteed to fire *after* the
+                        // timeout duration - but make no stronger assumption. It is thus possible
+                        // that
+                        // we have already exceeded the timeout. In this case we timeout the
+                        // operation
+                        // manually.
+                        return _completeOperation(
+                            op,
+                            {ErrorCodes::ExceededTimeLimit,
+                             "Remote command timed out while waiting to get a "
+                             "connection from the pool."});
+                    }
+
+                    // The above conditional guarantees that the adjusted timeout will never
+                    // underflow.
+                    invariant(op->_request.timeout > getConnectionDuration);
+                    const auto adjustedTimeout = op->_request.timeout - getConnectionDuration;
+                    const auto requestId = op->_request.id;
+
+                    op->_timeoutAlarm =
+                        op->_owner->_timerFactory->make(&op->_strand, adjustedTimeout);
+
+                    std::shared_ptr<AsyncOp::AccessControl> access;
+                    std::size_t generation;
+                    {
+                        stdx::lock_guard<stdx::mutex> lk(op->_access->mutex);
+                        access = op->_access;
+                        generation = access->id;
+                    }
+
+                    op->_timeoutAlarm->asyncWait(
+                        [this, op, access, generation, requestId](std::error_code ec) {
+                            if (!ec) {
+                                // We must pass a check for safe access before using op inside the
+                                // callback or we may attempt access on an invalid pointer.
+                                stdx::lock_guard<stdx::mutex> lk(access->mutex);
+                                if (generation != access->id) {
+                                    // The operation has been cleaned up, do not access.
+                                    return;
+                                }
+
+                                LOG(2) << "Operation " << requestId << " timed out.";
+
+                                // An operation may be in mid-flight when it times out, so we
+                                // cancel any in-progress async calls but do not complete the
+                                // operation
+                                // now.
+                                op->_timedOut = 1;
+                                if (op->_connection) {
+                                    op->_connection->cancel();
+                                }
+                            } else {
+                                LOG(2) << "Failed to time operation " << requestId
+                                       << " out: " << ec.message();
+                            }
+                        });
                 }
 
-                // The above conditional guarantees that the adjusted timeout will never underflow.
-                invariant(op->_request.timeout > getConnectionDuration);
-                const auto adjustedTimeout = op->_request.timeout - getConnectionDuration;
-                const auto requestId = op->_request.id;
-
-                op->_timeoutAlarm = op->_owner->_timerFactory->make(&op->_strand, adjustedTimeout);
-
-                std::shared_ptr<AsyncOp::AccessControl> access;
-                std::size_t generation;
-                {
-                    stdx::lock_guard<stdx::mutex> lk(op->_access->mutex);
-                    access = op->_access;
-                    generation = access->id;
-                }
-
-                op->_timeoutAlarm->asyncWait(
-                    [this, op, access, generation, requestId](std::error_code ec) {
-                        if (!ec) {
-                            // We must pass a check for safe access before using op inside the
-                            // callback or we may attempt access on an invalid pointer.
-                            stdx::lock_guard<stdx::mutex> lk(access->mutex);
-                            if (generation != access->id) {
-                                // The operation has been cleaned up, do not access.
-                                return;
-                            }
-
-                            LOG(2) << "Operation " << requestId << " timed out.";
-
-                            // An operation may be in mid-flight when it times out, so we
-                            // cancel any in-progress async calls but do not complete the operation
-                            // now.
-                            op->_timedOut = 1;
-                            if (op->_connection) {
-                                op->_connection->cancel();
-                            }
-                        } else {
-                            LOG(2) << "Failed to time operation " << requestId
-                                   << " out: " << ec.message();
-                        }
-                    });
-            }
-
-            _beginCommunication(op);
+                _beginCommunication(op);
+            });
+        };
+        std::cout << "ping ponging release logic" << std::endl;
+        conn->_impl->_strand.post([this, conn, condition, releaseCB]() {
+            pingPong(conn->_impl->_strand, condition, releaseCB);
         });
     };
 

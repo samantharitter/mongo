@@ -28,8 +28,8 @@
 #pragma once
 
 #include <memory>
-#include <unordered_map>
 #include <queue>
+#include <unordered_map>
 
 #include "mongo/base/disallow_copying.h"
 #include "mongo/stdx/chrono.h"
@@ -139,8 +139,10 @@ public:
     ConnectionHandleDeleter(ConnectionPool* pool) : _pool(pool) {}
 
     void operator()(ConnectionInterface* connection) {
-        if (_pool && connection)
+        if (_pool && connection) {
+            std::cout << "Returning connection from custom deleter" << std::endl;
             _pool->returnConnection(connection);
+        }
     }
 
 private:

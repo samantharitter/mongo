@@ -106,6 +106,8 @@ private:
     Status _status = ConnectionPool::kConnectionStateUnknown;
     HostAndPort _hostAndPort;
     size_t _generation;
+
+public:
     std::unique_ptr<NetworkInterfaceASIO::AsyncOp> _impl;
     ASIOTimer _timer;
 };

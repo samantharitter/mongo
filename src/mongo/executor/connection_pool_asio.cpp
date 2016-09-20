@@ -192,7 +192,7 @@ void ASIOConnection::setup(Milliseconds timeout, SetupCallback cb) {
         _setupCallback = [this, cb](ConnectionInterface* ptr, Status status) {
             {
                 stdx::lock_guard<stdx::mutex> lk(_impl->_access->mutex);
-                //_impl->_access->id++;
+                _impl->_access->id++;
 
                 // If our connection timeout callback ran but wasn't the reason we exited
                 // the state machine, clear the timedOut flag.
@@ -232,6 +232,11 @@ void ASIOConnection::setup(Milliseconds timeout, SetupCallback cb) {
                 return _impl->_runB;
             };
 
+
+            // Signal other thread to unblock
+            std::cout << "TIMEOUT: setting _finishOp to true" << std::endl;
+            _impl->_finishOp = true;
+
             auto timeOutOp = [this, access, generation] {
                 std::cout << "TIMEOUT: part B is running" << std::endl;
                 stdx::lock_guard<stdx::mutex> lk(access->mutex);
@@ -241,10 +246,8 @@ void ASIOConnection::setup(Milliseconds timeout, SetupCallback cb) {
                         _impl->_connection->cancel();
                     }
                 }
-
-                // Signal other thread to unblock
-                std::cout << "TIMEOUT: setting _finishOp to true" << std::endl;
-                _impl->_finishOp = true;
+                std::cout << "TIMEOUT: setting _runRelease to true" << std::endl;
+                _impl->_runRelease = true;
             };
 
             // Time out the op.
