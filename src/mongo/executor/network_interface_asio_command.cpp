@@ -239,8 +239,22 @@ void NetworkInterfaceASIO::_beginCommunication(AsyncOp* op) {
 
     if (op->_inSetup) {
         log() << "Successfully connected to " << op->request().target.toString();
+        std::cout << "NIA: starting ping pong" << std::endl;
         op->_inSetup = false;
-        op->finish(RemoteCommandResponse());
+        op->_runB = true;
+        auto sharedOp{op};
+        sharedOp->_strand.post([this, sharedOp]() {
+            pingPong(sharedOp->_strand,
+                     [this, sharedOp]() {
+                         std::cout << "NIA: can we finish the op? " << sharedOp->_finishOp
+                                   << std::endl;
+                         return sharedOp->_finishOp;
+                     },
+                     [this, sharedOp]() {
+                         log() << "NIA: finishing op";
+                         sharedOp->finish(RemoteCommandResponse());
+                     });
+        });
         return;
     }
 
