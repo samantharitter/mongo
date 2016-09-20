@@ -69,6 +69,26 @@ class ASIOImpl;
 
 class AsyncStreamInterface;
 
+// Repeatedly enqueue a task on a strand as long as expression 'e' is false.
+// Once 'e' is true, call the given callback.
+template <typename Expression, typename Callback>
+void pingPong(asio::io_service::strand& strand, Expression e, Callback cb) {
+    try {
+        std::cout << "PING PONG: checking condition" << std::endl;
+        if (e()) {
+            std::cout << "PING PONG: it's true, calling cb" << std::endl;
+            cb();
+        } else {
+            std::cout << "PING PONG: ping ponging again..." << std::endl;
+            strand.post([&strand, e, cb]() { return pingPong(strand, e, cb); });
+        }
+        return;
+    } catch (std::exception& e) {
+        std::cout << "caught exception in pingPong: " << e.what() << std::endl;
+        return;
+    }
+}
+
 /**
  * Implementation of the replication system's network interface using Christopher
  * Kohlhoff's ASIO library instead of existing MongoDB networking primitives.
@@ -293,6 +313,14 @@ private:
         asio::ip::tcp::resolver& resolver() {
             return _resolver;
         }
+
+        // debugging stuff
+        bool _finishOp = false;
+        bool _runB = false;
+
+        stdx::mutex _releaseMutex;
+        stdx::condition_variable _releaseCV;
+        bool _runRelease = true;
 
     private:
         NetworkInterfaceASIO* const _owner;

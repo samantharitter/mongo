@@ -81,11 +81,11 @@ void ASIOTimer::setTimeout(Milliseconds timeout, TimeoutCallback cb) {
             // than just a bool here, because we could have been cancelled and
             // another callback set, in which case we shouldn't run and the we
             // should let the other callback execute instead.
-            if (sharedState->id == id) {
-                auto cb = std::move(_cb);
-                lk.unlock();
-                cb();
-            }
+            // if (sharedState->id == id) {
+            auto cb = std::move(_cb);
+            lk.unlock();
+            cb();
+            //}
         }));
     });
 }
@@ -102,7 +102,7 @@ void ASIOTimer::cancelTimeout() {
         stdx::lock_guard<stdx::mutex> lk(sharedState->mutex);
         if (sharedState->id != id)
             return;
-        _impl.cancel();
+        //_impl.cancel();
     });
 }
 
@@ -192,7 +192,7 @@ void ASIOConnection::setup(Milliseconds timeout, SetupCallback cb) {
         _setupCallback = [this, cb](ConnectionInterface* ptr, Status status) {
             {
                 stdx::lock_guard<stdx::mutex> lk(_impl->_access->mutex);
-                _impl->_access->id++;
+                //_impl->_access->id++;
 
                 // If our connection timeout callback ran but wasn't the reason we exited
                 // the state machine, clear the timedOut flag.
@@ -217,28 +217,40 @@ void ASIOConnection::setup(Milliseconds timeout, SetupCallback cb) {
         }
 
         // Actually timeout setup
-        setTimeout(timeout,
-                   [this, access, generation] {
-                       // For operations that time out immediately, we can't simply cancel the
-                       // connection, because it may not have been initialized.
-                       stdx::lock_guard<stdx::mutex> lk(access->mutex);
+        setTimeout(Milliseconds(0), [this, access, generation] {
+            // For operations that time out immediately, we can't simply cancel the
+            // connection, because it may not have been initialized.
+            stdx::lock_guard<stdx::mutex> lk(access->mutex);
 
-                       if (generation != access->id) {
-                           // The operation has been cleaned up, do not access.
-                           return;
-                       }
+            if (generation != access->id) {
+                // The operation has been cleaned up, do not access.
+                return;
+            }
 
-                       // Time out the op.
-                       _impl->_strand.post([this, access, generation] {
-                           stdx::lock_guard<stdx::mutex> lk(access->mutex);
-                           if (generation == access->id) {
-                               _impl->_timedOut = true;
-                               if (_impl->_connection) {
-                                   _impl->_connection->cancel();
-                               }
-                           }
-                       });
-                   });
+            auto condition = [this]() {
+                std::cout << "TIMEOUT: can we run part B? " << _impl->_runB << std::endl;
+                return _impl->_runB;
+            };
+
+            auto timeOutOp = [this, access, generation] {
+                std::cout << "TIMEOUT: part B is running" << std::endl;
+                stdx::lock_guard<stdx::mutex> lk(access->mutex);
+                if (generation == access->id) {
+                    _impl->_timedOut = true;
+                    if (_impl->_connection) {
+                        _impl->_connection->cancel();
+                    }
+                }
+
+                // Signal other thread to unblock
+                std::cout << "TIMEOUT: setting _finishOp to true" << std::endl;
+                _impl->_finishOp = true;
+            };
+
+            // Time out the op.
+            _impl->_strand.post(
+                [this, condition, timeOutOp]() { pingPong(_impl->_strand, condition, timeOutOp); });
+        });
 
         _global->_impl->_connect(_impl.get());
     });
@@ -267,9 +279,11 @@ void ASIOConnection::refresh(Milliseconds timeout, RefreshCallback cb) {
             return;
         }
 
-        // If we fail during refresh, the _onFinish function of the AsyncOp will get called. As such
+        // If we fail during refresh, the _onFinish function of the AsyncOp will get called. As
+        // such
         // we
-        // need to intercept those calls so we can capture them. This will get cleared out when we
+        // need to intercept those calls so we can capture them. This will get cleared out when
+        // we
         // fill
         // in the real onFinish in startCommand.
         op->setOnFinish([this](StatusWith<RemoteCommandResponse> failedResponse) {
@@ -280,32 +294,34 @@ void ASIOConnection::refresh(Milliseconds timeout, RefreshCallback cb) {
 
         op->_inRefresh = true;
 
-        _global->_impl->_asyncRunCommand(
-            op,
-            [this, op](std::error_code ec, size_t bytes) {
-                cancelTimeout();
+        _global->_impl->_asyncRunCommand(op, [this, op](std::error_code ec, size_t bytes) {
+            cancelTimeout();
 
-                auto cb = std::move(_refreshCallback);
+            auto cb = std::move(_refreshCallback);
 
-                if (ec)
-                    return cb(this, Status(ErrorCodes::HostUnreachable, ec.message()));
+            if (ec)
+                return cb(this, Status(ErrorCodes::HostUnreachable, ec.message()));
 
-                op->_inRefresh = false;
+            op->_inRefresh = false;
 
-                cb(this, Status::OK());
-            });
+            cb(this, Status::OK());
+        });
     });
 }
 
 std::unique_ptr<NetworkInterfaceASIO::AsyncOp> ASIOConnection::releaseAsyncOp() {
+    std::cout << "RELEASE: releasing AsyncOp: " << _impl.get() << std::endl;
     {
         stdx::lock_guard<stdx::mutex> lk(_impl->_access->mutex);
+        std::cout << "RELEASE: incrementing id" << std::endl;
         _impl->_access->id++;
     }
+    std::cout << "RELEASE: done" << std::endl;
     return std::move(_impl);
 }
 
 void ASIOConnection::bindAsyncOp(std::unique_ptr<NetworkInterfaceASIO::AsyncOp> op) {
+    std::cout << "binding async op" << std::endl;
     _impl = std::move(op);
 }
 
