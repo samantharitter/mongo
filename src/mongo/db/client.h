@@ -56,10 +56,6 @@ class AbstractMessagingPort;
 class Collection;
 class OperationContext;
 
-namespace transport {
-class Session;
-}  // namespace transport
-
 typedef long long ConnectionId;
 
 /**
@@ -76,10 +72,10 @@ public:
      * If provided, 'session' must outlive the newly-created Client object. Client::destroy() may
      * be used to help enforce that the Client does not outlive 'session.'
      */
-    static void initThread(const char* desc, transport::Session* session = nullptr);
+    static void initThread(const char* desc, const transport::SessionHandle& session = nullptr);
     static void initThread(const char* desc,
                            ServiceContext* serviceContext,
-                           transport::Session* session);
+                           const transport::SessionHandle& session);
 
     static Client* getCurrent();
 
@@ -91,7 +87,7 @@ public:
     }
 
     bool hasRemote() const {
-        return _session;
+        return (_session != nullptr);
     }
 
     HostAndPort getRemote() const {
@@ -109,7 +105,7 @@ public:
     /**
      * Returns the Session to which this client is bound, if any.
      */
-    transport::Session* session() const {
+    const transport::SessionHandle& session() const {
         return _session;
     }
 
@@ -202,10 +198,12 @@ public:
 
 private:
     friend class ServiceContext;
-    Client(std::string desc, ServiceContext* serviceContext, transport::Session* session = nullptr);
+    Client(std::string desc,
+           ServiceContext* serviceContext,
+           const transport::SessionHandle& session = nullptr);
 
     ServiceContext* const _serviceContext;
-    transport::Session* const _session;
+    const transport::SessionHandle& _session;
 
     // Description for the client (e.g. conn8)
     const std::string _desc;

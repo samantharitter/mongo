@@ -28,13 +28,14 @@
 
 #pragma once
 
+#include <memory>
+
 #include "mongo/base/disallow_copying.h"
+#include "mongo/transport/session.h"
 
 namespace mongo {
 
-namespace transport {
-class Session;
-}  // namespace transport
+using SessionHandle = transport::SessionHandle;
 
 /**
  * This is the entrypoint from the transport layer into mongod or mongos.
@@ -51,8 +52,10 @@ public:
 
     /**
      * Begin running a new Session. This method returns immediately.
+     *
+     * This method takes ownership of the SessionHandle.
      */
-    virtual void startSession(transport::Session&& session) = 0;
+    virtual void startSession(SessionHandle session) = 0;
 
 protected:
     ServiceEntryPoint() = default;

@@ -28,9 +28,12 @@
 
 #pragma once
 
+#include <memory>
+
 #include "mongo/base/disallow_copying.h"
 #include "mongo/transport/message_compressor_manager.h"
 #include "mongo/transport/session_id.h"
+#include "mongo/transport/session_impl.h"
 #include "mongo/transport/ticket.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/net/message.h"
@@ -48,7 +51,7 @@ class TransportLayer;
  * This type contains data needed to associate Messages with connections
  * (on the transport side) and Messages with Client objects (on the database side).
  */
-class Session {
+class Session : public std::enable_shared_from_this<Session> {
     MONGO_DISALLOW_COPYING(Session);
 
 public:
@@ -70,10 +73,10 @@ public:
     /**
      * Construct a new session.
      */
-    Session(HostAndPort remote, HostAndPort local, TransportLayer* tl);
+    Session(std::unique_ptr<SessionImpl> session);
 
     /**
-     * Destroys a session, calling end() for this session in its TransportLayer.
+     * Destroys a session.
      */
     ~Session();
 
@@ -93,16 +96,12 @@ public:
     /**
      * Return the remote host for this session.
      */
-    const HostAndPort& remote() const {
-        return _remote;
-    }
+    const HostAndPort& remote() const;
 
     /**
      * Return the local host information for this session.
      */
-    const HostAndPort& local() const {
-        return _local;
-    }
+    const HostAndPort& local() const;
 
     /**
      * Return the X509 peer information for this connection (SSL only).
@@ -118,48 +117,42 @@ public:
     /**
      * Get this session's tags.
      */
-    TagMask getTags() const {
-        return _tags;
-    }
+    TagMask getTags() const;
 
     /**
      * Source (receive) a new Message for this Session.
-     *
-     * This method will forward to sourceMessage on this Session's transport layer.
      */
     Ticket sourceMessage(Message* message, Date_t expiration = Ticket::kNoExpirationDate);
 
     /**
-     * Sink (send) a new Message for this Session. This method should be used
-     * to send replies to a given host.
-     *
-     * This method will forward to sinkMessage on this Session's transport layer.
+     * Sink (send) a new Message for this Session.
      */
     Ticket sinkMessage(const Message& message, Date_t expiration = Ticket::kNoExpirationDate);
 
     /**
      * The TransportLayer for this Session.
      */
-    TransportLayer* getTransportLayer() const {
-        return _tl;
-    }
+    TransportLayer* getTransportLayer() const;
 
-    MessageCompressorManager& getCompressorManager() {
-        return _messageCompressorManager;
+    /**
+     * Return the compressor manager for this Session.
+     */
+    MessageCompressorManager& getCompressorManager();
+
+    /**
+     * Return a non-owning pointer to the underlying SessionImpl type.
+     */
+    SessionImpl* impl() const {
+        return _session.get();
     }
 
 private:
     Id _id;
 
-    HostAndPort _remote;
-    HostAndPort _local;
-
-    TagMask _tags;
-
-    TransportLayer* _tl;
-
-    MessageCompressorManager _messageCompressorManager;
+    std::unique_ptr<SessionImpl> _session;
 };
+
+using SessionHandle = std::shared_ptr<Session>;
 
 }  // namespace transport
 }  // namespace mongo

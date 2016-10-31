@@ -37,6 +37,7 @@
 #include "mongo/db/service_context.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/stdx/memory.h"
 #include "mongo/transport/service_entry_point.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/log.h"
@@ -64,10 +65,80 @@ TransportLayerLegacy::TransportLayerLegacy(const TransportLayerLegacy::Options& 
       _running(false),
       _options(opts) {}
 
-TransportLayerLegacy::LegacyTicket::LegacyTicket(const Session& session,
+TransportLayerLegacy::LegacySession::LegacySession(HostAndPort remote,
+                                                   HostAndPort local,
+                                                   TransportLayerLegacy* tl)
+    : _id(0), _remote(remote), _local(local), _tl(tl) {}
+
+TransportLayerLegacy::LegacySession::~LegacySession() {
+    if (_tl != nullptr) {
+        _tl->_destroy(this);
+    }
+}
+
+TransportLayerLegacy::LegacySession::LegacySession(LegacySession&& other)
+    : _remote(std::move(other._remote)),
+      _local(std::move(other._local)),
+      _tags(other._tags),
+      _tl(other._tl),
+      _connection(other._connection) {
+    // We do not want to call tl->destroy() on moved-from LegacySessions.
+    other._tl = nullptr;
+}
+
+TransportLayerLegacy::LegacySession& TransportLayerLegacy::LegacySession::operator=(
+    LegacySession&& other) {
+    if (&other == this) {
+        return *this;
+    }
+
+    _remote = std::move(other._remote);
+    _local = std::move(other._local);
+    _tags = other._tags;
+    _tl = other._tl;
+    _connection = other._connection;
+
+    // We do not want to call tl->destroy() on moved-from LegacySessions.
+    other._tl = nullptr;
+
+    return *this;
+}
+
+Session::TagMask TransportLayerLegacy::LegacySession::getTags() const {
+    return _tags;
+}
+
+void TransportLayerLegacy::LegacySession::replaceTags(TagMask tags) {
+    _tags = tags;
+}
+
+const HostAndPort& TransportLayerLegacy::LegacySession::local() const {
+    return _local;
+}
+
+const HostAndPort& TransportLayerLegacy::LegacySession::remote() const {
+    return _remote;
+}
+
+SSLPeerInfo TransportLayerLegacy::LegacySession::getX509PeerInfo() const {
+    return _connection->sslPeerInfo.value_or(SSLPeerInfo());
+}
+
+TransportLayer* TransportLayerLegacy::LegacySession::getTransportLayer() const {
+    return _tl;
+}
+
+MessageCompressorManager& TransportLayerLegacy::LegacySession::getCompressorManager() {
+    return _messageCompressorManager;
+}
+
+TransportLayerLegacy::LegacyTicket::LegacyTicket(const SessionHandle& session,
                                                  Date_t expiration,
                                                  WorkHandle work)
-    : _sessionId(session.id()), _expiration(expiration), _fill(std::move(work)) {}
+    : _session(session),
+      _sessionId(session->id()),
+      _expiration(expiration),
+      _fill(std::move(work)) {}
 
 Session::Id TransportLayerLegacy::LegacyTicket::sessionId() const {
     return _sessionId;
@@ -98,8 +169,10 @@ Status TransportLayerLegacy::start() {
 
 TransportLayerLegacy::~TransportLayerLegacy() = default;
 
-Ticket TransportLayerLegacy::sourceMessage(Session& session, Message* message, Date_t expiration) {
-    auto& compressorMgr = session.getCompressorManager();
+Ticket TransportLayerLegacy::sourceMessage(const SessionHandle& session,
+                                           Message* message,
+                                           Date_t expiration) {
+    auto& compressorMgr = session->getCompressorManager();
     auto sourceCb = [message, &compressorMgr](AbstractMessagingPort* amp) -> Status {
         if (!amp->recv(*message)) {
             return {ErrorCodes::HostUnreachable, "Recv failed"};
@@ -119,17 +192,9 @@ Ticket TransportLayerLegacy::sourceMessage(Session& session, Message* message, D
     return Ticket(this, stdx::make_unique<LegacyTicket>(session, expiration, std::move(sourceCb)));
 }
 
-SSLPeerInfo TransportLayerLegacy::getX509PeerInfo(const Session& session) const {
-    {
-        stdx::lock_guard<stdx::mutex> lk(_connectionsMutex);
-        auto conn = _connections.find(session.id());
-        if (conn == _connections.end()) {
-            // Return empty string if the session is not found
-            return SSLPeerInfo();
-        }
-
-        return conn->second.sslPeerInfo.value_or(SSLPeerInfo());
-    }
+SSLPeerInfo TransportLayerLegacy::getX509PeerInfo(const SessionHandle& session) const {
+    LegacySession* impl = checked_cast<LegacySession*>(session->impl());
+    return impl->_connection->sslPeerInfo.value_or(SSLPeerInfo());
 }
 
 TransportLayer::Stats TransportLayerLegacy::sessionStats() {
@@ -145,10 +210,10 @@ TransportLayer::Stats TransportLayerLegacy::sessionStats() {
     return stats;
 }
 
-Ticket TransportLayerLegacy::sinkMessage(Session& session,
+Ticket TransportLayerLegacy::sinkMessage(const SessionHandle& session,
                                          const Message& message,
                                          Date_t expiration) {
-    auto& compressorMgr = session.getCompressorManager();
+    auto& compressorMgr = session->getCompressorManager();
     auto sinkCb = [&message, &compressorMgr](AbstractMessagingPort* amp) -> Status {
         try {
             networkCounter.hitLogical(0, message.size());
@@ -179,46 +244,37 @@ void TransportLayerLegacy::asyncWait(Ticket&& ticket, TicketCallback callback) {
     MONGO_UNREACHABLE;
 }
 
-void TransportLayerLegacy::end(Session& session) {
-    stdx::lock_guard<stdx::mutex> lk(_connectionsMutex);
-    auto conn = _connections.find(session.id());
-    if (conn != _connections.end()) {
-        _endSession_inlock(conn);
-    }
+void TransportLayerLegacy::end(const SessionHandle& session) {
+    LegacySession* impl = checked_cast<LegacySession*>(session->impl());
+    _closeConnection(impl->_connection);
 }
 
-void TransportLayerLegacy::registerTags(const Session& session) {
-    stdx::lock_guard<stdx::mutex> lk(_connectionsMutex);
-    auto conn = _connections.find(session.id());
-    if (conn != _connections.end()) {
-        conn->second.tags = session.getTags();
-    }
+void TransportLayerLegacy::registerTags(const SessionHandle& session) {
+    LegacySession* impl = checked_cast<LegacySession*>(session->impl());
+    impl->_connection->tags = session->getTags();
 }
 
-void TransportLayerLegacy::_endSession_inlock(
-    decltype(TransportLayerLegacy::_connections.begin()) conn) {
-    conn->second.ended = true;
-    conn->second.amp->shutdown();
+void TransportLayerLegacy::_closeConnection(Connection* conn) {
+    // NOTE: this method will end communication over a given Connection, but
+    // it will not destroy the corresponding Connection object or remove it
+    // from _connections.
+    conn->closed = true;
+    conn->amp->shutdown();
     Listener::globalTicketHolder.release();
 }
 
 void TransportLayerLegacy::endAllSessions(Session::TagMask tags) {
-    log() << "legacy transport layer ending all sessions";
     {
         stdx::lock_guard<stdx::mutex> lk(_connectionsMutex);
         auto&& conn = _connections.begin();
         while (conn != _connections.end()) {
-            // If we erase this connection below, we invalidate our iterator, use a placeholder.
-            auto placeholder = conn;
-            placeholder++;
-
             if (conn->second.tags & tags) {
                 log() << "Skip closing connection for connection # " << conn->second.connectionId;
             } else {
-                _endSession_inlock(conn);
+                _closeConnection(&(conn->second));
             }
 
-            conn = placeholder;
+            conn++;
         }
     }
 }
@@ -230,16 +286,17 @@ void TransportLayerLegacy::shutdown() {
     endAllSessions(Session::kEmptyTagMask);
 }
 
-void TransportLayerLegacy::_destroy(Session& session) {
+void TransportLayerLegacy::_destroy(LegacySession* session) {
+    // We can only get here from Session's dtor. Since the Session
+    // is ending, it is safe to remove and destroy its Connection.
     stdx::lock_guard<stdx::mutex> lk(_connectionsMutex);
-    auto conn = _connections.find(session.id());
+    auto conn = _connections.find(session->_id);
 
     invariant(conn != _connections.end());
-    if (!conn->second.ended) {
-        _endSession_inlock(conn);
+    if (!conn->second.closed) {
+        _closeConnection(&(conn->second));
     }
 
-    invariant(!conn->second.inUse);
     _connections.erase(conn);
 }
 
@@ -252,28 +309,26 @@ Status TransportLayerLegacy::_runTicket(Ticket ticket) {
         return Ticket::ExpiredStatus;
     }
 
-    AbstractMessagingPort* amp;
-
-    {
-        stdx::lock_guard<stdx::mutex> lk(_connectionsMutex);
-
-        // Error if we cannot find the session.
-        auto conn = _connections.find(ticket.sessionId());
-        if (conn == _connections.end()) {
-            return TransportLayer::TicketSessionUnknownStatus;
-        }
-
-        // Error if we find the session but its connection is closed.
-        if (conn->second.ended) {
-            return TransportLayer::TicketSessionClosedStatus;
-        }
-
-        // "check out" the port
-        conn->second.inUse = true;
-        amp = conn->second.amp.get();
+    // Attempt to turn the session weak_ptr into a shared_ptr
+    auto legacyTicket = checked_cast<LegacyTicket*>(getTicketImpl(ticket));
+    std::shared_ptr<Session> session = legacyTicket->_session.lock();
+    if (!session) {
+        // Error if we no longer have this session.
+        return TransportLayer::TicketSessionClosedStatus;
     }
 
-    auto legacyTicket = checked_cast<LegacyTicket*>(getTicketImpl(ticket));
+    // Now that we have the session's shared_ptr, we are guaranteed that the
+    // Connection object won't be removed out from under us, because the lifetime
+    // of a Connection is tied to its Session's destructor.
+    LegacySession* impl = checked_cast<LegacySession*>(session->impl());
+    Connection* conn = impl->_connection;
+    if (conn->closed) {
+        return TransportLayer::TicketSessionClosedStatus;
+    }
+
+    // NOTE: no two Tickets should ever be running concurrently for the same Session.
+    AbstractMessagingPort* amp = conn->amp.get();
+
     Status res = Status::OK();
 
     try {
@@ -282,23 +337,15 @@ Status TransportLayerLegacy::_runTicket(Ticket ticket) {
         res = exceptionToStatus();
     }
 
-    {
-        stdx::lock_guard<stdx::mutex> lk(_connectionsMutex);
-
-        auto conn = _connections.find(ticket.sessionId());
-        invariant(conn != _connections.end());
-
 #ifdef MONGO_CONFIG_SSL
-        // If we didn't have an X509 subject name, see if we have one now
-        if (!conn->second.sslPeerInfo) {
-            auto info = amp->getX509PeerInfo();
-            if (info.subjectName != "") {
-                conn->second.sslPeerInfo = info;
-            }
+    // If we didn't have an X509 subject name, see if we have one now
+    if (!conn->sslPeerInfo) {
+        auto info = amp->getX509PeerInfo();
+        if (info.subjectName != "") {
+            conn->sslPeerInfo = info;
         }
-#endif
-        conn->second.inUse = false;
     }
+#endif
 
     return res;
 }
@@ -311,19 +358,30 @@ void TransportLayerLegacy::_handleNewConnection(std::unique_ptr<AbstractMessagin
         return;
     }
 
-    Session session(amp->remote(), HostAndPort(amp->localAddr().toString(true)), this);
+    auto sessionImpl = stdx::make_unique<LegacySession>(
+        amp->remote(), HostAndPort(amp->localAddr().toString(true)), this);
+    auto session = std::make_shared<Session>(std::move(sessionImpl));
 
     amp->setLogLevel(logger::LogSeverity::Debug(1));
 
     {
         stdx::lock_guard<stdx::mutex> lk(_connectionsMutex);
-        _connections.emplace(std::piecewise_construct,
-                             std::forward_as_tuple(session.id()),
-                             std::forward_as_tuple(std::move(amp), false, session.getTags()));
+        auto conn =
+            _connections.emplace(std::piecewise_construct,
+                                 std::forward_as_tuple(session->id()),
+                                 std::forward_as_tuple(std::move(amp), false, session->getTags()));
+
+        invariant(conn.second);
+
+        // Set our session impl's connection hook and id
+        LegacySession* impl = checked_cast<LegacySession*>(session->impl());
+        impl->_connection = &(conn.first->second);
+        impl->_connection->closed = false;
+        impl->_id = session->id();
     }
 
     invariant(_sep);
-    _sep->startSession(std::move(session));
+    _sep->startSession(session);
 }
 
 }  // namespace transport

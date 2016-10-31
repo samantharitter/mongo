@@ -63,10 +63,10 @@ public:
      *
      * ...repeat until wait() returns an error.
      */
-    void startSession(transport::Session&& session) override;
+    void startSession(SessionHandle session) override;
 
 private:
-    void run(transport::Session&& session);
+    void run(SessionHandle session);
 
     transport::TransportLayer* _tl;
 

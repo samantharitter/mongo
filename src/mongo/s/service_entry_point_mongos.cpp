@@ -73,12 +73,12 @@ using transport::TransportLayer;
 
 ServiceEntryPointMongos::ServiceEntryPointMongos(TransportLayer* tl) : _tl(tl) {}
 
-void ServiceEntryPointMongos::startSession(Session&& session) {
-    launchWrappedServiceEntryWorkerThread(std::move(session),
-                                          [this](Session* session) { _sessionLoop(session); });
+void ServiceEntryPointMongos::startSession(SessionHandle session) {
+    launchWrappedServiceEntryWorkerThread(session,
+                                          [this](SessionHandle session) { _sessionLoop(session); });
 }
 
-void ServiceEntryPointMongos::_sessionLoop(Session* session) {
+void ServiceEntryPointMongos::_sessionLoop(SessionHandle session) {
     Message message;
     int64_t counter = 0;
 

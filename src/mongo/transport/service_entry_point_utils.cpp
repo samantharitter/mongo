@@ -55,23 +55,26 @@ namespace mongo {
 
 namespace {
 
+/**
+ * This object takes ownership of SessionHandle.
+ */
 struct Context {
-    Context(transport::Session session, stdx::function<void(transport::Session*)> task)
-        : session(std::move(session)), task(std::move(task)) {}
+    Context(SessionHandle session, stdx::function<void(SessionHandle)> task)
+        : session(session), task(std::move(task)) {}
 
-    transport::Session session;
-    stdx::function<void(transport::Session*)> task;
+    SessionHandle session;
+    stdx::function<void(SessionHandle)> task;
 };
 
 void* runFunc(void* ptr) {
     std::unique_ptr<Context> ctx(static_cast<Context*>(ptr));
 
-    auto tl = ctx->session.getTransportLayer();
-    Client::initThread("conn", &ctx->session);
-    setThreadName(std::string(str::stream() << "conn" << ctx->session.id()));
+    auto tl = ctx->session->getTransportLayer();
+    Client::initThread("conn", ctx->session);
+    setThreadName(std::string(str::stream() << "conn" << ctx->session->id()));
 
     try {
-        ctx->task(&ctx->session);
+        ctx->task(ctx->session);
     } catch (const AssertionException& e) {
         log() << "AssertionException handling request, closing client connection: " << e;
     } catch (const SocketException& e) {
@@ -89,7 +92,7 @@ void* runFunc(void* ptr) {
     if (!serverGlobalParams.quiet) {
         auto conns = tl->sessionStats().numOpenSessions;
         const char* word = (conns == 1 ? " connection" : " connections");
-        log() << "end connection " << ctx->session.remote() << " (" << conns << word
+        log() << "end connection " << ctx->session->remote() << " (" << conns << word
               << " now open)";
     }
 
@@ -99,9 +102,9 @@ void* runFunc(void* ptr) {
 }
 }  // namespace
 
-void launchWrappedServiceEntryWorkerThread(transport::Session&& session,
-                                           stdx::function<void(transport::Session*)> task) {
-    auto ctx = stdx::make_unique<Context>(std::move(session), std::move(task));
+void launchWrappedServiceEntryWorkerThread(SessionHandle session,
+                                           stdx::function<void(SessionHandle)> task) {
+    auto ctx = stdx::make_unique<Context>(session, std::move(task));
 
     try {
 #ifndef __linux__  // TODO: consider making this ifdef _WIN32
@@ -147,7 +150,7 @@ void launchWrappedServiceEntryWorkerThread(transport::Session&& session,
 #endif  // __linux__
 
     } catch (...) {
-        log() << "failed to create service entry worker thread for " << ctx->session.remote();
+        log() << "failed to create service entry worker thread for " << ctx->session->remote();
     }
 }
 

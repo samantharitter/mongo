@@ -32,6 +32,7 @@
 #include "mongo/stdx/mutex.h"
 #include "mongo/stdx/thread.h"
 #include "mongo/stdx/unordered_map.h"
+#include "mongo/transport/session_impl.h"
 #include "mongo/transport/ticket_impl.h"
 #include "mongo/transport/transport_layer.h"
 #include "mongo/util/net/listen.h"
@@ -66,29 +67,34 @@ public:
     Status setup();
     Status start() override;
 
-    Ticket sourceMessage(Session& session,
+    Ticket sourceMessage(const SessionHandle& session,
                          Message* message,
                          Date_t expiration = Ticket::kNoExpirationDate) override;
 
-    Ticket sinkMessage(Session& session,
+    Ticket sinkMessage(const SessionHandle& session,
                        const Message& message,
                        Date_t expiration = Ticket::kNoExpirationDate) override;
 
     Status wait(Ticket&& ticket) override;
     void asyncWait(Ticket&& ticket, TicketCallback callback) override;
 
-    void registerTags(const Session& session) override;
-    SSLPeerInfo getX509PeerInfo(const Session& session) const override;
+    void registerTags(const SessionHandle& session) override;
+    SSLPeerInfo getX509PeerInfo(const SessionHandle& session) const override;
 
     Stats sessionStats() override;
 
-    void end(Session& session) override;
+    void end(const SessionHandle& session) override;
     void endAllSessions(transport::Session::TagMask tags) override;
 
     void shutdown() override;
 
 private:
-    void _destroy(Session& session) override;
+    /**
+     * This method cleans up connections, and it may ONLY be called from the
+     * LegacySession destructor.
+     */
+    class LegacySession;
+    void _destroy(LegacySession* session);
 
     void _handleNewConnection(std::unique_ptr<AbstractMessagingPort> amp);
 
@@ -96,6 +102,51 @@ private:
 
     using NewConnectionCb = stdx::function<void(std::unique_ptr<AbstractMessagingPort>)>;
     using WorkHandle = stdx::function<Status(AbstractMessagingPort*)>;
+
+    struct Connection;
+
+    /**
+     * A SessionImpl implementation for this TransportLayer.
+     *
+     * The lifetime of a TransportLayerLegacy::Connection is tied to the lifetime
+     * of its LegacySession. When ~LegacySession() runs, it will trigger the TL to
+     * remove its corresponding Connection object from _connections.
+     */
+    class LegacySession : public SessionImpl {
+        MONGO_DISALLOW_COPYING(LegacySession);
+
+    public:
+        LegacySession(HostAndPort remote, HostAndPort local, TransportLayerLegacy* tl);
+
+        ~LegacySession();
+
+        LegacySession(LegacySession&& other);
+        LegacySession& operator=(LegacySession&& other);
+
+        Session::TagMask getTags() const override;
+        void replaceTags(TagMask tags) override;
+
+        const HostAndPort& local() const override;
+        const HostAndPort& remote() const override;
+
+        SSLPeerInfo getX509PeerInfo() const override;
+
+        TransportLayer* getTransportLayer() const override;
+
+        MessageCompressorManager& getCompressorManager() override;
+
+        Session::Id _id;
+
+        HostAndPort _remote;
+        HostAndPort _local;
+
+        TagMask _tags;
+
+        MessageCompressorManager _messageCompressorManager;
+
+        TransportLayerLegacy* _tl;
+        Connection* _connection = nullptr;
+    };
 
     /**
      * A TicketImpl implementation for this TransportLayer. WorkHandle is a callable that
@@ -105,10 +156,12 @@ private:
         MONGO_DISALLOW_COPYING(LegacyTicket);
 
     public:
-        LegacyTicket(const Session& session, Date_t expiration, WorkHandle work);
+        LegacyTicket(const SessionHandle& session, Date_t expiration, WorkHandle work);
 
         SessionId sessionId() const override;
         Date_t expiration() const override;
+
+        std::weak_ptr<Session> _session;
 
         SessionId _sessionId;
         Date_t _expiration;
@@ -141,7 +194,7 @@ private:
      */
     struct Connection {
         Connection(std::unique_ptr<AbstractMessagingPort> port, bool ended, Session::TagMask tags)
-            : amp(std::move(port)), connectionId(amp->connectionId()), tags(tags) {}
+            : amp(std::move(port)), connectionId(amp->connectionId()), tags(tags), closed(ended) {}
 
         std::unique_ptr<AbstractMessagingPort> amp;
 
@@ -149,8 +202,7 @@ private:
 
         boost::optional<SSLPeerInfo> sslPeerInfo;
         Session::TagMask tags;
-        bool inUse = false;
-        bool ended = false;
+        bool closed;
     };
 
     ServiceEntryPoint* _sep;
@@ -161,7 +213,7 @@ private:
     mutable stdx::mutex _connectionsMutex;
     stdx::unordered_map<Session::Id, Connection> _connections;
 
-    void _endSession_inlock(decltype(_connections.begin()) conn);
+    void _closeConnection(Connection* conn);
 
     AtomicWord<bool> _running;
 

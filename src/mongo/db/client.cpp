@@ -44,7 +44,6 @@
 #include "mongo/db/lasterror.h"
 #include "mongo/db/service_context.h"
 #include "mongo/stdx/thread.h"
-#include "mongo/transport/session.h"
 #include "mongo/util/concurrency/thread_name.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/mongoutils/str.h"
@@ -64,11 +63,13 @@ void Client::initThreadIfNotAlready() {
     initThreadIfNotAlready(getThreadName().c_str());
 }
 
-void Client::initThread(const char* desc, transport::Session* session) {
+void Client::initThread(const char* desc, const transport::SessionHandle& session) {
     initThread(desc, getGlobalServiceContext(), session);
 }
 
-void Client::initThread(const char* desc, ServiceContext* service, transport::Session* session) {
+void Client::initThread(const char* desc,
+                        ServiceContext* service,
+                        const transport::SessionHandle& session) {
     invariant(currentClient.getMake()->get() == nullptr);
 
     std::string fullDesc;
@@ -99,7 +100,9 @@ int64_t generateSeed(const std::string& desc) {
 }
 }  // namespace
 
-Client::Client(std::string desc, ServiceContext* serviceContext, transport::Session* session)
+Client::Client(std::string desc,
+               ServiceContext* serviceContext,
+               const transport::SessionHandle& session)
     : _serviceContext(serviceContext),
       _session(session),
       _desc(std::move(desc)),

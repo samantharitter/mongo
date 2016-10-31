@@ -130,7 +130,7 @@ ServiceContext::~ServiceContext() {
 }
 
 ServiceContext::UniqueClient ServiceContext::makeClient(std::string desc,
-                                                        transport::Session* session) {
+                                                        transport::SessionHandle session) {
     std::unique_ptr<Client> client(new Client(std::move(desc), this, session));
     auto observer = _clientObservers.cbegin();
     try {

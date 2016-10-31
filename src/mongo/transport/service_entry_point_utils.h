@@ -29,14 +29,15 @@
 #pragma once
 
 #include "mongo/stdx/functional.h"
+#include "mongo/transport/service_entry_point.h"
+#include "mongo/transport/session.h"
 
 namespace mongo {
 
-namespace transport {
-class Session;
-}  // namespace transport
-
-void launchWrappedServiceEntryWorkerThread(transport::Session&& session,
-                                           stdx::function<void(transport::Session*)> task);
+/**
+ * This method takes ownership of SessionHandle.
+ */
+void launchWrappedServiceEntryWorkerThread(SessionHandle session,
+                                           stdx::function<void(SessionHandle)> task);
 
 }  // namespace mongo

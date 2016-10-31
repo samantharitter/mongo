@@ -28,36 +28,53 @@
 
 #pragma once
 
-#include <vector>
-
 #include "mongo/base/disallow_copying.h"
-#include "mongo/transport/service_entry_point.h"
+#include "mongo/transport/message_compressor_manager.h"
+#include "mongo/transport/ticket.h"
+#include "mongo/util/net/hostandport.h"
+#include "mongo/util/net/message.h"
+#include "mongo/util/time_support.h"
 
 namespace mongo {
 
+struct SSLPeerInfo;
+
 namespace transport {
-class Session;
+
 class TransportLayer;
-}  // namespace transport
 
 /**
- * The entry point from the TransportLayer into Mongos. startSession() spawns and
- * detaches a new thread for each incoming connection (transport::Session).
+ * Interface representing implementations of transport::Sessions.
+ *
+ * Session implementations are specific to a TransportLayer implementation.
  */
-class ServiceEntryPointMongos final : public ServiceEntryPoint {
-    MONGO_DISALLOW_COPYING(ServiceEntryPointMongos);
+class SessionImpl {
+    MONGO_DISALLOW_COPYING(SessionImpl);
 
 public:
-    ServiceEntryPointMongos(transport::TransportLayer* tl);
+    virtual ~SessionImpl() = default;
 
-    virtual ~ServiceEntryPointMongos() = default;
+    // TODO: where to put this?
+    using TagMask = uint32_t;
 
-    void startSession(SessionHandle session) override;
+    SessionImpl(SessionImpl&&) = default;
+    SessionImpl& operator=(SessionImpl&&) = default;
 
-private:
-    void _sessionLoop(SessionHandle session);
+    virtual TagMask getTags() const = 0;
+    virtual void replaceTags(TagMask tags) = 0;
 
-    transport::TransportLayer* _tl;
+    virtual const HostAndPort& local() const = 0;
+    virtual const HostAndPort& remote() const = 0;
+
+    virtual SSLPeerInfo getX509PeerInfo() const = 0;
+
+    virtual TransportLayer* getTransportLayer() const = 0;
+
+    virtual MessageCompressorManager& getCompressorManager() = 0;
+
+protected:
+    SessionImpl() = default;
 };
 
+}  // namespace transport
 }  // namespace mongo
