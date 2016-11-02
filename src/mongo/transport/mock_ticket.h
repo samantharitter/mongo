@@ -28,62 +28,50 @@
 
 #pragma once
 
-#include "mongo/base/status.h"
-#include "mongo/stdx/unordered_map.h"
 #include "mongo/transport/session.h"
-#include "mongo/transport/ticket.h"
 #include "mongo/transport/ticket_impl.h"
-#include "mongo/transport/transport_layer.h"
-#include "mongo/util/net/message.h"
-#include "mongo/util/net/ssl_types.h"
 #include "mongo/util/time_support.h"
 
 namespace mongo {
+
+class Message;
+
 namespace transport {
 
 /**
- * This TransportLayerMock is a noop TransportLayer implementation.
+ * A mock ticket class for our test suite.
  */
-class TransportLayerMock : public TransportLayer {
-    MONGO_DISALLOW_COPYING(TransportLayerMock);
-
+class MockTicket : public TicketImpl {
 public:
-    TransportLayerMock();
-    ~TransportLayerMock();
+    // Source constructor
+    MockTicket(const SessionHandle& session,
+               Message* message,
+               Date_t expiration = Ticket::kNoExpirationDate)
+        : _session(session), _message(message), _expiration(expiration) {}
 
-    Ticket sourceMessage(const SessionHandle& session,
-                         Message* message,
-                         Date_t expiration = Ticket::kNoExpirationDate) override;
-    Ticket sinkMessage(const SessionHandle& session,
-                       const Message& message,
-                       Date_t expiration = Ticket::kNoExpirationDate) override;
+    // Sink constructor
+    MockTicket(const SessionHandle& session, Date_t expiration = Ticket::kNoExpirationDate)
+        : _session(session), _expiration(expiration) {}
 
-    Status wait(Ticket&& ticket) override;
-    void asyncWait(Ticket&& ticket, TicketCallback callback) override;
+    MockTicket(MockTicket&&) = default;
+    MockTicket& operator=(MockTicket&&) = default;
 
-    SSLPeerInfo getX509PeerInfo(const ConstSessionHandle& session) const override;
-    void setX509PeerInfo(const SessionHandle& session, SSLPeerInfo peerInfo);
+    SessionId sessionId() const override {
+        return _session->id();
+    }
 
-    Stats sessionStats() override;
+    Date_t expiration() const override {
+        return _expiration;
+    }
 
-    SessionHandle createSession();
-    SessionHandle get(Session::Id id);
-    bool owns(Session::Id id);
-    void end(const SessionHandle& session) override;
-    void endAllSessions(Session::TagMask tags) override;
-
-    Status start() override;
-    void shutdown() override;
-    bool inShutdown() const;
+    boost::optional<Message*> message() const {
+        return _message;
+    }
 
 private:
-    struct Connection {
-        bool ended;
-        SessionHandle session;
-        SSLPeerInfo peerInfo;
-    };
-    stdx::unordered_map<Session::Id, Connection> _sessions;
-    bool _shutdown;
+    const SessionHandle& _session;
+    boost::optional<Message*> _message;
+    Date_t _expiration;
 };
 
 }  // namespace transport

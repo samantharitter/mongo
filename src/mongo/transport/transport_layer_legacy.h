@@ -28,6 +28,7 @@
 
 #pragma once
 
+#include "mongo/stdx/list.h"
 #include "mongo/stdx/memory.h"
 #include "mongo/stdx/mutex.h"
 #include "mongo/stdx/thread.h"
@@ -77,7 +78,6 @@ public:
     Status wait(Ticket&& ticket) override;
     void asyncWait(Ticket&& ticket, TicketCallback callback) override;
 
-    void registerTags(const ConstSessionHandle& session) override;
     SSLPeerInfo getX509PeerInfo(const ConstSessionHandle& session) const override;
 
     Stats sessionStats() override;
@@ -88,7 +88,12 @@ public:
     void shutdown() override;
 
 private:
-    void _destroy(Session& session) override;
+    class LegacySession;
+    using LegacySessionHandle = std::shared_ptr<LegacySession>;
+    using ConstLegacySessionHandle = std::shared_ptr<const LegacySession>;
+    using SessionEntry = std::list<std::weak_ptr<LegacySession>>::iterator;
+
+    void _destroy(LegacySession& session);
 
     void _handleNewConnection(std::unique_ptr<AbstractMessagingPort> amp);
 
@@ -98,6 +103,87 @@ private:
     using WorkHandle = stdx::function<Status(AbstractMessagingPort*)>;
 
     /**
+     * Connection object, to associate Sessions with AbstractMessagingPorts.
+     */
+    struct Connection {
+        MONGO_DISALLOW_COPYING(Connection);
+
+        Connection(std::unique_ptr<AbstractMessagingPort> port)
+            : amp(std::move(port)), connectionId(amp->connectionId()) {}
+
+        std::unique_ptr<AbstractMessagingPort> amp;
+
+        const long long connectionId;
+
+        boost::optional<SSLPeerInfo> sslPeerInfo;
+        bool closed = false;
+    };
+
+    /**
+     * An implementation of the Session interface for this TransportLayer.
+     */
+    class LegacySession : public Session {
+        MONGO_DISALLOW_COPYING(LegacySession);
+
+    public:
+        ~LegacySession();
+
+        static std::shared_ptr<LegacySession> create(std::unique_ptr<AbstractMessagingPort> amp,
+                                                     TransportLayerLegacy* tl);
+
+        TransportLayer* getTransportLayer() const override {
+            return _tl;
+        }
+
+        const HostAndPort& remote() const override {
+            return _remote;
+        }
+
+        const HostAndPort& local() const override {
+            return _local;
+        }
+
+        void replaceTags(TagMask tags) override;
+
+        TagMask getTags() const override {
+            return _tags;
+        }
+
+        MessageCompressorManager& getCompressorManager() override {
+            return _messageCompressorManager;
+        }
+
+        Connection* conn() const {
+            return _connection.get();
+        }
+
+        void setIter(SessionEntry it) {
+            _entry = std::move(it);
+        }
+
+        SessionEntry getIter() const {
+            return _entry;
+        }
+
+    private:
+        LegacySession(std::unique_ptr<AbstractMessagingPort> amp, TransportLayerLegacy* tl);
+
+        HostAndPort _remote;
+        HostAndPort _local;
+
+        TransportLayerLegacy* _tl;
+
+        TagMask _tags;
+
+        MessageCompressorManager _messageCompressorManager;
+
+        std::unique_ptr<Connection> _connection;
+
+        // A handle to this session's entry in the TL's session list
+        SessionEntry _entry;
+    };
+
+    /**
      * A TicketImpl implementation for this TransportLayer. WorkHandle is a callable that
      * can be invoked to fill this ticket.
      */
@@ -105,10 +191,18 @@ private:
         MONGO_DISALLOW_COPYING(LegacyTicket);
 
     public:
-        LegacyTicket(const SessionHandle& session, Date_t expiration, WorkHandle work);
+        LegacyTicket(const LegacySessionHandle& session, Date_t expiration, WorkHandle work);
 
         SessionId sessionId() const override;
         Date_t expiration() const override;
+
+        /**
+         * If this ticket's session is still alive, return a shared_ptr. Otherwise,
+         * return nullptr.
+         */
+        LegacySessionHandle getSession();
+
+        std::weak_ptr<LegacySession> _session;
 
         SessionId _sessionId;
         Date_t _expiration;
@@ -136,32 +230,16 @@ private:
         NewConnectionCb _accepted;
     };
 
-    /**
-     * Connection object, to associate Session ids with AbstractMessagingPorts.
-     */
-    struct Connection {
-        Connection(std::unique_ptr<AbstractMessagingPort> port, bool ended, Session::TagMask tags)
-            : amp(std::move(port)), connectionId(amp->connectionId()), tags(tags) {}
-
-        std::unique_ptr<AbstractMessagingPort> amp;
-
-        const long long connectionId;
-
-        boost::optional<SSLPeerInfo> sslPeerInfo;
-        Session::TagMask tags;
-        bool inUse = false;
-        bool ended = false;
-    };
-
     ServiceEntryPoint* _sep;
 
     std::unique_ptr<Listener> _listener;
     stdx::thread _listenerThread;
 
-    mutable stdx::mutex _connectionsMutex;
-    stdx::unordered_map<Session::Id, Connection> _connections;
+    // TransportLayerLegacy holds non-owning pointers to all of its sessions.
+    mutable stdx::mutex _sessionsMutex;
+    stdx::list<std::weak_ptr<LegacySession>> _sessions;
 
-    void _endSession_inlock(decltype(_connections.begin()) conn);
+    void _closeConnection(Connection* conn);
 
     AtomicWord<bool> _running;
 
