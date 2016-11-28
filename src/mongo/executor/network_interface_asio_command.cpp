@@ -292,6 +292,7 @@ void NetworkInterfaceASIO::_completeOperation(AsyncOp* op, const ResponseStatus&
         // If we fail during heartbeating, we won't be able to access any of op's members after
         // calling finish(), so we return here.
         log() << "Failed to heartbeat to " << op->request().target << " - " << resp.getStatus();
+        log() << "SAM: Ending AsyncOp request: " << op->request().id;
         op->finish(resp);
         return;
     }
@@ -303,6 +304,7 @@ void NetworkInterfaceASIO::_completeOperation(AsyncOp* op, const ResponseStatus&
                << " reason: " << resp.getStatus();
     }
 
+    log() << "SAM: Ending AsyncOp request: " << op->request().id;
     op->finish(resp);
 
     std::unique_ptr<AsyncOp> ownedOp;
@@ -351,8 +353,8 @@ void NetworkInterfaceASIO::_completeOperation(AsyncOp* op, const ResponseStatus&
 }
 
 void NetworkInterfaceASIO::_asyncRunCommand(AsyncOp* op, NetworkOpHandler handler) {
-    LOG(2) << "Starting asynchronous command " << op->request().id << " on host "
-           << op->request().target.toString();
+    log() << "Starting asynchronous command " << op->request().id << " on host "
+          << op->request().target.toString() << " command: " << op->request().toString();;
 
     if (MONGO_FAIL_POINT(NetworkInterfaceASIOasyncRunCommandFail)) {
         _validateAndRun(op, asio::error::basic_errors::network_unreachable, [] {});
@@ -369,6 +371,7 @@ void NetworkInterfaceASIO::_asyncRunCommand(AsyncOp* op, NetworkOpHandler handle
     // Step 4
     auto recvMessageCallback = [this, cmd, handler, op](std::error_code ec, size_t bytes) {
         // We don't call _validateAndRun here as we assume the caller will.
+        log() << "op " << op->request().id << ", received whole message";
         handler(ec, bytes);
     };
 
@@ -389,7 +392,7 @@ void NetworkInterfaceASIO::_asyncRunCommand(AsyncOp* op, NetworkOpHandler handle
                                        << ", got response id: " << actualId;
                                 return handler(make_error_code(ErrorCodes::ProtocolError), bytes);
                             }
-
+                            log() << "op " << op->request().id << ", receiving body...";
                             asyncRecvMessageBody(cmd->conn().stream(),
                                                  &cmd->header(),
                                                  &cmd->toRecv(),
@@ -403,6 +406,7 @@ void NetworkInterfaceASIO::_asyncRunCommand(AsyncOp* op, NetworkOpHandler handle
             _validateAndRun(op,
                             ec,
                             [this, cmd, op, recvHeaderCallback] {
+                                log() << "op " << op->request().id << ", receiving header...";
                                 asyncRecvMessageHeader(cmd->conn().stream(),
                                                        &cmd->header(),
                                                        std::move(recvHeaderCallback));

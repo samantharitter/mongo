@@ -254,6 +254,7 @@ void ASIOConnection::setup(Milliseconds timeout, SetupCallback cb) {
                        });
                    });
 
+        log() << "SAM: Starting AsyncOp request " << _impl->request().id << " with timeout value: " << _impl->request().timeout;
         _global->_impl->_connect(_impl.get());
     });
 }

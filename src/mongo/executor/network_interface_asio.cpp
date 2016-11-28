@@ -132,10 +132,13 @@ void NetworkInterfaceASIO::startup() {
 void NetworkInterfaceASIO::shutdown() {
     _state.store(State::kShutdown);
     _io_service.stop();
+
     for (auto&& worker : _serviceRunners) {
         worker.join();
     }
-    LOG(2) << "NetworkInterfaceASIO shutdown successfully";
+
+    log() << "SAM: NIA shutting down with " << _inProgress.size() + _inGetConnection.size() << " jobs not completed.";
+    log() << "NetworkInterfaceASIO shutdown successfully";
 }
 
 void NetworkInterfaceASIO::waitForWork() {
@@ -187,7 +190,8 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
         invariant(insertResult.second);
     }
 
-    LOG(2) << "startCommand: " << request.toString();
+    log() << "SAM: Starting AsyncOp request " << request.id << " with timeout value: " << request.timeout;
+    log() << "startCommand: " << request.toString();
 
     auto getConnectionStartTime = now();
 
@@ -195,7 +199,7 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
         StatusWith<ConnectionPool::ConnectionHandle> swConn) {
 
         if (!swConn.isOK()) {
-            LOG(2) << "Failed to get connection from pool for request " << request.id << ": "
+            log() << "Failed to get connection from pool for request " << request.id << ": "
                    << swConn.getStatus();
 
             bool wasPreviouslyCanceled = false;
@@ -208,6 +212,7 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
                          ? Status(ErrorCodes::CallbackCanceled, "Callback canceled")
                          : swConn.getStatus());
             signalWorkAvailable();
+            log() << "SAM: Ending AsyncOp request " << request.id;
             return;
         }
 
@@ -224,7 +229,7 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
             lk.unlock();
 
             onFinish({ErrorCodes::CallbackCanceled, "Callback canceled"});
-
+            log() << "SAM: Ending AsyncOp request: " << request.id;
             // Though we were canceled, we know that the stream is fine, so indicate success.
             conn->indicateSuccess();
 
@@ -264,6 +269,7 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
                     // timeout duration - but make no stronger assumption. It is thus possible that
                     // we have already exceeded the timeout. In this case we timeout the operation
                     // manually.
+                    log() << "Remote command timed out while waiting to get a connection from the pool, " << op->_request.id;
                     std::stringstream msg;
                     msg << "Remote command timed out while waiting to get a connection from the "
                         << "pool, took " << getConnectionDuration << ", timeout was set to "
@@ -301,10 +307,11 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
                             stdx::lock_guard<stdx::mutex> lk(access->mutex);
                             if (generation != access->id) {
                                 // The operation has been cleaned up, do not access.
+                                log() << "SAM: attempted to time out operation " << requestId << " but it was cleaned up.";
                                 return;
                             }
 
-                            LOG(2) << "Operation " << requestId << " timed out.";
+                            log() << "SAM: Operation " << requestId << " timed out.";
 
                             // An operation may be in mid-flight when it times out, so we
                             // cancel any in-progress async calls but do not complete the operation
@@ -314,7 +321,7 @@ void NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHa
                                 op->_connection->cancel();
                             }
                         } else {
-                            LOG(2) << "Failed to time operation " << requestId
+                            log() << "SAM: Failed to time operation " << requestId
                                    << " out: " << ec.message();
                         }
                     });
