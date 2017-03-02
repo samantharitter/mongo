@@ -35,6 +35,7 @@
 
 #include "mongo/db/dbwebserver.h"
 
+#include <boost/optional.hpp>
 #include <pcrecpp.h>
 
 #include "mongo/base/init.h"
@@ -515,7 +516,7 @@ bool DbWebServer::_allowed(OperationContext* txn,
         UserName userName(parms["username"], "admin");
         User* user;
         AuthorizationManager& authzManager = authSess->getAuthorizationManager();
-        Status status = authzManager.acquireUser(txn, userName, &user);
+        Status status = authzManager.acquireUser(txn, userName, boost::optional<OID>(), &user);
         if (!status.isOK()) {
             if (status.code() != ErrorCodes::UserNotFound) {
                 uasserted(17051, status.reason());

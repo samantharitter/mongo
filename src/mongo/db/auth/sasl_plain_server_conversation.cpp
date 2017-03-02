@@ -95,6 +95,7 @@ StatusWith<bool> SaslPLAINServerConversation::step(StringData inputData, std::st
         _saslAuthSession->getAuthorizationSession()->getAuthorizationManager().acquireUser(
             _saslAuthSession->getOpCtxt(),
             UserName(_user, _saslAuthSession->getAuthenticationDatabase()),
+            boost::optional<OID>(),
             &userObj);
 
     if (!status.isOK()) {

@@ -166,7 +166,7 @@ StatusWith<bool> SaslSCRAMSHA1ServerConversation::_firstStep(std::vector<string>
     User* userObj;
     Status status =
         _saslAuthSession->getAuthorizationSession()->getAuthorizationManager().acquireUser(
-            _saslAuthSession->getOpCtxt(), user, &userObj);
+            _saslAuthSession->getOpCtxt(), user, boost::optional<OID>(), &userObj);
 
     if (!status.isOK()) {
         return StatusWith<bool>(status);

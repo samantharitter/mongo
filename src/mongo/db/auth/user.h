@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "mongo/base/disallow_copying.h"
+#include "mongo/bson/oid.h"
 #include "mongo/db/auth/privilege.h"
 #include "mongo/db/auth/resource_pattern.h"
 #include "mongo/db/auth/role_name.h"
@@ -77,13 +78,18 @@ public:
 
     typedef unordered_map<ResourcePattern, Privilege> ResourcePrivilegeMap;
 
-    explicit User(const UserName& name);
+    explicit User(const UserName& name, boost::optional<OID> oid);
     ~User();
 
     /**
      * Returns the user name for this user.
      */
     const UserName& getName() const;
+
+    /**
+     * Returns the user's id.
+     */
+    const boost::optional<OID>& getID() const;
 
     /**
      * Returns an iterator over the names of the user's direct roles
@@ -136,6 +142,11 @@ public:
     User* clone() const;
 
     // Mutators below.  Mutation functions should *only* be called by the AuthorizationManager
+
+    /**
+     * Set the id for this user.
+     */
+    void setID(boost::optional<OID> id);
 
     /**
      * Sets this user's authentication credentials.
@@ -205,6 +216,7 @@ public:
 
 private:
     UserName _name;
+    boost::optional<OID> _id;
 
     // Maps resource name to privilege on that resource
     ResourcePrivilegeMap _privileges;

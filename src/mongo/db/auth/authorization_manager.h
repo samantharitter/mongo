@@ -31,6 +31,8 @@
 #include <memory>
 #include <string>
 
+#include <boost/optional.hpp>
+
 #include "mongo/base/disallow_copying.h"
 #include "mongo/base/status.h"
 #include "mongo/bson/mutable/element.h"
@@ -82,6 +84,7 @@ public:
     ~AuthorizationManager();
 
     static const std::string USER_NAME_FIELD_NAME;
+    static const std::string USER_ID_FIELD_NAME;
     static const std::string USER_DB_FIELD_NAME;
     static const std::string ROLE_NAME_FIELD_NAME;
     static const std::string ROLE_DB_FIELD_NAME;
@@ -251,15 +254,26 @@ public:
 
     /**
      *  Returns the User object for the given userName in the out parameter "acquiredUser".
-     *  If the user cache already has a user object for this user, it increments the refcount
-     *  on that object and gives out a pointer to it.  If no user object for this user name
-     *  exists yet in the cache, reads the user's privilege document from disk, builds up
-     *  a User object, sets the refcount to 1, and gives that out.  The returned user may
-     *  be invalid by the time the caller gets access to it.
+     *
+     *  If no user object for this user name exists yet in the cache, read the user's privilege
+     *  document from disk, build up a User object, sets the refcount to 1, and give that out.
+     *
+     *  If we are refreshing a user document, we will use the current user's id to confirm
+     *  confirm that our user is of the same generation as the refreshed user document.
+     *  If the generations don't match we will return an error.
+     *
+     *  The returned user may be invalid by the time the caller gets access to it.
      *  The AuthorizationManager retains ownership of the returned User object.
      *  On non-OK Status return values, acquiredUser will not be modified.
      */
-    Status acquireUser(OperationContext* txn, const UserName& userName, User** acquiredUser);
+    Status acquireUser(OperationContext* txn, const UserName& userName, User** acquiredUser) {
+        return acquireUser(txn, userName, boost::optional<OID>(), acquiredUser);
+    }
+
+    Status acquireUser(OperationContext* txn,
+                       const UserName& userName,
+                       boost::optional<OID> id,
+                       User** acquiredUser);
 
     /**
      * Decrements the refcount of the given User object.  If the refcount has gone to zero,
@@ -341,6 +355,7 @@ private:
      */
     Status _fetchUserV2(OperationContext* txn,
                         const UserName& userName,
+                        boost::optional<OID> id,
                         std::unique_ptr<User>* acquiredUser);
 
     /**

@@ -102,7 +102,8 @@ void AuthorizationSession::startRequest(OperationContext* txn) {
 
 Status AuthorizationSession::addAndAuthorizeUser(OperationContext* txn, const UserName& userName) {
     User* user;
-    Status status = getAuthorizationManager().acquireUser(txn, userName, &user);
+    Status status =
+        getAuthorizationManager().acquireUser(txn, userName, boost::optional<OID>(), &user);
     if (!status.isOK()) {
         return status;
     }
@@ -742,7 +743,7 @@ void AuthorizationSession::_refreshUserInfoAsNeeded(OperationContext* txn) {
             UserName name = user->getName();
             User* updatedUser;
 
-            Status status = authMan.acquireUser(txn, name, &updatedUser);
+            Status status = authMan.acquireUser(txn, name, user->getID(), &updatedUser);
             switch (status.code()) {
                 case ErrorCodes::OK: {
                     // Success! Replace the old User object with the updated one.
