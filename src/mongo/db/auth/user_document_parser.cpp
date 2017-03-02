@@ -300,6 +300,15 @@ std::string V2UserDocumentParser::extractUserNameFromUserDocument(const BSONObj&
     return doc[AuthorizationManager::USER_NAME_FIELD_NAME].str();
 }
 
+boost::optional<OID> V2UserDocumentParser::extractUserIDFromUserDocument(const BSONObj& doc) const {
+    BSONElement e = doc[AuthorizationManager::USER_ID_FIELD_NAME];
+    if (e.type() == BSONType::EOO) {
+        return boost::optional<OID>();
+    }
+
+    return e.OID();
+}
+
 Status V2UserDocumentParser::initializeUserCredentialsFromUserDocument(
     User* user, const BSONObj& privDoc) const {
     User::CredentialData credentials;
