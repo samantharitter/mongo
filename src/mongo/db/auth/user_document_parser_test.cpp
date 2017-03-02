@@ -32,6 +32,7 @@
 #include "mongo/platform/basic.h"
 
 #include "mongo/base/status.h"
+#include "mongo/bson/oid.h"
 #include "mongo/db/auth/action_set.h"
 #include "mongo/db/auth/action_type.h"
 #include "mongo/db/auth/authorization_manager.h"
@@ -60,8 +61,8 @@ public:
     }
 
     void resetUsers() {
-        user.reset(new User(UserName("spencer", "test")));
-        adminUser.reset(new User(UserName("admin", "admin")));
+        user.reset(new User(UserName("spencer", "test"), boost::optional<OID>()));
+        adminUser.reset(new User(UserName("admin", "admin"), boost::optional<OID>()));
     }
 };
 
@@ -229,8 +230,8 @@ public:
     V2UserDocumentParser v2parser;
 
     void setUp() {
-        user.reset(new User(UserName("spencer", "test")));
-        adminUser.reset(new User(UserName("admin", "admin")));
+        user.reset(new User(UserName("spencer", "test"), boost::optional<OID>()));
+        adminUser.reset(new User(UserName("admin", "admin"), boost::optional<OID>()));
     }
 };
 
@@ -248,6 +249,32 @@ TEST_F(V2UserDocumentParsing, V2DocumentValidation) {
 
     // Need name field
     ASSERT_NOT_OK(v2parser.checkValidUserDocument(BSON("db"
+                                                       << "test"
+                                                       << "credentials"
+                                                       << BSON("MONGODB-CR"
+                                                               << "a")
+                                                       << "roles"
+                                                       << emptyArray)));
+
+    // Id field should be OID
+    ASSERT_OK(v2parser.checkValidUserDocument(BSON("user"
+                                                   << "spencer"
+                                                   << "userId"
+                                                   << OID::gen()
+                                                   << "db"
+                                                   << "test"
+                                                   << "credentials"
+                                                   << BSON("MONGODB-CR"
+                                                           << "a")
+                                                   << "roles"
+                                                   << emptyArray)));
+
+    // Non-OID id fields are rejected
+    ASSERT_NOT_OK(v2parser.checkValidUserDocument(BSON("user"
+                                                       << "spencer"
+                                                       << "userId"
+                                                       << "notAnOID"
+                                                       << "db"
                                                        << "test"
                                                        << "credentials"
                                                        << BSON("MONGODB-CR"
@@ -386,6 +413,25 @@ TEST_F(V2UserDocumentParsing, V2DocumentValidation) {
                                                                       << "roleA"
                                                                       << "db"
                                                                       << "dbA")))));
+}
+
+TEST_F(V2UserDocumentParsing, V2UserIDExtraction) {
+    OID oid = OID::gen();
+
+    // No id is present
+    ASSERT(!v2parser.extractUserIDFromUserDocument(BSON("user"
+                                                        << "sam"
+                                                        << "db"
+                                                        << "test")));
+    // Valid OID is present
+    auto res = v2parser.extractUserIDFromUserDocument(BSON("user"
+                                                           << "sam"
+                                                           << "userId"
+                                                           << oid
+                                                           << "db"
+                                                           << "test"));
+    ASSERT(res);
+    ASSERT(res == oid);
 }
 
 TEST_F(V2UserDocumentParsing, V2CredentialExtraction) {

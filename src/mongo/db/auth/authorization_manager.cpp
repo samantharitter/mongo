@@ -71,7 +71,7 @@ AuthInfo internalSecurity;
 
 MONGO_INITIALIZER_WITH_PREREQUISITES(SetupInternalSecurityUser, MONGO_NO_PREREQUISITES)
 (InitializerContext* context) {
-    User* user = new User(UserName("__system", "local"));
+    User* user = new User(UserName("__system", "local"), boost::optional<OID>());
 
     user->incrementRefCount();  // Pin this user so the ref count never drops below 1.
     ActionSet allActions;
@@ -85,6 +85,7 @@ MONGO_INITIALIZER_WITH_PREREQUISITES(SetupInternalSecurityUser, MONGO_NO_PREREQU
 }
 
 const std::string AuthorizationManager::USER_NAME_FIELD_NAME = "user";
+const std::string AuthorizationManager::USER_ID_FIELD_NAME = "userId";
 const std::string AuthorizationManager::USER_DB_FIELD_NAME = "db";
 const std::string AuthorizationManager::ROLE_NAME_FIELD_NAME = "role";
 const std::string AuthorizationManager::ROLE_DB_FIELD_NAME = "db";
@@ -384,6 +385,19 @@ Status AuthorizationManager::_initializeUserFromPrivilegeDocument(User* user,
                                                                   const BSONObj& privDoc) {
     V2UserDocumentParser parser;
     std::string userName = parser.extractUserNameFromUserDocument(privDoc);
+
+    const boost::optional<OID>& id = user->getID();
+    boost::optional<OID> docID = parser.extractUserIDFromUserDocument(privDoc);
+
+    // If we either don't have an id from the user doc stored on disk, or we have one
+    // and it does not match the one we've gotten from the current connection, fail.
+    if (id && (id != docID)) {
+        return Status(ErrorCodes::UserNotFound,
+                      mongoutils::str::stream() << "User id from privilege document \"" << userName
+                                                << "\" doesn't match stored user id",
+                      0);
+    }
+
     if (userName != user->getName().getUser()) {
         return Status(ErrorCodes::BadValue,
                       mongoutils::str::stream() << "User name from privilege document \""
@@ -393,6 +407,8 @@ Status AuthorizationManager::_initializeUserFromPrivilegeDocument(User* user,
                                                 << "\"",
                       0);
     }
+
+    user->setID(std::move(docID));
 
     Status status = parser.initializeUserCredentialsFromUserDocument(user, privDoc);
     if (!status.isOK()) {
@@ -446,6 +462,7 @@ Status AuthorizationManager::getRoleDescriptionsForDB(OperationContext* txn,
 
 Status AuthorizationManager::acquireUser(OperationContext* txn,
                                          const UserName& userName,
+                                         boost::optional<OID> id,
                                          User** acquiredUser) {
     if (userName == internalSecurity.user->getName()) {
         *acquiredUser = internalSecurity.user;
@@ -496,7 +513,7 @@ Status AuthorizationManager::acquireUser(OperationContext* txn,
             case schemaVersion28SCRAM:
             case schemaVersion26Final:
             case schemaVersion26Upgrade:
-                status = _fetchUserV2(txn, userName, &user);
+                status = _fetchUserV2(txn, userName, std::move(id), &user);
                 break;
             case schemaVersion24:
                 status = Status(ErrorCodes::AuthSchemaIncompatible,
@@ -537,6 +554,7 @@ Status AuthorizationManager::acquireUser(OperationContext* txn,
 
 Status AuthorizationManager::_fetchUserV2(OperationContext* txn,
                                           const UserName& userName,
+                                          boost::optional<OID> id,
                                           std::unique_ptr<User>* acquiredUser) {
     BSONObj userObj;
     Status status = getUserDescription(txn, userName, &userObj);
@@ -546,7 +564,7 @@ Status AuthorizationManager::_fetchUserV2(OperationContext* txn,
 
     // Put the new user into an unique_ptr temporarily in case there's an error while
     // initializing the user.
-    std::unique_ptr<User> user(new User(userName));
+    std::unique_ptr<User> user(new User(userName, std::move(id)));
 
     status = _initializeUserFromPrivilegeDocument(user.get(), userObj);
     if (!status.isOK()) {

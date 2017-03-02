@@ -52,7 +52,8 @@ void AuthorizationSessionForTest::assumePrivilegesForDB(Privilege privilege, Str
 
 void AuthorizationSessionForTest::assumePrivilegesForDB(PrivilegeVector privileges,
                                                         StringData dbName) {
-    auto user = stdx::make_unique<User>(UserName("authorizationSessionForTestUser", dbName));
+    auto user =
+        stdx::make_unique<User>(UserName("authorizationSessionForTestUser", dbName), OID::gen());
     user->addPrivileges(privileges);
 
     _authenticatedUsers.add(user.get());

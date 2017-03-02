@@ -42,9 +42,9 @@ namespace {
 TEST(UserSetTest, BasicTest) {
     UserSet set;
 
-    User* p1 = new User(UserName("Bob", "test"));
-    User* p2 = new User(UserName("George", "test"));
-    User* p3 = new User(UserName("Bob", "test2"));
+    User* p1 = new User(UserName("Bob", "test"), OID::gen());
+    User* p2 = new User(UserName("George", "test"), OID::gen());
+    User* p3 = new User(UserName("Bob", "test2"), OID::gen());
 
     const std::unique_ptr<User> delp1(p1);
     const std::unique_ptr<User> delp2(p2);
@@ -102,7 +102,7 @@ TEST(UserSetTest, IterateNames) {
     UserNameIterator iter = pset.getNames();
     ASSERT(!iter.more());
 
-    std::unique_ptr<User> user(new User(UserName("bob", "test")));
+    std::unique_ptr<User> user(new User(UserName("bob", "test"), OID::gen()));
     ASSERT_NULL(pset.add(user.get()));
 
     iter = pset.getNames();
