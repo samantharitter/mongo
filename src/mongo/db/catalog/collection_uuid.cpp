@@ -31,8 +31,6 @@
 #include "collection_uuid.h"
 
 #include "mongo/db/server_parameters.h"
-#include "mongo/platform/random.h"
-#include "mongo/stdx/mutex.h"
 
 namespace mongo {
 
@@ -40,23 +38,4 @@ bool enableCollectionUUIDs = false;
 ExportedServerParameter<bool, ServerParameterType::kStartupOnly> enableCollectionUUIDsParameter(
     ServerParameterSet::getGlobal(), "enableCollectionUUIDs", &enableCollectionUUIDs);
 
-namespace {
-stdx::mutex uuidGenMutex;
-auto uuidGen = SecureRandom::create();
-}  // namespace
-
-// static
-CollectionUUID CollectionUUID::generateSecureRandomUUID() {
-    stdx::unique_lock<stdx::mutex> lock(uuidGenMutex);
-    int64_t randomWords[2] = {uuidGen->nextInt64(), uuidGen->nextInt64()};
-    UUID randomBytes;
-    memcpy(&randomBytes, randomWords, sizeof(randomBytes));
-    // Set version in high 4 bits of byte 6 and variant in high 2 bits of byte 8, see RFC 4122,
-    // section 4.1.1, 4.1.2 and 4.1.3.
-    randomBytes[6] &= 0x0f;
-    randomBytes[6] |= 0x40;  // v4
-    randomBytes[8] &= 0x3f;
-    randomBytes[8] |= 0x80;  // Randomly assigned
-    return CollectionUUID{randomBytes};
-}
 }  // namespace mongo

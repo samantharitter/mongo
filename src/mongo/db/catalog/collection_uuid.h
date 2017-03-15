@@ -28,9 +28,7 @@
 
 #pragma once
 
-#include <string>
-
-#include "mongo/db/jsobj.h"
+#include "mongo/util/uuid.h"
 
 namespace mongo {
 
@@ -41,43 +39,7 @@ extern bool enableCollectionUUIDs;  // TODO(SERVER-27993) Replace based on upgra
  * Newly created collections are assigned a new randomly generated CollectionUUID. In a replica-set
  * or a sharded cluster, all nodes will use the same UUID for a given collection. The UUID stays
  * with the collection until it is dropped, so even across renames. A copied collection must have
- * own new new unique UUID though.
+ * its own new unique UUID though.
  */
-class CollectionUUID {
-public:
-    using UUID = std::array<unsigned char, 16>;
-    CollectionUUID() = delete;
-    CollectionUUID(const CollectionUUID& other) = default;
-
-    inline bool operator==(const CollectionUUID& rhs) const {
-        return !memcmp(&_uuid, &rhs._uuid, sizeof(_uuid));
-    }
-
-    inline bool operator!=(const CollectionUUID& rhs) const {
-        return !(*this == rhs);
-    }
-
-    /**
-     * Parse a UUID from the given element. Caller must validate the input.
-     */
-    CollectionUUID(BSONElement from) : _uuid(from.uuid()) {}
-
-    /**
-     * Generate a new random v4 UUID per RFC 4122.
-     */
-    static CollectionUUID generateSecureRandomUUID();
-
-    /**
-     * Return a BSON object of the form { uuid: BinData(4, "...") }.
-     */
-    BSONObj toBSON() const {
-        BSONObjBuilder builder;
-        builder.appendBinData("uuid", sizeof(UUID), BinDataType::newUUID, &_uuid);
-        return builder.obj();
-    }
-
-private:
-    CollectionUUID(const UUID& uuid) : _uuid(uuid) {}
-    UUID _uuid;  // UUID in network byte order
-};
+using CollectionUUID = UUID;
 }
