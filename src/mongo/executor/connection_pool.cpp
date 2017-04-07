@@ -336,8 +336,12 @@ void ConnectionPool::SpecificPool::returnConnection(ConnectionInterface* connPtr
         return;
     }
 
+    auto host = _hostAndPort.toString();
+
     if (!conn->getStatus().isOK()) {
         // TODO: alert via some callback if the host is bad
+        log() << "got a non-ok status, ending connection to " << host << " ("
+              << openConnections(lk) << " connections now open to " << host << ")";
         return;
     }
 
@@ -348,6 +352,8 @@ void ConnectionPool::SpecificPool::returnConnection(ConnectionInterface* connPtr
         if (_readyPool.size() + _processingPool.size() + _checkedOutPool.size() >=
             _parent->_options.minConnections) {
             // If we already have minConnections, just let the connection lapse
+            log() << "We have enough connections, end connection to " << host << " ("
+                  << openConnections(lk) << " connections now open to " << host << ")";
             return;
         }
 
@@ -382,6 +388,10 @@ void ConnectionPool::SpecificPool::returnConnection(ConnectionInterface* connPtr
                              // failing all operations.  We do this because the various callers have
                              // their own time limit which is unrelated to our internal one.
                              if (status.code() == ErrorCodes::NetworkInterfaceExceededTimeLimit) {
+                                 auto host = _hostAndPort.toString();
+                                 log() << "Exceeded internal time limit, end connection to " << host
+                                       << "(" << openConnections(lk) << " connections now open to "
+                                       << host << ")";
                                  spawnConnections(lk);
                                  return;
                              }
@@ -444,6 +454,10 @@ void ConnectionPool::SpecificPool::processFailure(const Status& status,
 
     // Drop ready connections
     _readyPool.clear();
+
+    // Log something helpful
+    auto host = _hostAndPort.toString();
+    log() << "Found a bad connection to " << host << ", dropping all pooled connections to " << host;
 
     // Migrate processing connections to the dropped pool
     for (auto&& x : _processingPool) {
