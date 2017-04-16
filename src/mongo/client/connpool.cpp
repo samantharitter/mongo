@@ -62,9 +62,10 @@ PoolForHost::~PoolForHost() {
 }
 
 void PoolForHost::clear() {
+    log() << "PFH::clear log():";
     log() << "Dropping all pooled connections to " << _hostName << "(with timeout of "
           << _socketTimeout << " seconds)";
-
+    log() << "PFH::clear log() done";
     while (!_pool.empty()) {
         StoredConnection sc = _pool.top();
         delete sc.conn;
@@ -84,19 +85,25 @@ void PoolForHost::done(DBConnectionPool* pool, DBClientBase* c) {
     if (isFailed ||
         // Another (later) connection was reported as broken to this host
         (c->getSockCreationMicroSec() < _minValidCreationTimeMicroSec)) {
+        log() << "done log 1";
         log() << "Ending connection to host " << _hostName << "(with timeout of " << _socketTimeout
               << " seconds)"
               << " due to bad connection status; " << openConnections()
               << " connections to that host remain open";
+        log() << "done log 1 one, calling onDestroy";
         pool->onDestroy(c);
+        log() << "done calling onDestroy";
         delete c;
     } else if (_maxPoolSize >= 0 && static_cast<int>(_pool.size()) >= _maxPoolSize) {
         // We have a pool size that we need to enforce
+        log() << "done log 2";
         log() << "Ending idle connection to host " << _hostName << "(with timeout of "
               << _socketTimeout << " seconds)"
               << " because the pool meets constraints; " << openConnections()
               << " connections to that host remain open";
+        log() << "done log 2 done, calling onDestroy";
         pool->onDestroy(c);
+        log() << "done calling onDestroy";
         delete c;
     } else {
         // The connection is probably fine, save for later
@@ -108,9 +115,11 @@ void PoolForHost::reportBadConnectionAt(uint64_t microSec) {
     if (microSec != DBClientBase::INVALID_SOCK_CREATION_TIME &&
         microSec > _minValidCreationTimeMicroSec) {
         _minValidCreationTimeMicroSec = microSec;
+        log() << "badconn log line:";
         log() << "Detected bad connection created at " << _minValidCreationTimeMicroSec
               << " microSec, clearing pool for " << _hostName << " of " << openConnections()
               << " connections" << endl;
+        log() << "bad conn log line done";
         clear();
     }
 }
@@ -143,9 +152,10 @@ DBClientBase* PoolForHost::get(DBConnectionPool* pool, double socketTimeout) {
 }
 
 void PoolForHost::flush() {
+    log() << "flush log line";
     log() << "Dropping all pooled connections to " << _hostName << "(with timeout of "
           << _socketTimeout << " seconds)";
-
+    log() << "flush log line done";
     while (!_pool.empty()) {
         StoredConnection c = _pool.top();
         _pool.pop();
@@ -241,11 +251,11 @@ DBClientBase* DBConnectionPool::_finishCreate(const string& host,
         delete conn;
         throw;
     }
-
+    log() << "finish create log:";
     log() << "Successfully connected to " << host << " (" << openConnections(host, socketTimeout)
           << " connections now open to " << host << " with a " << socketTimeout
           << " second timeout)";
-
+    log() << "finish create log done";
     return conn;
 }
 

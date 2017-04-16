@@ -25,6 +25,8 @@
  *    then also delete it in the license file.
  */
 
+#define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kDefault
+
 #include <cstdint>
 #include <vector>
 
@@ -42,6 +44,7 @@
 #include "mongo/stdx/memory.h"
 #include "mongo/stdx/thread.h"
 #include "mongo/unittest/unittest.h"
+#include "mongo/util/log.h"
 
 /**
  * Tests for ShardConnection, particularly in connection pool management.
@@ -75,12 +78,14 @@ public:
     }
 
     void tearDown() {
+        log() << "clearing the pool";
         ShardConnection::clearPool();
 
         mongo::MockConnRegistry::get()->removeServer(_dummyServer->getServerAddress());
         delete _dummyServer;
-
+        log() << "setting the max pool size";
         mongo::shardConnectionPool.setMaxPoolSize(_maxPoolSizePerHost);
+        log() << "done with teardown";
     }
 
     void killServer() {
