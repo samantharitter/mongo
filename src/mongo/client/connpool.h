@@ -57,12 +57,16 @@ public:
     // Sentinel value indicating pool has no cleanup limit
     static const int kPoolSizeUnlimited;
 
+    friend class DBConnectionPool;
+
     PoolForHost()
         : _created(0),
           _minValidCreationTimeMicroSec(0),
           _type(ConnectionString::INVALID),
           _maxPoolSize(kPoolSizeUnlimited),
-          _checkedOut(0) {}
+          _checkedOut(0),
+          _parentDestroyed(false)
+    {}
 
     ~PoolForHost();
 
@@ -166,6 +170,9 @@ private:
 
     // The number of currently active connections from this pool
     int _checkedOut;
+
+    // Whether our parent DBConnectionPool object is in destruction
+    bool _parentDestroyed;
 };
 
 class DBConnectionHook {

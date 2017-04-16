@@ -62,12 +62,11 @@ PoolForHost::~PoolForHost() {
 }
 
 void PoolForHost::clear() {
-    std::cout << "about to plain log:" << std::endl;
-    log() << "PFH::clear log():";
-    std::cout << "about to fancy log:" << std::endl;
-    log() << "Dropping all pooled connections to " << _hostName << "(with timeout of "
-          << _socketTimeout << " seconds)";
-    log() << "PFH::clear log() done";
+    if (!_parentDestroyed) {
+        log() << "Dropping all pooled connections to " << _hostName << "(with timeout of "
+              << _socketTimeout << " seconds)";
+    }
+
     while (!_pool.empty()) {
         StoredConnection sc = _pool.top();
         delete sc.conn;
@@ -328,7 +327,13 @@ void DBConnectionPool::release(const string& host, DBClientBase* c) {
 
 
 DBConnectionPool::~DBConnectionPool() {
-    // connection closing is handled by ~PoolForHost
+    // Do not log in destruction, because global connection pools get
+    // destroyed after the logging framework.
+    stdx::lock_guard<stdx::mutex> L(_mutex);
+    for (PoolMap::iterator i = _pools.begin(); i != _pools.end(); i++) {
+        PoolForHost& p = i->second;
+        p._parentDestroyed = true;
+    }
 }
 
 void DBConnectionPool::flush() {
