@@ -62,7 +62,9 @@ PoolForHost::~PoolForHost() {
 }
 
 void PoolForHost::clear() {
+    std::cout << "about to plain log:" << std::endl;
     log() << "PFH::clear log():";
+    std::cout << "about to fancy log:" << std::endl;
     log() << "Dropping all pooled connections to " << _hostName << "(with timeout of "
           << _socketTimeout << " seconds)";
     log() << "PFH::clear log() done";
@@ -152,7 +154,9 @@ DBClientBase* PoolForHost::get(DBConnectionPool* pool, double socketTimeout) {
 }
 
 void PoolForHost::flush() {
+    std::cout << "about to plain log:" << std::endl;
     log() << "flush log line";
+    std::cout << "about to fancy log:" << std::endl;
     log() << "Dropping all pooled connections to " << _hostName << "(with timeout of "
           << _socketTimeout << " seconds)";
     log() << "flush log line done";
