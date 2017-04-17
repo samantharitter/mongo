@@ -80,10 +80,12 @@ long long ClientCursor::totalOpen() {
 
 ClientCursor::ClientCursor(ClientCursorParams&& params,
                            CursorManager* cursorManager,
-                           CursorId cursorId)
+                           CursorId cursorId,
+                           boost::optional<LogicalSessionId> lsid)
     : _cursorid(cursorId),
       _nss(std::move(params.nss)),
       _authenticatedUsers(std::move(params.authenticatedUsers)),
+      _lsid(std::move(lsid)),
       _isReadCommitted(params.isReadCommitted),
       _cursorManager(cursorManager),
       _originatingCommand(params.originatingCommandObj),
@@ -94,9 +96,11 @@ ClientCursor::ClientCursor(ClientCursorParams&& params,
 
 ClientCursor::ClientCursor(const Collection* collection,
                            CursorManager* cursorManager,
-                           CursorId cursorId)
+                           CursorId cursorId,
+                           boost::optional<LogicalSessionId> lsid)
     : _cursorid(cursorId),
       _nss(collection->ns()),
+      _lsid(std::move(lsid)),
       _cursorManager(cursorManager),
       _queryOptions(QueryOption_NoCursorTimeout) {
     init();

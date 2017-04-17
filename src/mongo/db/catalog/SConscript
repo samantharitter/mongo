@@ -131,3 +131,19 @@ env.Library(
         '$BUILD_DIR/mongo/db/s/balancer',
     ],
 )
+
+env.CppUnitTest(
+    target='cursor_manager_test',
+    source=[
+        'cursor_manager_test.cpp',
+    ],
+    LIBDEPS=[
+        'catalog',
+        '$BUILD_DIR/mongo/db/assemble_response',
+        '$BUILD_DIR/mongo/db/exec/exec',
+        '$BUILD_DIR/mongo/db/logical_session_id',
+        '$BUILD_DIR/mongo/db/serveronly',
+        '$BUILD_DIR/mongo/db/write_concern_d',
+        '$BUILD_DIR/mongo/s/catalog/sharding_catalog_manager_impl',
+    ],
+)

@@ -484,7 +484,7 @@ ClientCursorPin CursorManager::registerCursor(OperationContext* opCtx,
 
     CursorId cursorId = _allocateCursorId_inlock();
     std::unique_ptr<ClientCursor, ClientCursor::Deleter> clientCursor(
-        new ClientCursor(std::move(cursorParams), this, cursorId));
+        new ClientCursor(std::move(cursorParams), this, cursorId, opCtx->getLogicalSessionId()));
     return _registerCursor_inlock(opCtx, std::move(clientCursor));
 }
 
@@ -493,7 +493,7 @@ ClientCursorPin CursorManager::registerRangePreserverCursor(OperationContext* op
     stdx::lock_guard<SimpleMutex> lk(_mutex);
     CursorId cursorId = _allocateCursorId_inlock();
     std::unique_ptr<ClientCursor, ClientCursor::Deleter> clientCursor(
-        new ClientCursor(collection, this, cursorId));
+        new ClientCursor(collection, this, cursorId, opCtx->getLogicalSessionId()));
     return _registerCursor_inlock(opCtx, std::move(clientCursor));
 }
 
