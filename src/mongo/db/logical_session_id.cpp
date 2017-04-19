@@ -36,6 +36,10 @@ namespace mongo {
 
 LogicalSessionId::LogicalSessionId(UUID id) : _id(id) {}
 
+LogicalSessionId LogicalSessionId::gen() {
+    return LogicalSessionId{UUID::gen()};
+}
+
 StatusWith<LogicalSessionId> LogicalSessionId::parse(const TxnId& txnId) {
     // TODO: the TxnId class is not yet implemented.
     MONGO_UNREACHABLE;

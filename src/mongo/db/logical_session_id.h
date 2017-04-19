@@ -45,6 +45,11 @@ public:
     LogicalSessionId() = delete;
 
     /**
+     * Generate a new LogicalSessionId, with a random UUID underneath.
+     */
+    static LogicalSessionId gen();
+
+    /**
      * Construct a new LogicalSessionId out of a txnId received with an operation.
      */
     static StatusWith<LogicalSessionId> parse(const TxnId& txnId);

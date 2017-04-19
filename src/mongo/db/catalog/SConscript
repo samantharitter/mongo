@@ -145,5 +145,6 @@ env.CppUnitTest(
         '$BUILD_DIR/mongo/db/serveronly',
         '$BUILD_DIR/mongo/db/write_concern_d',
         '$BUILD_DIR/mongo/s/catalog/sharding_catalog_manager_impl',
+        '$BUILD_DIR/third_party/murmurhash3/murmurhash3',
     ],
 )

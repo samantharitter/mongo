@@ -304,6 +304,7 @@ CursorManager::~CursorManager() {
         globalCursorIdCache->deregisterCursorManager(_collectionCacheRuntimeId, _nss);
     }
     invariant(_cursors.empty());
+    invariant(_cursorsBySession.empty());
     invariant(_nonCachedExecutors.empty());
 }
 
@@ -321,6 +322,7 @@ void CursorManager::invalidateAll(OperationContext* opCtx,
     _nonCachedExecutors.clear();
 
     CursorMap newMap;
+    _cursorsBySession.clear();
     for (auto&& entry : _cursors) {
         auto* cursor = entry.second;
         cursor->markAsKilled(reason);
@@ -335,6 +337,7 @@ void CursorManager::invalidateAll(OperationContext* opCtx,
             // We keep around unpinned cursors so that future attempts to use the cursor will result
             // in a useful error message.
             newMap.insert(entry);
+            _addToSessionSet_inlock(cursor);
         } else {
             // The collection is going away, so there's no point in keeping any state.
             cursor->dispose(opCtx);
@@ -444,6 +447,26 @@ void CursorManager::getCursorIds(std::set<CursorId>* openCursors) const {
     }
 }
 
+CursorManager::LogicalSessionIdSet CursorManager::getAllSessionsWithActiveCursors() {
+    stdx::lock_guard<SimpleMutex> lk(_mutex);
+    LogicalSessionIdSet sessions;
+    for (auto& it : _cursorsBySession) {
+        sessions.insert(it.first);
+    }
+
+    return sessions;
+}
+
+CursorManager::CursorSet CursorManager::getCursorIdsForSession(LogicalSessionId lsid) {
+    stdx::lock_guard<SimpleMutex> lk(_mutex);
+    auto it = _cursorsBySession.find(lsid);
+    if (it == _cursorsBySession.end()) {
+        return {};
+    }
+
+    return it->second;
+}
+
 size_t CursorManager::numCursors() const {
     stdx::lock_guard<SimpleMutex> lk(_mutex);
     return _cursors.size();
@@ -505,6 +528,10 @@ ClientCursorPin CursorManager::_registerCursor_inlock(
     // Transfer ownership of the cursor to '_cursors'.
     ClientCursor* unownedCursor = clientCursor.release();
     _cursors[cursorId] = unownedCursor;
+
+    // If this cursor has a session, add it to our list by sessionid.
+    _addToSessionSet_inlock(unownedCursor);
+
     return ClientCursorPin(opCtx, unownedCursor);
 }
 
@@ -545,9 +572,33 @@ Status CursorManager::eraseCursor(OperationContext* opCtx, CursorId id, bool sho
     return Status::OK();
 }
 
+void CursorManager::_addToSessionSet_inlock(ClientCursor* cursor) {
+    auto lsid = cursor->getSessionId();
+    if (lsid) {
+        _cursorsBySession[*lsid].insert(cursor->cursorid());
+    }
+}
+
+void CursorManager::_removeFromSessionSet_inlock(ClientCursor* cursor) {
+    auto lsid = cursor->getSessionId();
+    if (lsid) {
+        auto it = _cursorsBySession.find(*lsid);
+        invariant(it != _cursorsBySession.end());
+        it->second.erase(cursor->cursorid());
+        if (it->second.empty()) {
+            // If this was the last cursor we managed for that session,
+            // remove the now-empty session id set
+            _cursorsBySession.erase(*lsid);
+        }
+    }
+}
+
 void CursorManager::_deregisterCursor_inlock(ClientCursor* cc) {
     invariant(cc);
+
     CursorId id = cc->cursorid();
+
+    _removeFromSessionSet_inlock(cc);
     _cursors.erase(id);
 }
 }  // namespace mongo

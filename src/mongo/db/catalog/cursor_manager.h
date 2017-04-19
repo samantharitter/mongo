@@ -161,6 +161,20 @@ public:
     void getCursorIds(std::set<CursorId>* openCursors) const;
 
     /**
+     * Returns a list of all session ids that are currently being used by cursors
+     * managed by this object.
+     */
+    using LogicalSessionIdSet = std::unordered_set<LogicalSessionId, LogicalSessionId::Hash>;
+    LogicalSessionIdSet getAllSessionsWithActiveCursors();
+
+    /**
+     * Returns a list of all cursors that are being managed by this object for a
+     * given session.
+     */
+    using CursorSet = std::unordered_set<CursorId>;
+    CursorSet getCursorIdsForSession(LogicalSessionId lsid);
+
+    /**
      * Returns the number of ClientCursors currently registered. Excludes any registered bare
      * PlanExecutors.
      */
@@ -195,6 +209,10 @@ private:
     friend class ClientCursorPin;
 
     CursorId _allocateCursorId_inlock();
+
+    void _addToSessionSet_inlock(ClientCursor* cursor);
+    void _removeFromSessionSet_inlock(ClientCursor* cursor);
+
     void _deregisterCursor_inlock(ClientCursor* cc);
     ClientCursorPin _registerCursor_inlock(
         OperationContext* opCtx, std::unique_ptr<ClientCursor, ClientCursor::Deleter> clientCursor);
@@ -218,5 +236,7 @@ private:
 
     typedef std::map<CursorId, ClientCursor*> CursorMap;
     CursorMap _cursors;
+
+    std::unordered_map<LogicalSessionId, CursorSet, LogicalSessionId::Hash> _cursorsBySession;
 };
 }  // namespace mongo
