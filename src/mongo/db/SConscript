@@ -941,6 +941,67 @@ env.CppUnitTest(
 )
 
 env.Library(
+    target='service_liason',
+    source=[
+        'service_liason.cpp',
+    ],
+    LIBDEPS=[
+    ],
+)
+
+env.Library(
+    target='service_liason_mock',
+    source=[
+        'service_liason_mock.cpp',
+    ],
+    LIBDEPS=[
+        'service_liason',
+    ],
+)
+
+env.Library(
+    target='sessions_collection',
+    source=[
+        'sessions_collection.cpp',
+    ],
+    LIBDEPS=[
+    ],
+)
+
+env.Library(
+    target='sessions_collection_mock',
+    source=[
+        'sessions_collection_mock.cpp',
+    ],
+    LIBDEPS=[
+        'sessions_collection',
+    ],
+)
+
+env.Library(
+    target='logical_session_cache',
+    source=[
+        'logical_session_cache.cpp',
+    ],
+    LIBDEPS=[
+        'sessions_collection',
+        'service_liason',
+    ],
+)
+
+env.CppUnitTest(
+    target='logical_session_cache_test',
+    source=[
+        'logical_session_cache_test.cpp',
+    ],
+    LIBDEPS=[
+        'logical_session_cache',
+        'service_liason_mock',
+        'sessions_collection_mock',
+    ],
+)
+
+env.Library(
     target='logical_time',
     source=[
         'logical_time.cpp',
