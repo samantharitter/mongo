@@ -54,7 +54,11 @@ namespace mongo {
  */
 template <typename K,
           typename V,
+#if defined(_WIN32)
+          typename Hash = boost::hash<k>,
+#else
           typename Hash = std::hash<K>,
+#endif
           typename KeyEqual = std::equal_to<K>>
 class LRUCache {
     MONGO_DISALLOW_COPYING(LRUCache);
