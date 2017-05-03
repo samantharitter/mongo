@@ -32,6 +32,11 @@
 #include <iterator>
 #include <list>
 
+#include <iostream>
+#include <chrono>
+using namespace std;
+using namespace std::chrono;
+
 #include <boost/optional.hpp>
 
 #include "mongo/base/disallow_copying.h"

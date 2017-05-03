@@ -32,6 +32,8 @@
 #include <type_traits>
 #include <utility>
 
+#include <chrono>
+
 #include "mongo/stdx/type_traits.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
@@ -218,7 +220,10 @@ TEST(LRUCacheTest, StressTest) {
 
     // Fill up the cache
     for (int i = 0; i < maxSize; i++) {
+        std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
         auto evicted = cache.add(i, i);
+        std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
+        std::cout << "adding element " << i << " took " << std::chrono::duration_cast<microseconds>( t2 - t1 ).count() << " microseconds" << std::endl;
         ASSERT_FALSE(evicted);
     }
 
@@ -227,7 +232,10 @@ TEST(LRUCacheTest, StressTest) {
     // Perform some basic functions on the cache
     std::array<int, 5> sample{1, 34, 400, 12345, 999999};
     for (auto s : sample) {
+        std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
         auto found = cache.find(s);
+        std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
+        std::cout << "find took " << std::chrono::duration_cast<microseconds>( t2 - t1 ).count() << "microseconds" << std::endl;
         assertEquals(found->second, s);
         assertEquals(found, cache.begin());
 

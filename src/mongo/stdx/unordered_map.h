@@ -29,8 +29,10 @@
 #pragma once
 
 #if defined(_WIN32)
+#pragma message("using boost unordered map")
 #include <boost/unordered_map.hpp>
 #else
+#pragma message("using stdlib unordered map")
 #include <unordered_map>
 #endif
 
