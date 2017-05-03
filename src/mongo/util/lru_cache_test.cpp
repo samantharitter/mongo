@@ -215,50 +215,57 @@ TEST(LRUCacheTest, SizeZeroCache) {
 
 // Test a very large cache size
 TEST(LRUCacheTest, StressTest) {
-    const int maxSize = 1000000;
-    LRUCache<int, int> cache(maxSize);
+    std::chrono::high_resolution_clock::time_point start;
+    {
+        const int maxSize = 1000000;
+        LRUCache<int, int> cache(maxSize);
 
-    // Fill up the cache
-    for (int i = 0; i < maxSize; i++) {
-        std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
-        auto evicted = cache.add(i, i);
-        std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
-        std::cout << "adding element " << i << " took " << std::chrono::duration_cast<std::chrono::microseconds>( t2 - t1 ).count() << " microseconds" << std::endl;
-        ASSERT_FALSE(evicted);
-    }
+        // Fill up the cache
+        for (int i = 0; i < maxSize; i++) {
+            std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
+            auto evicted = cache.add(i, i);
+            std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
+            std::cout << "adding element " << i << " took " << std::chrono::duration_cast<std::chrono::microseconds>( t2 - t1 ).count() << " microseconds" << std::endl;
+            ASSERT_FALSE(evicted);
+        }
 
-    assertEquals(cache.size(), size_t(maxSize));
-
-    // Perform some basic functions on the cache
-    std::array<int, 5> sample{1, 34, 400, 12345, 999999};
-    for (auto s : sample) {
-        std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
-        auto found = cache.find(s);
-        std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
-        std::cout << "find took " << std::chrono::duration_cast<std::chrono::microseconds>( t2 - t1 ).count() << " microseconds" << std::endl;
-        assertEquals(found->second, s);
-        assertEquals(found, cache.begin());
-
-        const auto nextAfterFound = std::next(found);
-        assertEquals(cache.erase(found), nextAfterFound);
-        assertEquals(cache.size(), size_t(maxSize - 1));
-        cache.add(s, s);
         assertEquals(cache.size(), size_t(maxSize));
-        assertEquals(cache.erase(s), size_t(1));
-        assertEquals(cache.size(), size_t(maxSize - 1));
-        cache.add(s, s);
-    }
 
-    // Try causing an eviction
-    std::cout << "eviction:" << std::endl;
-    std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
-    auto evicted = cache.add(maxSize + 1, maxSize + 1);
-    std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
-    std::cout << "eviction took " << std::chrono::duration_cast<std::chrono::microseconds>( t2 - t1 ).count() << " microseconds" << std::endl;
-    assertEquals(cache.size(), size_t(maxSize));
-    assertEquals(*evicted, 0);
-    assertInCache(cache, maxSize + 1, maxSize + 1);
-    assertNotInCache(cache, 0);
+        // Perform some basic functions on the cache
+        std::array<int, 5> sample{1, 34, 400, 12345, 999999};
+        for (auto s : sample) {
+            std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
+            auto found = cache.find(s);
+            std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
+            std::cout << "find took " << std::chrono::duration_cast<std::chrono::microseconds>( t2 - t1 ).count() << " microseconds" << std::endl;
+            assertEquals(found->second, s);
+            assertEquals(found, cache.begin());
+
+            const auto nextAfterFound = std::next(found);
+            assertEquals(cache.erase(found), nextAfterFound);
+            assertEquals(cache.size(), size_t(maxSize - 1));
+            cache.add(s, s);
+            assertEquals(cache.size(), size_t(maxSize));
+            assertEquals(cache.erase(s), size_t(1));
+            assertEquals(cache.size(), size_t(maxSize - 1));
+            cache.add(s, s);
+        }
+
+        // Try causing an eviction
+        std::cout << "eviction:" << std::endl;
+        std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
+        auto evicted = cache.add(maxSize + 1, maxSize + 1);
+        std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
+        std::cout << "eviction took " << std::chrono::duration_cast<std::chrono::microseconds>( t2 - t1 ).count() << " microseconds" << std::endl;
+        assertEquals(cache.size(), size_t(maxSize));
+        assertEquals(*evicted, 0);
+        assertInCache(cache, maxSize + 1, maxSize + 1);
+        assertNotInCache(cache, 0);
+        std::cout << "leaving scope" << std::endl;
+        start = std::chrono::high_resolution_clock::now();
+    }
+    std::cout << "cleaning up the cache took " << std::chrono::duration_cast<std::chrono::microseconds>( std::chrono::high_resolution_clock::now() - start).count() << " microseconds" << std::endl;
+
     std::cout << "done with test" << std::endl;
 }
 
