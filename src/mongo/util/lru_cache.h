@@ -55,7 +55,7 @@ namespace mongo {
 template <typename K,
           typename V,
 #if defined(_WIN32)
-          typename Hash = boost::hash<k>,
+          typename Hash = boost::hash<K>,
 #else
           typename Hash = std::hash<K>,
 #endif
