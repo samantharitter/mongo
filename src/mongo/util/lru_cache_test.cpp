@@ -235,7 +235,7 @@ TEST(LRUCacheTest, StressTest) {
         std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
         auto found = cache.find(s);
         std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
-        std::cout << "find took " << std::chrono::duration_cast<microseconds>( t2 - t1 ).count() << "microseconds" << std::endl;
+        std::cout << "find took " << std::chrono::duration_cast<microseconds>( t2 - t1 ).count() << " microseconds" << std::endl;
         assertEquals(found->second, s);
         assertEquals(found, cache.begin());
 
@@ -250,11 +250,16 @@ TEST(LRUCacheTest, StressTest) {
     }
 
     // Try causing an eviction
+    std::cout << "eviction:" << std::endl;
+    std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
     auto evicted = cache.add(maxSize + 1, maxSize + 1);
+    std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
+    std::cout << "eviction took " << std::chrono::duration_cast<microseconds>( t2 - t1 ).count() << " microseconds" << std::endl;
     assertEquals(cache.size(), size_t(maxSize));
     assertEquals(*evicted, 0);
     assertInCache(cache, maxSize + 1, maxSize + 1);
     assertNotInCache(cache, 0);
+    std::cout << "done with test" << std::endl;
 }
 
 // Make sure eviction and promotion work properly with a cache of size 1.
