@@ -31,12 +31,8 @@
 #include <cstdlib>
 #include <iterator>
 #include <list>
-
 #include <iostream>
 #include <chrono>
-using namespace std;
-using namespace std::chrono;
-
 #include <boost/optional.hpp>
 
 #include "mongo/base/disallow_copying.h"
@@ -104,12 +100,15 @@ public:
         // If the store has grown beyond its allowed size,
         // evict the least recently used entry.
         if (this->size() > this->_maxSize) {
+            std::cout << "a" << std::endl;
             auto pair = std::move(this->_list.back());
+            std::cout << "b" << std::endl;
             auto result = std::move(pair.second);
-
+            std::cout << "c" << std::endl;
             this->_map.erase(pair.first);
+            std::cout << "d" << std::endl;
             this->_list.pop_back();
-
+            std::cout << "e" << std::endl;
             invariant(this->size() <= this->_maxSize);
             return std::move(result);
         }
