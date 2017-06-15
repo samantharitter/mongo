@@ -985,6 +985,8 @@ envWithAsio.CppUnitTest(
         'logical_session_cache_test.cpp',
     ],
     LIBDEPS=[
+        '$BUILD_DIR/mongo/db/auth/authmocks',
+        '$BUILD_DIR/mongo/db/auth/authorization_session_for_test',
         '$BUILD_DIR/mongo/executor/async_timer_mock',
         'logical_session_cache',
         'service_liason_mock',

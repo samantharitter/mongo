@@ -39,7 +39,7 @@
 
 namespace mongo {
 
-class Client;
+class AuthorizationSession;
 
 /**
  * A thread-safe cache structure for logical session records.
@@ -95,7 +95,7 @@ public:
 
     /**
      * Performs a session auth check for using the given lsid on the
-     * given client. Returns ok if all of the following are true:
+     * given client auth session. Returns ok if all of the following are true:
      *
      * - exactly one user is authenticated
      * - an active session for the provided session id exists
@@ -107,7 +107,7 @@ public:
      * current time. If the session exists but the auth check fails, then
      * the lastUse time will still be updated for that session.
      */
-    Status performSessionAuthCheck(Client* client, LogicalSessionId lsid);
+    Status performSessionAuthCheck(AuthorizationSession* authzSession, LogicalSessionId lsid);
 
     /**
      * Returns the owner for the given session, or return an error if there

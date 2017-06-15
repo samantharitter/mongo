@@ -30,6 +30,9 @@
 
 #include "mongo/platform/basic.h"
 
+#include <boost/optional.hpp>
+#include <boost/optional/optional_io.hpp>
+
 #include "mongo/db/logical_session_cache.h"
 
 #include "mongo/db/auth/authorization_session.h"
@@ -67,17 +70,17 @@ LogicalSessionCache::~LogicalSessionCache() {
     }
 }
 
-    Status LogicalSessionCache::performSessionAuthCheck(Client* client, LogicalSessionId lsid) {
+    Status LogicalSessionCache::performSessionAuthCheck(AuthorizationSession* authzSession,
+                                                        LogicalSessionId lsid) {
         // If auth is not enabled, we always pass this check if the session exists
-        if (!isInternalAuthSet()) {
-            auto res = getOwnerFromCache(lsid);
-            if (res.isOK()) {
-                return Status::OK();
-            }
-        }
+        // if (!isInternalAuthSet()) {
+        //     auto res = getOwnerFromCache(lsid);
+        //     if (res.isOK()) {
+        //         return Status::OK();
+        //     }
+        // }
 
         // Ensure that exactly one user is authenticated.
-        auto authzSession = AuthorizationSession::get(client);
         auto numUsers = authzSession->getNumAuthenticatedUsers();
         if (numUsers == 0) {
             return {ErrorCodes::Unauthorized, "Unauthorized"};
@@ -95,13 +98,19 @@ LogicalSessionCache::~LogicalSessionCache() {
 
         auto res = getOwner(lsid);
         if (!res.isOK()) {
+            std::cout << "didn't get owner" << std::endl;
             return res.getStatus();
         }
 
         // Ensure that the owner is a match.
         auto owner = res.getValue();
         auto user = authzSession->lookupUser(owner.first);
+        if (user) {
+            std::cout << "have a user for " << owner.first << std::endl;
+            std::cout << "owner's id is " << owner.second << ", user's is " << user->getID() << std::endl;
+        }
         if (!user || user->getID() != owner.second) {
+            std::cout << "didn't match" << std::endl;
             return {ErrorCodes::Unauthorized, "Unauthorized"};
         }
 

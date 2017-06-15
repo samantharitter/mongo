@@ -29,10 +29,15 @@
 #include "mongo/platform/basic.h"
 
 #include "mongo/bson/oid.h"
+#include "mongo/db/auth/authorization_manager.h"
+#include "mongo/db/auth/authorization_session_for_test.h"
+#include "mongo/db/auth/authz_manager_external_state_mock.h"
+#include "mongo/db/auth/authz_session_external_state_mock.h"
 #include "mongo/db/auth/user_name.h"
 #include "mongo/db/logical_session_cache.h"
 #include "mongo/db/logical_session_id.h"
 #include "mongo/db/logical_session_record.h"
+#include "mongo/db/operation_context_noop.h"
 #include "mongo/db/service_liason_mock.h"
 #include "mongo/db/sessions_collection_mock.h"
 #include "mongo/stdx/future.h"
@@ -48,6 +53,30 @@ const Milliseconds kForceRefresh =
     duration_cast<Milliseconds>(LogicalSessionCache::kLogicalSessionDefaultRefresh);
 
 using SessionList = std::list<LogicalSessionId>;
+
+class FailureCapableAuthzManagerExternalStateMock : public AuthzManagerExternalStateMock {
+public:
+    FailureCapableAuthzManagerExternalStateMock() : _findsShouldFail(false) {}
+    virtual ~FailureCapableAuthzManagerExternalStateMock() {}
+
+    void setFindsShouldFail(bool enable) {
+        _findsShouldFail = enable;
+    }
+
+    virtual Status findOne(OperationContext* opCtx,
+                           const NamespaceString& collectionName,
+                           const BSONObj& query,
+                           BSONObj* result) {
+        if (_findsShouldFail && collectionName == AuthorizationManager::usersCollectionNamespace) {
+            return Status(ErrorCodes::UnknownError,
+                          "findOne on admin.system.users set to fail in mock.");
+        }
+        return AuthzManagerExternalStateMock::findOne(opCtx, collectionName, query, result);
+    }
+
+private:
+    bool _findsShouldFail;
+};
 
 /**
  * Test fixture that sets up a session cache attached to a mock service liason
@@ -66,6 +95,18 @@ public:
         auto mockSessions = stdx::make_unique<MockSessionsCollection>(_sessions);
         _cache =
             stdx::make_unique<LogicalSessionCache>(std::move(mockService), std::move(mockSessions));
+
+        // Set up the auth manager.
+        auto localManagerState = stdx::make_unique<FailureCapableAuthzManagerExternalStateMock>();
+        _managerState = localManagerState.get();
+        _managerState->setAuthzVersion(AuthorizationManager::schemaVersion26Final);
+        _authzManager = stdx::make_unique<AuthorizationManager>(std::move(localManagerState));
+
+        // Set up our session state.
+        auto localSessionState = stdx::make_unique<AuthzSessionExternalStateMock>(_authzManager.get());
+        _sessionState = localSessionState.get();
+        _authzSession = stdx::make_unique<AuthorizationSessionForTest>(std::move(localSessionState));
+        _authzManager->setAuthEnabled(true);
     }
 
     void tearDown() override {
@@ -79,8 +120,41 @@ public:
     }
 
     LogicalSessionRecord newRecord() {
+        return newRecord(_user, _userId);
+    }
+
+    LogicalSessionRecord newRecord(UserName user, boost::optional<OID> userId = boost::none) {
         return LogicalSessionRecord::makeAuthoritativeRecord(
-            LogicalSessionId::gen(), _user, _userId, _service->now());
+            LogicalSessionId::gen(), user, userId, _service->now());
+    }
+
+    void addUser(OperationContext* opCtx, UserName user) {
+        ASSERT_OK(managerState()->insertPrivilegeDocument(opCtx,
+                                                          BSON("user" << user.getUser()
+                                                               << "db" << user.getDB()
+                                                               << "credentials"
+                                                               << BSON("MONGODB-CR" << "a")
+                                                               << "roles"
+                                                               << BSON_ARRAY(BSON("role"
+                                                                                  << "readWrite"
+                                                                                  << "db" << "test"))),
+                                                          BSONObj()));
+        ASSERT_OK(authSession()->addAndAuthorizeUser(opCtx, user));
+    }
+
+    void addUser(OperationContext* opCtx, UserName user, OID userId) {
+        ASSERT_OK(managerState()->insertPrivilegeDocument(opCtx,
+                                                          BSON("user" << user.getUser()
+                                                               << "db" << user.getDB()
+                                                               << "id" << userId
+                                                               << "credentials"
+                                                               << BSON("MONGODB-CR" << "a")
+                                                               << "roles"
+                                                               << BSON_ARRAY(BSON("role"
+                                                                                  << "readWrite"
+                                                                                  << "db" << "test"))),
+                                                          BSONObj()));
+        ASSERT_OK(authSession()->addAndAuthorizeUser(opCtx, user));
     }
 
     std::unique_ptr<LogicalSessionCache>& cache() {
@@ -95,6 +169,22 @@ public:
         return _sessions;
     }
 
+    FailureCapableAuthzManagerExternalStateMock* managerState() const {
+        return _managerState;
+    }
+
+    AuthzSessionExternalStateMock* sessionState() const {
+        return _sessionState;
+    }
+
+    AuthorizationManager* authManager() const {
+        return _authzManager.get();
+    }
+
+    AuthorizationSessionForTest* authSession() const {
+        return _authzSession.get();
+    }
+
 private:
     std::shared_ptr<MockServiceLiasonImpl> _service;
     std::shared_ptr<MockSessionsCollectionImpl> _sessions;
@@ -103,6 +193,11 @@ private:
 
     UserName _user;
     boost::optional<OID> _userId;
+
+    FailureCapableAuthzManagerExternalStateMock* _managerState;
+    AuthzSessionExternalStateMock* _sessionState;
+    std::unique_ptr<AuthorizationManager> _authzManager;
+    std::unique_ptr<AuthorizationSessionForTest> _authzSession;
 };
 
 // Test that session cache fetches new records from the sessions collection
@@ -554,31 +649,112 @@ TEST_F(LogicalSessionCacheTest, ManySessionsRefreshComboDeluxe) {
     ASSERT_EQ(nRefreshed, 1);
 }
 
-    TEST_F(LogicalSessionCacheTest, AuthCheckPassesWhenAuthIsOff) {
-    }
+    // TEST_F(LogicalSessionCacheTest, AuthCheckPassesWhenAuthIsOff) {
+    //     auto record = newRecord();
+    //     auto lsid = record.getLsid();
+    //     ASSERT_OK(cache()->startSession(record));
+    //     authManager()->setAuthEnabled(false);
+    //     ASSERT_OK(cache()->performSessionAuthCheck(authSession(), lsid));
+    // }
+
+    // TODO un-owned records, for when auth is off?
 
     TEST_F(LogicalSessionCacheTest, AuthCheckFailsWithNoUsers) {
+        auto record = newRecord();
+        auto lsid = record.getLsid();
+        ASSERT_OK(cache()->startSession(record));
+        ASSERT_NOT_OK(cache()->performSessionAuthCheck(authSession(), lsid));
     }
 
     TEST_F(LogicalSessionCacheTest, AuthCheckFailsWithTooManyUsers) {
+        OperationContextNoop opCtx;
+
+        // Add two users
+        UserName sam("sam", "test");
+        UserName jeannette("jeannette", "test");
+        addUser(&opCtx, sam);
+        addUser(&opCtx, jeannette);
+
+        // Insert a session owned by one user.
+        auto record = newRecord(sam);
+        auto lsid = record.getLsid();
+        ASSERT_OK(cache()->startSession(std::move(record)));
+
+        // Auth check should fail, too many users.
+        ASSERT_NOT_OK(cache()->performSessionAuthCheck(authSession(), lsid));
     }
 
     TEST_F(LogicalSessionCacheTest, AuthCheckFailsIfSessionDoesntExist) {
+        OperationContextNoop opCtx;
+
+        UserName sam("sam", "test");
+        addUser(&opCtx, sam);
+
+        auto lsid = LogicalSessionId::gen();
+
+        ASSERT_NOT_OK(cache()->performSessionAuthCheck(authSession(), lsid));
     }
 
     TEST_F(LogicalSessionCacheTest, AuthCheckFailsIfUserNamesDontMatch) {
+        // Add a record owned by "sam" to the cache.
+        UserName sam("sam", "test");
+        auto record = newRecord(sam);
+        auto lsid = record.getLsid();
+        ASSERT_OK(cache()->startSession(std::move(record)));
+
+        // Attempt to use the record when not-sam is authenticated.
+        UserName notSam("notSam", "test");
+        OperationContextNoop opCtx;
+        addUser(&opCtx, notSam);
+        ASSERT_NOT_OK(cache()->performSessionAuthCheck(authSession(), lsid));
     }
 
     TEST_F(LogicalSessionCacheTest, AuthCheckFailsIfUserIdsDontMatch) {
-    }
+        OperationContextNoop opCtx;
 
-    TEST_F(LogicalSessionCacheTest, AuthCheckFailsIfOwnerIsAuthenticated) {
+        // Add a record owned by "sam" with some id to the cache.
+        UserName sam("sam", "test");
+
+        auto record = newRecord(sam, OID::gen());
+        auto lsid = record.getLsid();
+        ASSERT_OK(cache()->startSession(std::move(record)));
+
+        // Attempt to use the record when "sam" is authenticated with no id.
+        addUser(&opCtx, sam);
+        ASSERT_NOT_OK(cache()->performSessionAuthCheck(authSession(), lsid));
+
+        authSession()->logoutDatabase("test");
+
+        // Attempt to use the record when "sam" is authenticated with a different id.
+        addUser(&opCtx, sam, OID::gen());
+        ASSERT_NOT_OK(cache()->performSessionAuthCheck(authSession(), lsid));
     }
 
     TEST_F(LogicalSessionCacheTest, SuccessfulAuthCheckUpdatesLastUse) {
-    }
+        OperationContextNoop opCtx;
 
-    TEST_F(LogicalSessionCacheTest, FailedAuthCheckUpdatesLastUse) {
+        // Add a record owned by "sam" with some id to the cache.
+        auto oid = OID::gen();
+        UserName sam("sam", "test");
+
+        auto record = newRecord(sam, oid);
+        auto lsid = record.getLsid();
+        ASSERT_OK(cache()->startSession(std::move(record)));
+
+        // Fast forward time
+        //service()->fastForward(Milliseconds(500));
+
+        // Authenticate as "sam" and attempt to use
+        addUser(&opCtx, sam, oid);
+        ASSERT_OK(cache()->performSessionAuthCheck(authSession(), lsid));
+
+        // Now that we did an auth check, lifetime of session should extend
+        //service()->fastForward(kSessionTimeout - Milliseconds(500));
+        //ASSERT_OK(cache()->performSessionAuthCheck(authSession(), lsid));
+
+        // Fast forward again and fetch, should still be there
+        //service()->fastForward(Milliseconds(1000));
+        //ASSERT_OK(cache()->performSessionAuthCheck(authSession(), lsid));
     }
 
 }  // namespace
