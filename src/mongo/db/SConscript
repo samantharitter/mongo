@@ -972,6 +972,7 @@ env.Library(
         'logical_session_cache.cpp',
     ],
     LIBDEPS=[
+        '$BUILD_DIR/mongo/db/auth/authcommon',
         'logical_session_record',
         'sessions_collection',
         'service_liason',

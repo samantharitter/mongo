@@ -554,5 +554,32 @@ TEST_F(LogicalSessionCacheTest, ManySessionsRefreshComboDeluxe) {
     ASSERT_EQ(nRefreshed, 1);
 }
 
+    TEST_F(LogicalSessionCacheTest, AuthCheckPassesWhenAuthIsOff) {
+    }
+
+    TEST_F(LogicalSessionCacheTest, AuthCheckFailsWithNoUsers) {
+    }
+
+    TEST_F(LogicalSessionCacheTest, AuthCheckFailsWithTooManyUsers) {
+    }
+
+    TEST_F(LogicalSessionCacheTest, AuthCheckFailsIfSessionDoesntExist) {
+    }
+
+    TEST_F(LogicalSessionCacheTest, AuthCheckFailsIfUserNamesDontMatch) {
+    }
+
+    TEST_F(LogicalSessionCacheTest, AuthCheckFailsIfUserIdsDontMatch) {
+    }
+
+    TEST_F(LogicalSessionCacheTest, AuthCheckFailsIfOwnerIsAuthenticated) {
+    }
+
+    TEST_F(LogicalSessionCacheTest, SuccessfulAuthCheckUpdatesLastUse) {
+    }
+
+    TEST_F(LogicalSessionCacheTest, FailedAuthCheckUpdatesLastUse) {
+    }
+
 }  // namespace
 }  // namespace mongo

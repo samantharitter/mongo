@@ -39,6 +39,8 @@
 
 namespace mongo {
 
+class Client;
+
 /**
  * A thread-safe cache structure for logical session records.
  *
@@ -90,6 +92,22 @@ public:
     LogicalSessionCache operator=(const LogicalSessionCache&) = delete;
 
     ~LogicalSessionCache();
+
+    /**
+     * Performs a session auth check for using the given lsid on the
+     * given client. Returns ok if all of the following are true:
+     *
+     * - exactly one user is authenticated
+     * - an active session for the provided session id exists
+     * - the authenticated user's username matches the session owner
+     * - the authenticated user's user id matches the session owner
+     *
+     * The record for the given lsid will be added to the cache if it is
+     * not already present, and its lastUse date will be updated to the
+     * current time. If the session exists but the auth check fails, then
+     * the lastUse time will still be updated for that session.
+     */
+    Status performSessionAuthCheck(Client* client, LogicalSessionId lsid);
 
     /**
      * Returns the owner for the given session, or return an error if there

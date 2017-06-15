@@ -32,6 +32,8 @@
 
 #include "mongo/db/logical_session_cache.h"
 
+#include "mongo/db/auth/authorization_session.h"
+#include "mongo/db/auth/internal_user_auth.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/log.h"
 #include "mongo/util/periodic_runner.h"
@@ -64,6 +66,47 @@ LogicalSessionCache::~LogicalSessionCache() {
         severe() << "Failed to join background service thread";
     }
 }
+
+    Status LogicalSessionCache::performSessionAuthCheck(Client* client, LogicalSessionId lsid) {
+        // If auth is not enabled, we always pass this check if the session exists
+        if (!isInternalAuthSet()) {
+            auto res = getOwnerFromCache(lsid);
+            if (res.isOK()) {
+                return Status::OK();
+            }
+        }
+
+        // Ensure that exactly one user is authenticated.
+        auto authzSession = AuthorizationSession::get(client);
+        auto numUsers = authzSession->getNumAuthenticatedUsers();
+        if (numUsers == 0) {
+            return {ErrorCodes::Unauthorized, "Unauthorized"};
+        }
+        if (numUsers > 1) {
+            return {ErrorCodes::Unauthorized,
+                    "Only one user may be authenticated when using logical sessions"};
+        }
+
+        // Ensure that the given session exists.
+
+        // TODO this will update the timestamp even if they aren't authorized, and
+        // it will display a "no such session" error instead of just "Unauthorized",
+        // please discuss. Do we want usability or privacy?
+
+        auto res = getOwner(lsid);
+        if (!res.isOK()) {
+            return res.getStatus();
+        }
+
+        // Ensure that the owner is a match.
+        auto owner = res.getValue();
+        auto user = authzSession->lookupUser(owner.first);
+        if (!user || user->getID() != owner.second) {
+            return {ErrorCodes::Unauthorized, "Unauthorized"};
+        }
+
+        return Status::OK();
+    }
 
 StatusWith<LogicalSessionRecord::Owner> LogicalSessionCache::getOwner(LogicalSessionId lsid) {
     // Search our local cache first

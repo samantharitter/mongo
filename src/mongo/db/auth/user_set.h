@@ -102,6 +102,11 @@ public:
     // valid until the next non-const method is called on the UserSet.
     UserNameIterator getNames() const;
 
+    // Returns the number of users stored in the set.
+    size_t size() const {
+        return _users.size();
+    }
+
     iterator begin() const {
         return _users.begin();
     }

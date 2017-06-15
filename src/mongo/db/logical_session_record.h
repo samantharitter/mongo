@@ -103,6 +103,7 @@ public:
      * permitted to use this session.
      */
     Owner getSessionOwner() const;
+    // TODO: what if auth is not on, what username do we get?
 
 private:
     LogicalSessionRecord() = default;

@@ -136,6 +136,10 @@ void AuthorizationSession::logoutDatabase(const std::string& dbname) {
     _buildAuthenticatedRolesVector();
 }
 
+    size_t AuthorizationSession::getNumAuthenticatedUsers() const {
+        return _authenticatedUsers.size();
+    }
+
 UserNameIterator AuthorizationSession::getAuthenticatedUserNames() {
     return _authenticatedUsers.getNames();
 }
