@@ -40,7 +40,7 @@ structs:
   logical_session_record:
     description: "A struct representing a LogicalSessionRecord"
     fields:
-      signedLsid:
+      _id:
         description: "The id for this session record"
         type: SignedLogicalSessionIdIDL
       lastUse:

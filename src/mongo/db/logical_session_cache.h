@@ -99,6 +99,11 @@ public:
          * May be set with --setParameter logicalSessionRefreshMinutes=X.
          */
         Minutes refreshInterval = Minutes(logicalSessionRefreshMinutes);
+
+        /**
+         * Instantiates a test-only LogicalSessionCache.
+         */
+        bool testOnly = false;
     };
 
     /**
@@ -129,7 +134,7 @@ public:
      *
      * This method may issue networking calls.
      */
-    Status fetchAndPromote(SignedLogicalSessionId lsid);
+    Status fetchAndPromote(OperationContext* opCtx, SignedLogicalSessionId lsid);
 
     /**
      * Inserts a new authoritative session record into the cache. This method will
@@ -137,7 +142,7 @@ public:
      * should only be used when starting new sessions and should not be used to
      * insert records for existing sessions.
      */
-    Status startSession(SignedLogicalSessionId lsid);
+    Status startSession(OperationContext* opCtx, SignedLogicalSessionId lsid);
 
     /**
      * Generates and sets a signature for the fields in this LogicalSessionId.
@@ -179,6 +184,8 @@ private:
 
     const Minutes _refreshInterval;
     const Minutes _sessionTimeout;
+
+    bool _testOnly;
 
     std::unique_ptr<ServiceLiason> _service;
     std::unique_ptr<SessionsCollection> _sessionsColl;

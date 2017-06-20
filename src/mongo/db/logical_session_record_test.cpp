@@ -33,6 +33,7 @@
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
+#include "mongo/bson/oid.h"
 #include "mongo/db/logical_session_id.h"
 #include "mongo/db/logical_session_record.h"
 #include "mongo/db/logical_session_record_gen.h"
@@ -44,16 +45,16 @@ namespace {
 TEST(LogicalSessionRecordTest, ToAndFromBSONTest) {
     // Round-trip a BSON obj
     auto lsid = LogicalSessionId::gen();
-    SignedLogicalSessionId slsid{lsid, boost::none, 1, SHA1Block{}};
+    SignedLogicalSessionId slsid{lsid, OID::gen(), 1, SHA1Block{}};
     auto lastUse = Date_t::now();
-    auto bson = BSON("signedLsid" << slsid.toBSON() << "lastUse" << lastUse);
+    auto bson = BSON("_id" << slsid.toBSON() << "lastUse" << lastUse);
 
     // Make a session record out of this
     auto res = LogicalSessionRecord::parse(bson);
     ASSERT(res.isOK());
     auto record = res.getValue();
 
-    ASSERT_EQ(record.getSignedLsid(), slsid);
+    ASSERT_EQ(record.get_id(), slsid);
     ASSERT_EQ(record.getLastUse(), lastUse);
 
     // Dump back to bson, make sure we get the same thing

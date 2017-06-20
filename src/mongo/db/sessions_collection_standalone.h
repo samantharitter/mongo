@@ -26,47 +26,50 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
+#pragma once
 
-#include <utility>
-
+#include "mongo/db/logical_session_id.h"
 #include "mongo/db/logical_session_record.h"
-
-#include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/db/sessions_collection.h"
+#include "mongo/db/signed_logical_session_id.h"
+#include "mongo/util/time_support.h"
 
 namespace mongo {
 
-StatusWith<LogicalSessionRecord> LogicalSessionRecord::parse(const BSONObj& bson) {
-    try {
-        IDLParserErrorContext ctxt("logical session record");
-        LogicalSessionRecord record;
-        record.parseProtected(ctxt, bson);
-        return record;
-    } catch (std::exception e) {
-        return exceptionToStatus();
-    }
-}
+class OperationContext;
 
-LogicalSessionRecord LogicalSessionRecord::makeAuthoritativeRecord(SignedLogicalSessionId id,
-                                                                   Date_t now) {
-    return LogicalSessionRecord(std::move(id), std::move(now));
-}
+/**
+ * Accesses the sessions collection directly for standalone servers.
+ */
+class SessionsCollectionStandalone : public SessionsCollection {
+public:
+    /**
+     * Returns a LogicalSessionRecord for the given session id, or an error if
+     * no such record was found.
+     */
+    StatusWith<LogicalSessionRecord> fetchRecord(OperationContext* opCtx,
+                                                 SignedLogicalSessionId lsid) override;
 
-BSONObj LogicalSessionRecord::toBSON() const {
-    BSONObjBuilder builder;
-    serialize(&builder);
-    return builder.obj();
-}
+    /**
+     * Inserts the given record into the sessions collection.
+     *
+     * Returns a DuplicateSession error if the session already exists in the
+     * sessions collection.
+     */
+    Status insertRecord(OperationContext* opCtx, LogicalSessionRecord record) override;
 
-std::string LogicalSessionRecord::toString() const {
-    return str::stream() << "LogicalSessionRecord"
-                         << " Id: '" << get_id() << "'"
-                         << " Last-use: " << getLastUse().toString();
-}
+    /**
+     * Updates the last-use times on the given sessions to be greater than
+     * or equal to the current time.
+     */
+    Status refreshSessions(OperationContext* opCtx,
+                           LogicalSessionIdSet sessions,
+                           Date_t refreshTime) override;
 
-LogicalSessionRecord::LogicalSessionRecord(SignedLogicalSessionId id, Date_t now) {
-    set_id(std::move(id));
-    setLastUse(now);
-}
+    /**
+     * Removes the authoritative records for the specified sessions.
+     */
+    Status removeRecords(OperationContext* opCtx, LogicalSessionIdSet sessions) override;
+};
 
 }  // namespace mongo

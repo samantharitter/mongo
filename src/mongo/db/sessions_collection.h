@@ -34,6 +34,8 @@
 
 namespace mongo {
 
+class OperationContext;
+
 /**
  * An abstract interface describing the entrypoint into the sessions collection.
  *
@@ -48,7 +50,8 @@ public:
      * Returns a LogicalSessionRecord for the given session id. This method
      * may run networking operations on the calling thread.
      */
-    virtual StatusWith<LogicalSessionRecord> fetchRecord(SignedLogicalSessionId id) = 0;
+    virtual StatusWith<LogicalSessionRecord> fetchRecord(OperationContext* opCtx,
+                                                         SignedLogicalSessionId id) = 0;
 
     /**
      * Inserts the given record into the sessions collection. This method may run
@@ -57,24 +60,28 @@ public:
      * Returns a DuplicateSession error if the session already exists in the
      * sessions collection.
      */
-    virtual Status insertRecord(LogicalSessionRecord record) = 0;
+    virtual Status insertRecord(OperationContext* opCtx, LogicalSessionRecord record) = 0;
 
     /**
      * Updates the last-use times on the given sessions to be greater than
-     * or equal to the current time.
+     * or equal to the given time.
      *
      * Returns a list of sessions for which no authoritative record was found,
-     * and hence were not refreshed.
+     * and hence were not refreshed. Returns an error if a networking issue occurred.
      */
-    virtual LogicalSessionIdSet refreshSessions(LogicalSessionIdSet sessions) = 0;
+    virtual Status refreshSessions(OperationContext* opCtx,
+                                   LogicalSessionIdSet sessions,
+                                   Date_t refreshTime) = 0;
 
     /**
      * Removes the authoritative records for the specified sessions.
      *
      * Implementations should perform authentication checks to ensure that
      * session records may only be removed if their owner is logged in.
+     *
+     * Returns an error if the removal fails, for example from a network error.
      */
-    virtual void removeRecords(LogicalSessionIdSet sessions) = 0;
+    virtual Status removeRecords(OperationContext* opCtx, LogicalSessionIdSet sessions) = 0;
 };
 
 }  // namespace mongo

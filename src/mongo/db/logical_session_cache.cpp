@@ -81,6 +81,7 @@ LogicalSessionCache::LogicalSessionCache(std::unique_ptr<ServiceLiason> service,
                                          Options options)
     : _refreshInterval(options.refreshInterval),
       _sessionTimeout(options.sessionTimeout),
+      _testOnly(options.testOnly),
       _service(std::move(service)),
       _sessionsColl(std::move(collection)),
       _cache(options.capacity) {
@@ -99,7 +100,7 @@ LogicalSessionCache::~LogicalSessionCache() {
     }
 }
 
-Status LogicalSessionCache::fetchAndPromote(SignedLogicalSessionId slsid) {
+Status LogicalSessionCache::fetchAndPromote(OperationContext* opCtx, SignedLogicalSessionId slsid) {
     // Search our local cache first
     auto promoteRes = promote(slsid);
     if (promoteRes.isOK()) {
@@ -107,7 +108,7 @@ Status LogicalSessionCache::fetchAndPromote(SignedLogicalSessionId slsid) {
     }
 
     // Cache miss, must fetch from the sessions collection.
-    auto res = _sessionsColl->fetchRecord(slsid);
+    auto res = _sessionsColl->fetchRecord(opCtx, slsid);
 
     // If we got a valid record, add it to our cache.
     if (res.isOK()) {
@@ -142,14 +143,14 @@ Status LogicalSessionCache::promote(SignedLogicalSessionId slsid) {
     return Status::OK();
 }
 
-Status LogicalSessionCache::startSession(SignedLogicalSessionId slsid) {
+Status LogicalSessionCache::startSession(OperationContext* opCtx, SignedLogicalSessionId slsid) {
     // Make sure the timestamp makes sense
     auto authoritativeRecord =
         LogicalSessionRecord::makeAuthoritativeRecord(slsid, _service->now());
 
     // Attempt to insert into the sessions collection first. This collection enforces
     // unique session ids, so it will act as concurrency control for us.
-    auto res = _sessionsColl->insertRecord(authoritativeRecord);
+    auto res = _sessionsColl->insertRecord(opCtx, authoritativeRecord);
     if (!res.isOK()) {
         return res;
     }
@@ -201,9 +202,9 @@ void LogicalSessionCache::_refresh() {
     for (auto& it : cacheCopy) {
         auto record = it.second;
         if (!_isDead(record, now)) {
-            activeSessions.insert(record.getSignedLsid().getLsid());
+            activeSessions.insert(record.get_id().getLsid());
         } else {
-            deadSessions.insert(record.getSignedLsid().getLsid());
+            deadSessions.insert(record.get_id().getLsid());
         }
     }
 
@@ -235,7 +236,23 @@ void LogicalSessionCache::_refresh() {
     // Query into the sessions collection to do the refresh. If any sessions have
     // failed to refresh, it means their authoritative records were removed, and
     // we should remove such records from our cache as well.
-    auto failedToRefresh = _sessionsColl->refreshSessions(std::move(activeSessions));
+    {
+        auto res = [ this, activeSessions = std::move(activeSessions), now ]() {
+            if (!_testOnly) {
+                auto client = Client::getCurrent();
+                auto opCtx = client->makeOperationContext();
+                return _sessionsColl->refreshSessions(opCtx.get(), std::move(activeSessions), now);
+            } else {
+                return _sessionsColl->refreshSessions(nullptr, std::move(activeSessions), now);
+            }
+        }
+        ();
+
+        if (!res.isOK()) {
+            // TODO SERVER-29709: handle network errors here.
+            return;
+        }
+    }
 
     // Prune any dead records out of the cache. Dead records are ones that failed to
     // refresh, or ones that have expired locally. We don't make an effort to check
@@ -243,13 +260,7 @@ void LogicalSessionCache::_refresh() {
     // sessions collection. We also don't attempt to resurrect our expired records.
     // However, we *do* keep records alive if they are active on the service.
     {
-        stdx::unique_lock<stdx::mutex> lk(_cacheMutex);
-        for (auto deadId : failedToRefresh) {
-            auto it = serviceSessions.find(deadId);
-            if (it == serviceSessions.end()) {
-                _cache.erase(deadId);
-            }
-        }
+        // TODO SERVER-29709: handle expiration separately from failure to refresh.
     }
 }
 
@@ -260,7 +271,7 @@ bool LogicalSessionCache::_isDead(const LogicalSessionRecord& record, Date_t now
 boost::optional<LogicalSessionRecord> LogicalSessionCache::_addToCache(
     LogicalSessionRecord record) {
     stdx::unique_lock<stdx::mutex> lk(_cacheMutex);
-    return _cache.add(record.getSignedLsid().getLsid(), std::move(record));
+    return _cache.add(record.get_id().getLsid(), std::move(record));
 }
 
 }  // namespace mongo

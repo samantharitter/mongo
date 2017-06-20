@@ -119,7 +119,7 @@ public:
         auto slsid = statusWithSlsid.getValue();
         auto lsRecord = LogicalSessionRecord::makeAuthoritativeRecord(
             slsid, serviceContext->getFastClockSource()->now());
-        Status startSessionStatus = lsCache->startSession(std::move(slsid));
+        Status startSessionStatus = lsCache->startSession(opCtx, std::move(slsid));
 
         appendCommandStatus(result, startSessionStatus);
 

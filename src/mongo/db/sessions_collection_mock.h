@@ -61,8 +61,8 @@ public:
 
     using FetchHook = stdx::function<StatusWith<LogicalSessionRecord>(SignedLogicalSessionId)>;
     using InsertHook = stdx::function<Status(LogicalSessionRecord)>;
-    using RefreshHook = stdx::function<LogicalSessionIdSet(LogicalSessionIdSet)>;
-    using RemoveHook = stdx::function<void(LogicalSessionIdSet)>;
+    using RefreshHook = stdx::function<Status(LogicalSessionIdSet)>;
+    using RemoveHook = stdx::function<Status(LogicalSessionIdSet)>;
 
     // Set custom hooks to override default behavior
     void setFetchHook(FetchHook hook);
@@ -76,8 +76,8 @@ public:
     // Forwarding methods from the MockSessionsCollection
     StatusWith<LogicalSessionRecord> fetchRecord(SignedLogicalSessionId id);
     Status insertRecord(LogicalSessionRecord record);
-    LogicalSessionIdSet refreshSessions(LogicalSessionIdSet sessions);
-    void removeRecords(LogicalSessionIdSet sessions);
+    Status refreshSessions(LogicalSessionIdSet sessions);
+    Status removeRecords(LogicalSessionIdSet sessions);
 
     // Test-side methods that operate on the _sessions map
     void add(LogicalSessionRecord record);
@@ -90,8 +90,8 @@ private:
     // Default implementations, may be overridden with custom hooks.
     StatusWith<LogicalSessionRecord> _fetchRecord(SignedLogicalSessionId id);
     Status _insertRecord(LogicalSessionRecord record);
-    LogicalSessionIdSet _refreshSessions(LogicalSessionIdSet sessions);
-    void _removeRecords(LogicalSessionIdSet sessions);
+    Status _refreshSessions(LogicalSessionIdSet sessions);
+    Status _removeRecords(LogicalSessionIdSet sessions);
 
     stdx::mutex _mutex;
     SessionMap _sessions;
@@ -112,19 +112,22 @@ public:
     explicit MockSessionsCollection(std::shared_ptr<MockSessionsCollectionImpl> impl)
         : _impl(std::move(impl)) {}
 
-    StatusWith<LogicalSessionRecord> fetchRecord(SignedLogicalSessionId id) override {
+    StatusWith<LogicalSessionRecord> fetchRecord(OperationContext* opCtx,
+                                                 SignedLogicalSessionId id) override {
         return _impl->fetchRecord(std::move(id));
     }
 
-    Status insertRecord(LogicalSessionRecord record) override {
+    Status insertRecord(OperationContext* opCtx, LogicalSessionRecord record) override {
         return _impl->insertRecord(std::move(record));
     }
 
-    LogicalSessionIdSet refreshSessions(LogicalSessionIdSet sessions) override {
+    Status refreshSessions(OperationContext* opCtx,
+                           LogicalSessionIdSet sessions,
+                           Date_t refreshTime) override {
         return _impl->refreshSessions(std::move(sessions));
     }
 
-    void removeRecords(LogicalSessionIdSet sessions) override {
+    Status removeRecords(OperationContext* opCtx, LogicalSessionIdSet sessions) override {
         return _impl->removeRecords(std::move(sessions));
     }
 
