@@ -73,6 +73,7 @@
 #include "mongo/db/initialize_snmp.h"
 #include "mongo/db/introspect.h"
 #include "mongo/db/json.h"
+#include "mongo/db/keys_collection_manager.h"
 #include "mongo/db/log_process_details.h"
 #include "mongo/db/logical_clock.h"
 #include "mongo/db/logical_session_cache.h"
@@ -176,6 +177,9 @@ namespace {
 
 const NamespaceString startupLogCollectionName("local.startup_log");
 const NamespaceString kSystemReplSetCollection("local.system.replset");
+
+const std::string kKeyManagerPurposeString = "HMAC";
+const Seconds kKeyValidInterval(3 * 30 * 24 * 60 * 60);  // ~3 months
 
 #ifdef _WIN32
 ntservice::NtServiceDefaultStrings defaultServiceStrings = {
@@ -701,6 +705,14 @@ ExitCode _initAndListen(int listenPort) {
             !internalValidateFeaturesAsMaster) {
             serverGlobalParams.featureCompatibility.validateFeaturesAsMaster.store(false);
         }
+    }
+
+    // If we are a config server, our key manager will have been set up by sharding initialization.
+    // Otherwise, set up a key manager to run on our collections directly.
+    if (globalServiceContext->getKeyManager() == nullptr) {
+        auto keyManager = stdx::make_unique<KeysCollectionManagerDirect>(kKeyManagerPurposeString,
+                                                                         kKeyValidInterval);
+        globalServiceContext->setKeyManager(std::move(keyManager));
     }
 
     startClientCursorMonitor();

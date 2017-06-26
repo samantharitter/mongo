@@ -33,6 +33,7 @@
 #include "mongo/db/logical_session_record.h"
 #include "mongo/db/service_liason.h"
 #include "mongo/db/sessions_collection.h"
+#include "mongo/db/time_proof_service.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/stdx/thread.h"
 #include "mongo/util/lru_cache.h"
@@ -137,7 +138,25 @@ public:
      */
     void clear();
 
+    /**
+     * Generates and sets a signature for the fields in this LogicalSessionId.
+     *
+     * If this method is not able to acquire a key to perform the signature
+     * this call will return an error.
+     */
+    Status signLsid(LogicalSessionId* lsid);
+
+    /**
+     * Validates that this LogicalSessionId was signed with the correct key.
+     */
+    Status validateLsid(OperationContext* opCtx, const LogicalSessionId& lsid);
+
 private:
+    /**
+     * Computes an HMAC signature.
+     */
+    SHA1Block _computeSignature(TimeProofService::Key key);
+
     /**
      * Internal methods to handle scheduling and perform refreshes for active
      * session records contained within the cache.

@@ -30,8 +30,8 @@
 
 #include <memory>
 
-#include "mongo/base/status_with.h"
 #include "mongo/db/keys_collection_document.h"
+#include "mongo/db/keys_collection_manager.h"
 
 namespace mongo {
 
@@ -43,18 +43,19 @@ class ServiceContext;
  * This is responsible for providing keys that can be used for HMAC computation. This also supports
  * automatic key rotation that happens on a configurable interval.
  */
-class KeysCollectionManager {
+class KeysCollectionManagerDirect : public KeysCollectionManager {
 public:
-    virtual ~KeysCollectionManager();
+    KeysCollectionManagerDirect(std::string purpose, Seconds keyValidForInterval);
 
     /**
      * Return a key that is valid for the given time and also matches the keyId. Note that this call
-     * can block if it will need to do a refresh and we are on a sharded cluster.
+     * can block if it will need to do a refresh.
      *
      * Throws ErrorCode::ExceededTimeLimit if it times out.
      */
-    virtual StatusWith<KeysCollectionDocument> getKeyForValidation(
-        OperationContext* opCtx, long long keyId, const LogicalTime& forThisTime) = 0;
+    StatusWith<KeysCollectionDocument> getKeyForValidation(OperationContext* opCtx,
+                                                           long long keyId,
+                                                           const LogicalTime& forThisTime) override;
 
     /**
      * Returns a key that is valid for the given time. Note that unlike getKeyForValidation, this
@@ -62,7 +63,11 @@ public:
      *
      * Throws ErrorCode::ExceededTimeLimit if it times out.
      */
-    virtual StatusWith<KeysCollectionDocument> getKeyForSigning(const LogicalTime& forThisTime) = 0;
+    StatusWith<KeysCollectionDocument> getKeyForSigning(const LogicalTime& forThisTime) override;
+
+private:
+    const std::string _purpose;
+    const Seconds _keyValidForInterval;
 };
 
 }  // namespace mongo

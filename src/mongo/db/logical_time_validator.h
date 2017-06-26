@@ -30,6 +30,7 @@
 
 #include <memory>
 
+#include "mongo/db/keys_collection_manager_sharding.h"
 #include "mongo/db/signed_logical_time.h"
 #include "mongo/db/time_proof_service.h"
 #include "mongo/stdx/mutex.h"
@@ -52,7 +53,11 @@ public:
     static LogicalTimeValidator* get(OperationContext* ctx);
     static void set(ServiceContext* service, std::unique_ptr<LogicalTimeValidator> validator);
 
-    explicit LogicalTimeValidator(std::unique_ptr<KeysCollectionManager> keyManager);
+    /**
+     * Constructs a new LogicalTimeValidator that uses the given key manager. The passed-in
+     * key manager must outlive this object.
+     */
+    explicit LogicalTimeValidator(KeysCollectionManagerSharding* keyManager);
 
     /**
      * Tries to sign the newTime with a valid signature. Can return an empty signature and keyId
@@ -103,7 +108,7 @@ private:
     stdx::mutex _mutex;
     SignedLogicalTime _lastSeenValidTime;
     TimeProofService _timeProofService;
-    std::unique_ptr<KeysCollectionManager> _keyManager;
+    KeysCollectionManagerSharding* _keyManager;
 };
 
 }  // namespace mongo

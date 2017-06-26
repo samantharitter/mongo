@@ -31,6 +31,7 @@
 #include <string>
 
 #include "mongo/base/status_with.h"
+#include "mongo/bson/oid.h"
 #include "mongo/db/logical_session_id_gen.h"
 #include "mongo/stdx/unordered_set.h"
 #include "mongo/util/uuid.h"
@@ -38,25 +39,43 @@
 namespace mongo {
 
 class BSONObjBuilder;
+class OperationContext;
 
 /**
- * A 128-bit identifier for a logical session.
+ * An identifier for a logical session. A LogicalSessionId has the following components:
+ *
+ * - A 128-bit unique identifier (UUID)
+ * - An optional user id (ObjectId)
+ * - A key id (long long)
+ * - An HMAC signature (SHA1Block)
  */
 class LogicalSessionId : public Logical_session_id {
 public:
     friend class Logical_session_id;
     friend class Logical_session_record;
 
-    /**
-     * Create and return a new LogicalSessionId with a random UUID.
-     */
-    static LogicalSessionId gen();
+    using keyIdType = long long;
 
     /**
-     * If the given string represents a valid LogicalSessionId, constructs and returns,
-     * the id, otherwise returns an error.
+     * Create and return a new LogicalSessionId with a random UUID for the given
+     * user.
+     *
+     * The generated LogicalSessionId will not yet be signed, callers should call
+     * signLsid() on the LogicalSessionCache separately to generate an HMAC
+     * signature for this LogicalSessionId.
      */
-    static StatusWith<LogicalSessionId> parse(const std::string& s);
+    static LogicalSessionId gen(boost::optional<OID> userId = boost::none);
+
+    /**
+     * If the given string represents a valid UUID, constructs and returns
+     * a new LogicalSessionId for the given user. The returned LogicalSessionId will
+     * not yet be signed. Callers should call signLsid() on the LogicalSessionCache
+     * separately to generate an HMAC signature for this LogicalSessionId.
+     *
+     * Otherwise returns an error.
+     */
+    static StatusWith<LogicalSessionId> parse(const std::string& s,
+                                              boost::optional<OID> userId = boost::none);
 
     /**
      * Constructs a new LogicalSessionId out of a BSONObj. For IDL.
@@ -74,7 +93,8 @@ public:
     BSONObj toBSON() const;
 
     inline bool operator==(const LogicalSessionId& rhs) const {
-        return getId() == rhs.getId();
+        return getId() == rhs.getId() && getUserId() == rhs.getUserId() &&
+            getKeyId() == rhs.getKeyId() && getSignature() == rhs.getSignature();
     }
 
     inline bool operator!=(const LogicalSessionId& rhs) const {
@@ -104,7 +124,7 @@ private:
     /**
      * Construct a LogicalSessionId from a UUID.
      */
-    LogicalSessionId(UUID id);
+    LogicalSessionId(UUID id, boost::optional<OID> userId = boost::none);
 };
 
 inline std::ostream& operator<<(std::ostream& s, const LogicalSessionId& lsid) {

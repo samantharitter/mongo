@@ -23,6 +23,7 @@ global:
     - "mongo/util/uuid.h"
 
 imports:
+  - "mongo/crypto/sha1_block.idl"
   - "mongo/idl/basic_types.idl"
 
 types:
@@ -55,3 +56,8 @@ structs:
     strict: true
     fields:
       id: UUIDIDL
+      userId:
+        optional: true
+        type: objectid
+      keyId: long
+      signature: sha1Block

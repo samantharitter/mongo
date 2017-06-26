@@ -34,6 +34,7 @@
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
+#include "mongo/crypto/sha1_block.h"
 #include "mongo/db/logical_session_id.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/uuid.h"
@@ -59,8 +60,15 @@ TEST(LogicalSessionIdTest, ToAndFromStringTest) {
 
 TEST(LogicalSessionIdTest, FromBSONTest) {
     auto uuid = UUID::gen();
-    auto bson = BSON("id" << uuid.toBSON());
 
+    BSONObjBuilder b;
+    b.append("id", uuid.toBSON());
+    b.append("keyId", long(4));
+
+    char buffer[SHA1Block::kHashLength] = {0};
+    b.appendBinData("signature", SHA1Block::kHashLength, BinDataGeneral, buffer);
+
+    auto bson = b.done();
     auto lsid = LogicalSessionId::parse(bson);
     ASSERT_EQUALS(lsid.toString(), uuid.toString());
 
@@ -73,7 +81,6 @@ TEST(LogicalSessionIdTest, FromBSONTest) {
                                                << "there")),
                   UserException);
 
-    // TODO: use these and add more once there is bindata
     ASSERT_THROWS(LogicalSessionId::parse(BSON("id"
                                                << "not a session id!")),
                   UserException);

@@ -872,9 +872,11 @@ env.Library(
         env.Idlc('logical_session_id.idl')[0],
     ],
     LIBDEPS=[
+        '$BUILD_DIR/mongo/crypto/sha1_block',
         '$BUILD_DIR/mongo/idl/idl_parser',
         '$BUILD_DIR/mongo/util/uuid',
         '$BUILD_DIR/mongo/base',
+        'keys_collection_manager',
     ],
 )
 
@@ -966,6 +968,9 @@ env.Library(
         'logical_session_cache.cpp',
     ],
     LIBDEPS=[
+        '$BUILD_DIR/mongo/crypto/sha1_block',
+        'keys_collection_manager',
+        'logical_session_id',
         'logical_session_record',
         'sessions_collection',
         'server_parameters',
@@ -1059,12 +1064,35 @@ env.Library(
     target='keys_collection_manager',
     source=[
         'keys_collection_manager.cpp',
+    ],
+    LIBDEPS=[
+    ],
+)
+
+env.Library(
+    target='keys_collection_manager_direct',
+    source=[
+        'keys_collection_manager_direct.cpp',
+    ],
+    LIBDEPS=[
+        'dbdirectclient',
+        'keys_collection_manager',
+        'logical_clock',
+        'logical_time',
+    ],
+)
+
+env.Library(
+    target='keys_collection_manager_sharding',
+    source=[
+        'keys_collection_manager_sharding.cpp',
         'keys_collection_cache_reader.cpp',
         'keys_collection_cache_reader_and_updater.cpp',
     ],
     LIBDEPS=[
         'logical_clock',
         'keys_collection_document',
+        'keys_collection_manager',
         'logical_time',
         'server_options',
         '$BUILD_DIR/mongo/s/catalog/sharding_catalog_client',

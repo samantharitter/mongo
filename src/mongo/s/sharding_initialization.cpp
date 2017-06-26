@@ -99,7 +99,7 @@ using executor::ThreadPoolTaskExecutor;
 using executor::ShardingTaskExecutor;
 
 static constexpr auto kRetryInterval = Seconds{2};
-const std::string kKeyManagerPurposeString = "SigningClusterTime";
+const std::string kKeyManagerPurposeString = "HMAC";
 const Seconds kKeyValidInterval(3 * 30 * 24 * 60 * 60);  // ~3 months
 
 auto makeTaskExecutor(std::unique_ptr<NetworkInterface> net) {
@@ -235,12 +235,12 @@ Status initializeGlobalShardingState(OperationContext* opCtx,
         }
     }
 
-    auto keyManager = stdx::make_unique<KeysCollectionManager>(
+    auto keyManager = stdx::make_unique<KeysCollectionManagerSharding>(
         kKeyManagerPurposeString, grid->catalogClient(opCtx), kKeyValidInterval);
     keyManager->startMonitoring(opCtx->getServiceContext());
 
-    LogicalTimeValidator::set(opCtx->getServiceContext(),
-                              stdx::make_unique<LogicalTimeValidator>(std::move(keyManager)));
+    LogicalTimeValidator::set(opCtx->getServiceContext(), LogicalTimeValidator(keyManager.get()));
+    opCtx->getServiceContext()->setKeyManager(std::move(keyManager));
 
     auto replCoord = repl::ReplicationCoordinator::get(opCtx->getClient()->getServiceContext());
     if (serverGlobalParams.clusterRole == ClusterRole::ConfigServer &&

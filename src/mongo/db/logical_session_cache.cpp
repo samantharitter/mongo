@@ -157,6 +157,59 @@ Status LogicalSessionCache::startSession(LogicalSessionRecord authoritativeRecor
     return Status::OK();
 }
 
+Status LogicalSessionCache::signLsid(LogicalSessionId* lsid) {
+    auto keyManager = getGlobalServiceContext()->getKeyManager();
+
+    auto logicalTime = LogicalClock::get(getGlobalServiceContext())->getClusterTime();
+    auto res = keyManager->getKeyForSigning(logicalTime);
+    if (!res.isOK()) {
+        return res.getStatus();
+    }
+
+    auto keyDoc = res.getValue();
+    lsid->setKeyId(keyDoc.getKeyId());
+
+    auto signature = _computeSignature(keyDoc.getKey());
+    lsid->setSignature(std::move(signature));
+
+    return Status::OK();
+}
+
+Status LogicalSessionCache::validateLsid(OperationContext* opCtx, const LogicalSessionId& lsid) {
+    auto keyManager = getGlobalServiceContext()->getKeyManager();
+
+    // Attempt to get the correct key.
+    auto logicalTime = LogicalClock::get(getGlobalServiceContext())->getClusterTime();
+    auto res = keyManager->getKeyForValidation(opCtx, lsid.getKeyId(), logicalTime);
+    if (!res.isOK()) {
+        return res.getStatus();
+    }
+
+    // Re-compute the signature, and see that it matches.
+    auto signature = _computeSignature(res.getValue().getKey());
+    if (signature != lsid.getSignature()) {
+        return {ErrorCodes::NoSuchSession, "Signature validation failed."};
+    }
+
+    return Status::OK();
+}
+
+SHA1Block LogicalSessionCache::_computeSignature(TimeProofService::Key key) {
+    // Write the uuid and user id to a block for signing.
+    char signatureBlock[LogicalSessionId::kSignatureSize] = {0};
+    DataRangeCursor cursor(signatureBlock, signatureBlock + LogicalSessionId::kSignatureSize);
+    cursor.writeAndAdvance<ConstDataRange>(getId().toCDR());
+    if (auto userId = getUserId()) {
+        cursor.writeAndAdvance<ConstDataRange>(userId->toCDR());
+    }
+
+    // Compute the signature.
+    return SHA1Block::computeHmac(key.data(),
+                                  key.size(),
+                                  reinterpret_cast<uint8_t*>(signatureBlock),
+                                  LogicalSessionId::kSignatureSize);
+}
+
 void LogicalSessionCache::_refresh() {
     LogicalSessionIdSet activeSessions;
     LogicalSessionIdSet deadSessions;

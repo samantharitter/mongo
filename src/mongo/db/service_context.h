@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "mongo/base/disallow_copying.h"
+#include "mongo/db/keys_collection_manager.h"
 #include "mongo/db/logical_session_cache.h"
 #include "mongo/db/logical_session_id.h"
 #include "mongo/db/storage/storage_engine.h"
@@ -270,6 +271,26 @@ public:
     virtual StorageEngine* getGlobalStorageEngine() = 0;
 
     //
+    // Key manager, for HMAC keys.
+    //
+
+    /**
+     * Sets the key manager on this service context.
+     */
+    void setKeyManager(std::unique_ptr<KeysCollectionManager> keyManager) & {
+        _keyManager = std::move(keyManager);
+    }
+
+    /**
+     * Returns a pointer to the keys collection manager owned by this service context.
+     */
+    KeysCollectionManager* getKeyManager() const& {
+        return _keyManager.get();
+    }
+
+    KeysCollectionManager* getKeyManager() && = delete;
+
+    //
     // Global operation management.  This may not belong here and there may be too many methods
     // here.
     //
@@ -463,6 +484,11 @@ private:
      * Caller must own the service context's _mutex.
      */
     void _killOperation_inlock(OperationContext* opCtx, ErrorCodes::Error killCode);
+
+    /**
+     * The key manager.
+     */
+    std::unique_ptr<KeysCollectionManager> _keyManager;
 
     /**
      * The periodic runner.

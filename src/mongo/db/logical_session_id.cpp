@@ -34,21 +34,33 @@
 #include "mongo/db/logical_session_id_gen.h"
 #include "mongo/util/assert_util.h"
 
+#include "mongo/db/keys_collection_manager.h"
+#include "mongo/db/logical_clock.h"
+#include "mongo/db/logical_time.h"
+#include "mongo/db/logical_time_validator.h"
+#include "mongo/db/service_context.h"
+
 namespace mongo {
+
+namespace {
+const int kSignatureSize = sizeof(UUID) + sizeof(OID);
+}  // namespace
 
 LogicalSessionId::LogicalSessionId() {
     setId(UUID::gen());
 }
 
-LogicalSessionId::LogicalSessionId(UUID id) {
+LogicalSessionId::LogicalSessionId(UUID id, boost::optional<OID> userId) {
     setId(std::move(id));
+    setUserId(std::move(userId));
 }
 
-LogicalSessionId LogicalSessionId::gen() {
-    return {UUID::gen()};
+LogicalSessionId LogicalSessionId::gen(boost::optional<OID> userId) {
+    return {UUID::gen(), std::move(userId)};
 }
 
-StatusWith<LogicalSessionId> LogicalSessionId::parse(const std::string& s) {
+StatusWith<LogicalSessionId> LogicalSessionId::parse(const std::string& s,
+                                                     boost::optional<OID> userId) {
     auto res = UUID::parse(s);
     if (!res.isOK()) {
         return res.getStatus();
