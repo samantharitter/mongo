@@ -1,5 +1,5 @@
 /**
- *    Copyright (C) 2017 MongoDB Inc.
+ *    Copyright (C) 2017 MongoDB, Inc.
  *
  *    This program is free software: you can redistribute it and/or  modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -26,47 +26,48 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
+#pragma once
 
-#include <utility>
+#include <memory>
 
-#include "mongo/db/logical_session_record.h"
-
-#include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/db/keys_collection_document.h"
+#include "mongo/db/keys_collection_manager.h"
+#include "mongo/stdx/mutex.h"
+#include "mongo/util/lru_cache.h"
 
 namespace mongo {
 
-StatusWith<LogicalSessionRecord> LogicalSessionRecord::parse(const BSONObj& bson) {
-    try {
-        IDLParserErrorContext ctxt("logical session record");
-        LogicalSessionRecord record;
-        record.parseProtected(ctxt, bson);
-        return record;
-    } catch (std::exception e) {
-        return exceptionToStatus();
-    }
-}
+class OperationContext;
+class LogicalTime;
+class ServiceContext;
 
-LogicalSessionRecord LogicalSessionRecord::makeAuthoritativeRecord(SignedLogicalSessionId id,
-                                                                   Date_t now) {
-    return LogicalSessionRecord(std::move(id), std::move(now));
-}
+/**
+ * This implementation of the KeysCollectionManager uses DBDirectclient to query the
+ * keys collection local to this server.
+ */
+class KeysCollectionManagerDirect : public KeysCollectionManager {
+public:
+    KeysCollectionManagerDirect(std::string purpose, Seconds keyValidForInterval);
 
-BSONObj LogicalSessionRecord::toBSON() const {
-    BSONObjBuilder builder;
-    serialize(&builder);
-    return builder.obj();
-}
+    /**
+     * Return a key that is valid for the given time and also matches the keyId.
+     */
+    StatusWith<KeysCollectionDocument> getKeyForValidation(OperationContext* opCtx,
+                                                           long long keyId,
+                                                           const LogicalTime& forThisTime) override;
 
-std::string LogicalSessionRecord::toString() const {
-    return str::stream() << "LogicalSessionRecord"
-                         << " Id: '" << getSignedLsid() << "'"
-                         << " Last-use: " << getLastUse().toString();
-}
+    /**
+     * Returns a key that is valid for the given time.
+     */
+    StatusWith<KeysCollectionDocument> getKeyForSigning(OperationContext* opCtx,
+                                                        const LogicalTime& forThisTime) override;
 
-LogicalSessionRecord::LogicalSessionRecord(SignedLogicalSessionId id, Date_t now) {
-    setSignedLsid(std::move(id));
-    setLastUse(now);
-}
+private:
+    const std::string _purpose;
+    const Seconds _keyValidForInterval;
+
+    stdx::mutex _mutex;
+    LRUCache<long long, KeysCollectionDocument> _cache;
+};
 
 }  // namespace mongo

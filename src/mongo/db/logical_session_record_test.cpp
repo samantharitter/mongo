@@ -45,15 +45,7 @@ TEST(LogicalSessionRecordTest, ToAndFromBSONTest) {
     // Round-trip a BSON obj
     auto lsid = LogicalSessionId::gen();
     auto lastUse = Date_t::now();
-    auto oid = OID::gen();
-
-    auto owner = BSON("userName"
-                      << "Sam"
-                      << "dbName"
-                      << "test"
-                      << "userId"
-                      << oid);
-    auto bson = BSON("lsid" << lsid.toBSON() << "lastUse" << lastUse << "owner" << owner);
+    auto bson = BSON("lsid" << lsid.toBSON() << "lastUse" << lastUse);
 
     // Make a session record out of this
     auto res = LogicalSessionRecord::parse(bson);
@@ -62,13 +54,6 @@ TEST(LogicalSessionRecordTest, ToAndFromBSONTest) {
 
     ASSERT_EQ(record.getLsid(), lsid);
     ASSERT_EQ(record.getLastUse(), lastUse);
-
-    auto recordOwner = record.getSessionOwner();
-
-    ASSERT_EQ(recordOwner.first.getUser(), "Sam");
-    ASSERT_EQ(recordOwner.first.getDB(), "test");
-    ASSERT(recordOwner.second);
-    ASSERT_EQ(*(recordOwner.second), oid);
 
     // Dump back to bson, make sure we get the same thing
     auto bsonDump = record.toBSON();

@@ -28,45 +28,46 @@
 
 #include "mongo/platform/basic.h"
 
-#include <utility>
-
-#include "mongo/db/logical_session_record.h"
+#include "mongo/db/signed_logical_session_id.h"
 
 #include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/util/assert_util.h"
 
 namespace mongo {
 
-StatusWith<LogicalSessionRecord> LogicalSessionRecord::parse(const BSONObj& bson) {
-    try {
-        IDLParserErrorContext ctxt("logical session record");
-        LogicalSessionRecord record;
-        record.parseProtected(ctxt, bson);
-        return record;
-    } catch (std::exception e) {
-        return exceptionToStatus();
-    }
+SignedLogicalSessionId SignedLogicalSessionId::gen() {
+    return SignedLogicalSessionId();
 }
 
-LogicalSessionRecord LogicalSessionRecord::makeAuthoritativeRecord(SignedLogicalSessionId id,
-                                                                   Date_t now) {
-    return LogicalSessionRecord(std::move(id), std::move(now));
+SignedLogicalSessionId::SignedLogicalSessionId() {
+    setLsid(LogicalSessionId::gen());
 }
 
-BSONObj LogicalSessionRecord::toBSON() const {
+SignedLogicalSessionId::SignedLogicalSessionId(LogicalSessionId lsid,
+                                               boost::optional<OID> userId,
+                                               long long keyId,
+                                               SHA1Block signature) {
+    setLsid(std::move(lsid));
+    setUserId(std::move(userId));
+    setKeyId(std::move(keyId));
+    setSignature(std::move(signature));
+}
+
+SignedLogicalSessionId SignedLogicalSessionId::parse(const BSONObj& doc) {
+    IDLParserErrorContext ctx("signed logical session id");
+    SignedLogicalSessionId lsid;
+    lsid.parseProtected(ctx, doc);
+    return lsid;
+}
+
+BSONObj SignedLogicalSessionId::toBSON() const {
     BSONObjBuilder builder;
     serialize(&builder);
     return builder.obj();
 }
 
-std::string LogicalSessionRecord::toString() const {
-    return str::stream() << "LogicalSessionRecord"
-                         << " Id: '" << getSignedLsid() << "'"
-                         << " Last-use: " << getLastUse().toString();
-}
-
-LogicalSessionRecord::LogicalSessionRecord(SignedLogicalSessionId id, Date_t now) {
-    setSignedLsid(std::move(id));
-    setLastUse(now);
+std::string SignedLogicalSessionId::toString() const {
+    return getLsid().toString();
 }
 
 }  // namespace mongo
