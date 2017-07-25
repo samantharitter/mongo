@@ -4460,6 +4460,16 @@ var authCommandsLib = {
           privileges: [{resource: {cluster: true}, actions: ["startSession"]}],
           testcases: [{runOnDb: adminDbName, roles: roles_all}],
         },
+        {
+            testname: "endSessions",
+            command: {endSessions: [ "a890c5a2-714f-11e7-8cf7-a6006ad3dba0" ]},
+            testcases: [
+                {
+                    runOnDb: adminDbName,
+                    roles: {}
+                },
+            ]
+        }
     ],
 
     /************* SHARED TEST LOGIC ****************/

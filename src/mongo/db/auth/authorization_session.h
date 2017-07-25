@@ -119,6 +119,10 @@ public:
     // and ownership of the user stays with the AuthorizationManager
     User* lookupUser(const UserName& name);
 
+    // Returns the single authenticated user, if there is one, or a failure status if there
+    // are no users logged in, or if there are multiple users logged in.
+    StatusWith<User*> getSingleUser();
+
     // Gets an iterator over the names of all authenticated users stored in this manager.
     UserNameIterator getAuthenticatedUserNames();
 

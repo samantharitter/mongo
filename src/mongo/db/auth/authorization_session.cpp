@@ -172,6 +172,20 @@ User* AuthorizationSession::lookupUser(const UserName& name) {
     return _authenticatedUsers.lookup(name);
 }
 
+StatusWith<User*> AuthorizationSession::getSingleUser() {
+    auto userNameItr = getAuthenticatedUserNames();
+    if (userNameItr.more()) {
+        auto userName = userNameItr.next();
+        if (userNameItr.more()) {
+            return {ErrorCodes::Unauthorized, "multiple users are authenticated."};
+        }
+
+        return lookupUser(userName);
+    }
+
+    return {ErrorCodes::Unauthorized, "no users are authenticated."};
+}
+
 void AuthorizationSession::logoutDatabase(const std::string& dbname) {
     User* removedUser = _authenticatedUsers.removeByDBName(dbname);
     if (removedUser) {
