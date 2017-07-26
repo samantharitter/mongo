@@ -30,8 +30,121 @@
 
 #include "mongo/db/sessions_collection.h"
 
+#include <memory>
+
+#include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/db/logical_session_id.h"
+#include "mongo/stdx/functional.h"
+#include "mongo/stdx/memory.h"
+
 namespace mongo {
 
+namespace {
+
+BSONObj lsidQuery(const LogicalSessionId& lsid) {
+    return BSON(LogicalSessionRecord::kIdFieldName << lsid.toBSON());
+}
+
+BSONObj lsidQuery(const LogicalSessionRecord& record) {
+    return lsidQuery(record.getId());
+}
+
+BSONObj updateQuery(const LogicalSessionRecord& record, Date_t refreshTime) {
+    // { $max : { lastUse : <time> }, $setOnInsert : { user : <user> } }
+
+    // Build our update doc.
+    BSONObjBuilder updateBuilder;
+
+    {
+        BSONObjBuilder maxBuilder(updateBuilder.subobjStart("$max"));
+        maxBuilder.append(LogicalSessionRecord::kLastUseFieldName, refreshTime);
+    }
+
+    {
+        BSONObjBuilder setBuilder(updateBuilder.subobjStart("$setOnInsert"));
+        setBuilder.append(LogicalSessionRecord::kUserFieldName, record.getUser().toBSON());
+    }
+
+    return updateBuilder.obj();
+}
+
+using InitBatchFn = stdx::function<void(BSONObjBuilder* batch)>;
+using FinalizeBatchFn = stdx::function<void(BSONObjBuilder* batch)>;
+using SendBatchFn = stdx::function<Status(BSONObj batch)>;
+
+template <typename T>
+using AddLineFn = stdx::function<void(BSONArrayBuilder*, const T&)>;
+
+template <template <typename, typename...> class Container, typename T, typename... Types>
+Status runBulkCmd(std::string label,
+                  InitBatchFn initBatch,
+                  AddLineFn<T> addLine,
+                  FinalizeBatchFn finalizeBatch,
+                  SendBatchFn sendBatch,
+                  const Container<T, Types...>& items) {
+    int i = 0;
+    BufBuilder buf;
+
+    auto batchBuilder = stdx::make_unique<BSONObjBuilder>(buf);
+    initBatch(batchBuilder.get());
+    auto entries = stdx::make_unique<BSONArrayBuilder>(batchBuilder->subarrayStart(label));
+
+    for (const auto& item : items) {
+        addLine(entries.get(), item);
+
+        if (++i >= 1000) {
+            entries->done();
+            finalizeBatch(batchBuilder.get());
+
+            auto res = sendBatch(batchBuilder->done());
+            if (!res.isOK()) {
+                return res;
+            }
+
+            buf.reset();
+            batchBuilder.reset(new BSONObjBuilder(buf));
+            initBatch(batchBuilder.get());
+            entries.reset(new BSONArrayBuilder(batchBuilder->subarrayStart(label)));
+            i = 0;
+        }
+    }
+
+    entries->done();
+    finalizeBatch(batchBuilder.get());
+    return sendBatch(batchBuilder->done());
+}
+
+}  // namespace
+
 SessionsCollection::~SessionsCollection() = default;
+
+Status SessionsCollection::doRefresh(const LogicalSessionRecordSet& sessions,
+                                     Date_t refreshTime,
+                                     SendBatchFn send) {
+    auto init = [](BSONObjBuilder* batch) { batch->append("update", kSessionsCollection); };
+
+    AddLineFn<LogicalSessionRecord> add = [&refreshTime](BSONArrayBuilder* entries,
+                                                         const LogicalSessionRecord& record) {
+        entries->append(BSON("q" << lsidQuery(record) << "u" << updateQuery(record, refreshTime)
+                                 << "upsert"
+                                 << true));
+    };
+
+    auto finalize = [](BSONObjBuilder* batch) { batch->append("ordered", false); };
+
+    return runBulkCmd("updates", init, add, finalize, send, sessions);
+}
+
+Status SessionsCollection::doRemove(const LogicalSessionIdSet& sessions, SendBatchFn send) {
+    auto init = [](BSONObjBuilder* batch) { batch->append("delete", kSessionsCollection); };
+
+    AddLineFn<LogicalSessionId> add = [](BSONArrayBuilder* builder, const LogicalSessionId& lsid) {
+        builder->append(BSON("q" << lsidQuery(lsid) << "limit" << 0));
+    };
+
+    auto finalize = [](BSONObjBuilder* batch) { batch->append("ordered", false); };
+
+    return runBulkCmd("deletes", init, add, finalize, send, sessions);
+}
 
 }  // namespace mongo

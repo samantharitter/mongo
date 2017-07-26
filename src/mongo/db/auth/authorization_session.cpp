@@ -176,6 +176,26 @@ User* AuthorizationSession::lookupUser(const UserName& name) {
     return _authenticatedUsers.lookup(name);
 }
 
+User* AuthorizationSession::getSingleUser() {
+    UserName userName;
+
+    auto userNameItr = getAuthenticatedUserNames();
+    if (userNameItr.more()) {
+        userName = userNameItr.next();
+        if (userNameItr.more()) {
+            uasserted(ErrorCodes::Unauthorized,
+                      "must only be authenticated as exactly one user "
+                      "to create a logical session");
+        }
+    } else {
+        uasserted(ErrorCodes::Unauthorized,
+                  "must only be authenticated as exactly one user "
+                  "to create a logical session");
+    }
+
+    return lookupUser(userName);
+}
+
 void AuthorizationSession::logoutDatabase(const std::string& dbname) {
     User* removedUser = _authenticatedUsers.removeByDBName(dbname);
     if (removedUser) {

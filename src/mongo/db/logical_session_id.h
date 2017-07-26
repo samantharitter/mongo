@@ -67,6 +67,8 @@ inline bool operator!=(const LogicalSessionRecord& lhs, const LogicalSessionReco
 
 LogicalSessionId makeLogicalSessionIdForTest();
 
+LogicalSessionRecord makeLogicalSessionRecordForTest();
+
 struct LogicalSessionIdHash {
     std::size_t operator()(const LogicalSessionId& lsid) const {
         return _hasher(lsid.getId());
@@ -106,5 +108,6 @@ inline StringBuilder& operator<<(StringBuilder& s, const LogicalSessionFromClien
  * An alias for sets of session ids.
  */
 using LogicalSessionIdSet = stdx::unordered_set<LogicalSessionId, LogicalSessionIdHash>;
+using LogicalSessionRecordSet = stdx::unordered_set<LogicalSessionRecord, LogicalSessionRecordHash>;
 
 }  // namespace mongo

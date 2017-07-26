@@ -993,6 +993,32 @@ env.Library(
 )
 
 env.Library(
+    target='sessions_collection_standalone',
+    source=[
+        'sessions_collection_standalone.cpp',
+    ],
+    LIBDEPS=[
+        '$BUILD_DIR/mongo/base',
+        'dbdirectclient',
+        'logical_session_id',
+        'sessions_collection',
+    ],
+)
+
+env.CppUnitTest(
+    target='sessions_collection_standalone_test',
+    source=[
+        'sessions_collection_standalone_test.cpp',
+    ],
+    LIBDEPS=[
+        '$BUILD_DIR/mongo/base',
+        'dbdirectclient',
+        'service_context',
+        'sessions_collection_standalone',
+    ],
+)
+
+env.Library(
     target='logical_session_cache',
     source=[
         'logical_session_cache.cpp',
@@ -1016,6 +1042,7 @@ envWithAsio.CppUnitTest(
         'keys_collection_manager',
         'keys_collection_document',
         'logical_clock',
+        'logical_session_id',
         'logical_session_id_helpers',
         'logical_session_cache',
         'service_liason_mock',
@@ -1031,7 +1058,8 @@ envWithAsio.Library(
     LIBDEPS=[
         'logical_session_cache',
         'service_liason_mongod',
-        'sessions_collection_mock', # TODO SERVER-29201, SERVER-29202, SERVER-29203
+        'sessions_collection_mock', # TODO SERVER-29202, SERVER-29203
+        'sessions_collection_standalone',
     ],
 )
 
@@ -1044,6 +1072,7 @@ envWithAsio.Library(
         'logical_session_cache',
         'service_liason_mongos',
         'sessions_collection_mock', # TODO SERVER-29203 replace with sessions_collection_sharded
+        'sessions_collection_standalone',
     ],
 )
 

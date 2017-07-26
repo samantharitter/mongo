@@ -32,10 +32,21 @@
 
 namespace mongo {
 
+/**
+ * Factory functions to generate logical session records.
+ */
 LogicalSessionId makeLogicalSessionId(const LogicalSessionFromClient& lsid,
                                       OperationContext* opCtx);
 LogicalSessionId makeLogicalSessionId(OperationContext* opCtx);
+
+/**
+ * Factory functions to make logical session records. The overload that
+ * takes an OperationContext should be used when possible, as it will also set the
+ * user information on the record.
+ */
 LogicalSessionRecord makeLogicalSessionRecord(const LogicalSessionId& lsid, Date_t lastUse);
+LogicalSessionRecord makeLogicalSessionRecord(OperationContext* opCtx, Date_t lastUse);
+
 LogicalSessionToClient makeLogicalSessionToClient(const LogicalSessionId& lsid);
 
 /**
