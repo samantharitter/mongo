@@ -75,7 +75,7 @@ public:
     std::string toString() const;
 
     inline bool operator==(const LogicalSessionRecord& rhs) const {
-        return getSignedLsid() == rhs.getSignedLsid();
+        return getId() == rhs.getId();
     }
 
     inline bool operator!=(const LogicalSessionRecord& rhs) const {

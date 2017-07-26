@@ -41,6 +41,9 @@ SignedLogicalSessionId SignedLogicalSessionId::gen() {
 
 SignedLogicalSessionId::SignedLogicalSessionId() {
     setLsid(LogicalSessionId::gen());
+    setUserId(OID::gen());
+    setKeyId(0);
+    setSignature(SHA1Block());
 }
 
 SignedLogicalSessionId::SignedLogicalSessionId(LogicalSessionId lsid,

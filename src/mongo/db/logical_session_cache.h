@@ -41,6 +41,7 @@
 
 namespace mongo {
 
+class Client;
 class OperationContext;
 class ServiceContext;
 
@@ -129,7 +130,7 @@ public:
      *
      * This method may issue networking calls.
      */
-    Status fetchAndPromote(SignedLogicalSessionId lsid);
+    Status fetchAndPromote(OperationContext* opCtx, SignedLogicalSessionId lsid);
 
     /**
      * Inserts a new authoritative session record into the cache. This method will
@@ -137,7 +138,7 @@ public:
      * should only be used when starting new sessions and should not be used to
      * insert records for existing sessions.
      */
-    Status startSession(SignedLogicalSessionId lsid);
+    Status startSession(OperationContext* opCtx, SignedLogicalSessionId lsid);
 
     /**
      * Generates and sets a signature for the fields in this LogicalSessionId.
@@ -160,12 +161,18 @@ public:
      */
     void clear();
 
+    /**
+     * Refreshes the cache synchronously. This flushes all pending refreshes and
+     * inserts to the sessions collection.
+     */
+    void refreshNow(Client* client);
+
 private:
     /**
      * Internal methods to handle scheduling and perform refreshes for active
      * session records contained within the cache.
      */
-    void _refresh();
+    void _refresh(Client* client);
 
     /**
      * Returns true if a record has passed its given expiration.
