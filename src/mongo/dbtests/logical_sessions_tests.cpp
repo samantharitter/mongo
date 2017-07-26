@@ -44,12 +44,25 @@
 namespace LogicalSessionTests {
 
 namespace {
-const char kTestNS[] = "admin.system.sessions";
+constexpr StringData kTestNS = "admin.system.sessions"_sd;
 
 LogicalSessionRecord makeRecord() {
     return LogicalSessionRecord::makeAuthoritativeRecord(SignedLogicalSessionId::gen(),
                                                          Date_t::now());
 }
+
+    Status insertRecord(OperationContext* opCtx, LogicalSessionRecord record) {
+        DBDirectClient client(opCtx);
+
+        client.insert(kTestNS.toString(), record.toBSON());
+        auto errorString = client.getLastError();
+        if (errorString.empty()) {
+            return Status::OK();
+        }
+
+        return {ErrorCodes::DuplicateSession, errorString};
+    }
+
 }  // namespace
 
 class SessionsCollectionStandaloneTest {
@@ -58,12 +71,12 @@ public:
         : _collection(stdx::make_unique<SessionsCollectionStandalone>()) {
         _opCtx = cc().makeOperationContext();
         DBDirectClient db(opCtx());
-        db.dropCollection(kTestNS);
+        db.dropCollection(kTestNS.toString());
     }
 
     virtual ~SessionsCollectionStandaloneTest() {
         DBDirectClient db(opCtx());
-        db.dropCollection(kTestNS);
+        db.dropCollection(kTestNS.toString());
         _opCtx.reset();
     }
 
@@ -80,30 +93,6 @@ private:
     ServiceContext::UniqueOperationContext _opCtx;
 };
 
-// Test that insertion into this collection works.
-class SessionsCollectionStandaloneInsertTest : public SessionsCollectionStandaloneTest {
-public:
-    void run() {
-        auto record = makeRecord();
-
-        // Test basic insertion.
-        auto res = collection()->insertRecord(opCtx(), record);
-        ASSERT_OK(res);
-        auto swRecord = collection()->fetchRecord(opCtx(), record.get_id());
-        ASSERT(swRecord.isOK());
-
-        // Attempt to insert a duplicate element, should fail.
-        res = collection()->insertRecord(opCtx(), record);
-        ASSERT_NOT_OK(res);
-        ASSERT_EQ(res, ErrorCodes::DuplicateSession);
-
-        // Remove the original and attempt to re-insert, should succeed.
-        ASSERT_OK(collection()->removeRecords(opCtx(), {record.get_id().getLsid()}));
-        res = collection()->insertRecord(opCtx(), record);
-        ASSERT_OK(res);
-    }
-};
-
 // Test that removal from this collection works.
 class SessionsCollectionStandaloneRemoveTest : public SessionsCollectionStandaloneTest {
 public:
@@ -111,19 +100,19 @@ public:
         auto record1 = makeRecord();
         auto record2 = makeRecord();
 
-        auto res = collection()->insertRecord(opCtx(), record1);
+        auto res = insertRecord(opCtx(), record1);
         ASSERT_OK(res);
-        res = collection()->insertRecord(opCtx(), record2);
+        res = insertRecord(opCtx(), record2);
         ASSERT_OK(res);
 
         // Remove one record, the other stays
-        res = collection()->removeRecords(opCtx(), {record1.get_id().getLsid()});
+        res = collection()->removeRecords(opCtx(), {record1.getId().getLsid()});
         ASSERT_OK(res);
 
-        auto swRecord = collection()->fetchRecord(opCtx(), record1.get_id());
+        auto swRecord = collection()->fetchRecord(opCtx(), record1.getId());
         ASSERT(!swRecord.isOK());
 
-        swRecord = collection()->fetchRecord(opCtx(), record2.get_id());
+        swRecord = collection()->fetchRecord(opCtx(), record2.getId());
         ASSERT(swRecord.isOK());
     }
 };
@@ -136,13 +125,13 @@ public:
         auto now = Date_t::now();
         auto record1 = LogicalSessionRecord::makeAuthoritativeRecord(SignedLogicalSessionId::gen(),
                                                                      now - Minutes(5));
-        auto res = collection()->insertRecord(opCtx(), record1);
+        auto res = insertRecord(opCtx(), record1);
         ASSERT_OK(res);
-        auto resRefresh = collection()->refreshSessions(opCtx(), {record1.get_id().getLsid()}, now);
+        auto resRefresh = collection()->refreshSessions(opCtx(), {record1.getId().getLsid()}, now);
         ASSERT(resRefresh.isOK());
 
         // The timestamp on the refreshed record should be updated.
-        auto swRecord = collection()->fetchRecord(opCtx(), record1.get_id());
+        auto swRecord = collection()->fetchRecord(opCtx(), record1.getId());
         ASSERT(swRecord.isOK());
         ASSERT_EQ(swRecord.getValue().getLastUse(), now);
 
@@ -154,11 +143,11 @@ public:
         LogicalSessionIdSet toRefresh;
         for (int i = 0; i < 1000; i++) {
             auto record = makeRecord();
-            res = collection()->insertRecord(opCtx(), record);
+            res = insertRecord(opCtx(), record);
 
             // Refresh some of these records.
             if (i % 4 == 0) {
-                toRefresh.insert(record.get_id().getLsid());
+                toRefresh.insert(record.getId().getLsid());
             }
         }
 
@@ -179,7 +168,6 @@ public:
     All() : Suite("logical_sessions") {}
 
     void setupTests() {
-        add<SessionsCollectionStandaloneInsertTest>();
         add<SessionsCollectionStandaloneRemoveTest>();
         add<SessionsCollectionStandaloneRefreshTest>();
     }

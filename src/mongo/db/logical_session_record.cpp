@@ -60,12 +60,12 @@ BSONObj LogicalSessionRecord::toBSON() const {
 
 std::string LogicalSessionRecord::toString() const {
     return str::stream() << "LogicalSessionRecord"
-                         << " Id: '" << get_id() << "'"
+                         << " Id: '" << getId() << "'"
                          << " Last-use: " << getLastUse().toString();
 }
 
 LogicalSessionRecord::LogicalSessionRecord(SignedLogicalSessionId id, Date_t now) {
-    set_id(std::move(id));
+    setId(std::move(id));
     setLastUse(now);
 }
 

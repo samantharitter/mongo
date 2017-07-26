@@ -33,6 +33,8 @@
 #include "mongo/db/logical_session_cache.h"
 #include "mongo/db/logical_session_id.h"
 #include "mongo/db/logical_session_record.h"
+#include "mongo/db/operation_context_noop.h"
+#include "mongo/db/service_context_noop.h"
 #include "mongo/db/service_liason_mock.h"
 #include "mongo/db/sessions_collection_mock.h"
 #include "mongo/stdx/future.h"
@@ -60,16 +62,18 @@ public:
           _sessions(std::make_shared<MockSessionsCollectionImpl>()) {}
 
     void setUp() override {
+        auto client = serviceContext.makeClient("testClient");
+        Client::setCurrent(std::move(client));
+
         auto mockService = stdx::make_unique<MockServiceLiason>(_service);
         auto mockSessions = stdx::make_unique<MockSessionsCollection>(_sessions);
-        LogicalSessionCache::Options opts;
-        opts.testOnly = true;
         _cache = stdx::make_unique<LogicalSessionCache>(
-            std::move(mockService), std::move(mockSessions), std::move(opts));
+            std::move(mockService), std::move(mockSessions));
     }
 
     void tearDown() override {
         _service->join();
+        auto client = Client::releaseCurrent();
     }
 
     void waitUntilRefreshScheduled() {
@@ -91,6 +95,8 @@ public:
     }
 
 private:
+    ServiceContextNoop serviceContext;
+
     std::shared_ptr<MockServiceLiasonImpl> _service;
     std::shared_ptr<MockSessionsCollectionImpl> _sessions;
 
@@ -199,7 +205,7 @@ TEST_F(LogicalSessionCacheTest, StartSession) {
     // is not in our local cache, should fail
     auto record2 = LogicalSessionRecord::makeAuthoritativeRecord(SignedLogicalSessionId::gen(),
                                                                  service()->now());
-    auto signedLsid2 = record2.get_id();
+    auto signedLsid2 = record2.getId();
     sessions()->add(std::move(record2));
     res = cache()->startSession(nullptr, signedLsid2);
     ASSERT(!res.isOK());
@@ -227,7 +233,7 @@ TEST_F(LogicalSessionCacheTest, CacheRefreshesOwnRecords) {
 
     // Advance time to first refresh point, check that refresh happens, and
     // that it includes both our records
-    sessions()->setRefreshHook([&hitRefresh](LogicalSessionIdSet sessions) {
+    sessions()->setRefreshHook([&hitRefresh](const LogicalSessionIdSet& sessions) {
         hitRefresh.set_value(sessions.size());
         return Status::OK();
     });
@@ -248,7 +254,7 @@ TEST_F(LogicalSessionCacheTest, CacheRefreshesOwnRecords) {
 
     // Advance time so that one record expires
     // Ensure that first record was refreshed, and second was thrown away
-    sessions()->setRefreshHook([&refresh2](LogicalSessionIdSet sessions) {
+    sessions()->setRefreshHook([&refresh2](const LogicalSessionIdSet& sessions) {
         // We should only have one record here, the other should have expired
         ASSERT_EQ(sessions.size(), size_t(1));
         refresh2.set_value(*(sessions.begin()));
@@ -306,7 +312,7 @@ TEST_F(LogicalSessionCacheTest, KeepActiveSessionAlive) {
     auto refreshFuture = hitRefresh.get_future();
 
     // SignedLsid 1 fails to refresh
-    sessions()->setRefreshHook([&hitRefresh, &signedLsid1](LogicalSessionIdSet sessions) {
+    sessions()->setRefreshHook([&hitRefresh, &signedLsid1](const LogicalSessionIdSet& sessions) {
         ASSERT_EQ(sessions.size(), size_t(2));
         hitRefresh.set_value();
         return Status::OK();
@@ -350,7 +356,7 @@ TEST_F(LogicalSessionCacheTest, LongRunningQueriesAreRefreshed) {
     stdx::condition_variable cv;
     int count = 0;
 
-    sessions()->setRefreshHook([&cv, &mutex, &count, &signedLsid](LogicalSessionIdSet sessions) {
+    sessions()->setRefreshHook([&cv, &mutex, &count, &signedLsid](const LogicalSessionIdSet& sessions) {
         ASSERT_EQ(*(sessions.begin()), signedLsid.getLsid());
         {
             stdx::unique_lock<stdx::mutex> lk(mutex);
@@ -401,7 +407,7 @@ TEST_F(LogicalSessionCacheTest, RefreshCachedAndServiceSignedLsidsTogether) {
     auto refreshFuture = hitRefresh.get_future();
 
     // Both signedLsids refresh
-    sessions()->setRefreshHook([&hitRefresh](LogicalSessionIdSet sessions) {
+    sessions()->setRefreshHook([&hitRefresh](const LogicalSessionIdSet& sessions) {
         ASSERT_EQ(sessions.size(), size_t(2));
         hitRefresh.set_value();
         return Status::OK();
@@ -424,7 +430,7 @@ TEST_F(LogicalSessionCacheTest, ManySignedLsidsInCacheRefresh) {
     auto refreshFuture = hitRefresh.get_future();
 
     // Check that all signedLsids refresh
-    sessions()->setRefreshHook([&hitRefresh, &count](LogicalSessionIdSet sessions) {
+    sessions()->setRefreshHook([&hitRefresh, &count](const LogicalSessionIdSet& sessions) {
         ASSERT_EQ(sessions.size(), size_t(count));
         hitRefresh.set_value();
         return Status::OK();
@@ -447,7 +453,7 @@ TEST_F(LogicalSessionCacheTest, ManyLongRunningSessionsRefresh) {
     auto refreshFuture = hitRefresh.get_future();
 
     // Check that all signedLsids refresh
-    sessions()->setRefreshHook([&hitRefresh, &count](LogicalSessionIdSet sessions) {
+    sessions()->setRefreshHook([&hitRefresh, &count](const LogicalSessionIdSet& sessions) {
         ASSERT_EQ(sessions.size(), size_t(count));
         hitRefresh.set_value();
         return Status::OK();
@@ -476,7 +482,7 @@ TEST_F(LogicalSessionCacheTest, ManySessionsRefreshComboDeluxe) {
 
     // Check that all signedLsids refresh successfully
     sessions()->setRefreshHook(
-        [&refreshes, &mutex, &cv, &nRefreshed](LogicalSessionIdSet sessions) {
+        [&refreshes, &mutex, &cv, &nRefreshed](const LogicalSessionIdSet& sessions) {
             {
                 stdx::unique_lock<stdx::mutex> lk(mutex);
                 refreshes++;
@@ -498,7 +504,7 @@ TEST_F(LogicalSessionCacheTest, ManySessionsRefreshComboDeluxe) {
     // Remove all of the service sessions, should just refresh the cache entries
     service()->clear();
     sessions()->setRefreshHook(
-        [&refreshes, &mutex, &cv, &nRefreshed](LogicalSessionIdSet sessions) {
+        [&refreshes, &mutex, &cv, &nRefreshed](const LogicalSessionIdSet& sessions) {
             {
                 stdx::unique_lock<stdx::mutex> lk(mutex);
                 refreshes++;

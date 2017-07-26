@@ -81,11 +81,10 @@ LogicalSessionCache::LogicalSessionCache(std::unique_ptr<ServiceLiason> service,
                                          Options options)
     : _refreshInterval(options.refreshInterval),
       _sessionTimeout(options.sessionTimeout),
-      _testOnly(options.testOnly),
       _service(std::move(service)),
       _sessionsColl(std::move(collection)),
       _cache(options.capacity) {
-    PeriodicRunner::PeriodicJob job{[this] { _refresh(); },
+    PeriodicRunner::PeriodicJob job{[this](Client* client) { _refresh(client); },
                                     duration_cast<Milliseconds>(_refreshInterval)};
     _service->scheduleJob(std::move(job));
 }
@@ -148,17 +147,11 @@ Status LogicalSessionCache::startSession(OperationContext* opCtx, SignedLogicalS
     auto authoritativeRecord =
         LogicalSessionRecord::makeAuthoritativeRecord(slsid, _service->now());
 
-    // Attempt to insert into the sessions collection first. This collection enforces
-    // unique session ids, so it will act as concurrency control for us.
-    auto res = _sessionsColl->insertRecord(opCtx, authoritativeRecord);
-    if (!res.isOK()) {
-        return res;
-    }
+    // Add the new record to our local cache. We will insert it into the sessions collection
+    // the next time _refresh is called.
 
-    // Add the new record to our local cache. If we get a conflict here, and the
-    // conflicting record is not dead and is not equal to our record, an interloper
-    // may have ended this session and then created a new one with the same id.
-    // In this case, return a failure.
+    // If we get a conflict here, then an interloper may have ended this session
+    // and then created a new one with the same id. In this case, return a failure.
     auto oldRecord = _addToCache(authoritativeRecord);
     if (oldRecord) {
         if (*oldRecord != authoritativeRecord) {
@@ -182,7 +175,11 @@ Status LogicalSessionCache::validateLsid(OperationContext* opCtx,
     return _service->validateLsid(opCtx, slsid);
 }
 
-void LogicalSessionCache::_refresh() {
+void LogicalSessionCache::refreshNow(Client* client) {
+    return _refresh(client);
+}
+
+void LogicalSessionCache::_refresh(Client* client) {
     LogicalSessionIdSet activeSessions;
     LogicalSessionIdSet deadSessions;
 
@@ -202,9 +199,9 @@ void LogicalSessionCache::_refresh() {
     for (auto& it : cacheCopy) {
         auto record = it.second;
         if (!_isDead(record, now)) {
-            activeSessions.insert(record.get_id().getLsid());
+            activeSessions.insert(record.getId().getLsid());
         } else {
-            deadSessions.insert(record.get_id().getLsid());
+            deadSessions.insert(record.getId().getLsid());
         }
     }
 
@@ -237,17 +234,8 @@ void LogicalSessionCache::_refresh() {
     // failed to refresh, it means their authoritative records were removed, and
     // we should remove such records from our cache as well.
     {
-        auto res = [ this, activeSessions = std::move(activeSessions), now ]() {
-            if (!_testOnly) {
-                auto client = Client::getCurrent();
-                auto opCtx = client->makeOperationContext();
-                return _sessionsColl->refreshSessions(opCtx.get(), std::move(activeSessions), now);
-            } else {
-                return _sessionsColl->refreshSessions(nullptr, std::move(activeSessions), now);
-            }
-        }
-        ();
-
+        auto opCtx = client->makeOperationContext();
+        auto res = _sessionsColl->refreshSessions(opCtx.get(), std::move(activeSessions), now);
         if (!res.isOK()) {
             // TODO SERVER-29709: handle network errors here.
             return;
@@ -271,7 +259,7 @@ bool LogicalSessionCache::_isDead(const LogicalSessionRecord& record, Date_t now
 boost::optional<LogicalSessionRecord> LogicalSessionCache::_addToCache(
     LogicalSessionRecord record) {
     stdx::unique_lock<stdx::mutex> lk(_cacheMutex);
-    return _cache.add(record.get_id().getLsid(), std::move(record));
+    return _cache.add(record.getId().getLsid(), std::move(record));
 }
 
 }  // namespace mongo

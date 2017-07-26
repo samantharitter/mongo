@@ -54,15 +54,6 @@ public:
                                                          SignedLogicalSessionId id) = 0;
 
     /**
-     * Inserts the given record into the sessions collection. This method may run
-     * networking operations on the calling thread.
-     *
-     * Returns a DuplicateSession error if the session already exists in the
-     * sessions collection.
-     */
-    virtual Status insertRecord(OperationContext* opCtx, LogicalSessionRecord record) = 0;
-
-    /**
      * Updates the last-use times on the given sessions to be greater than
      * or equal to the given time.
      *
@@ -70,7 +61,7 @@ public:
      * and hence were not refreshed. Returns an error if a networking issue occurred.
      */
     virtual Status refreshSessions(OperationContext* opCtx,
-                                   LogicalSessionIdSet sessions,
+                                   const LogicalSessionIdSet& sessions,
                                    Date_t refreshTime) = 0;
 
     /**
@@ -81,7 +72,7 @@ public:
      *
      * Returns an error if the removal fails, for example from a network error.
      */
-    virtual Status removeRecords(OperationContext* opCtx, LogicalSessionIdSet sessions) = 0;
+    virtual Status removeRecords(OperationContext* opCtx, const LogicalSessionIdSet& sessions) = 0;
 };
 
 }  // namespace mongo

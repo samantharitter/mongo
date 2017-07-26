@@ -29,7 +29,6 @@
 #include "mongo/platform/basic.h"
 
 #include <memory>
-#include <stdio.h>
 
 #include "mongo/db/logical_session_cache_factory_mongod.h"
 
@@ -43,7 +42,6 @@ namespace mongo {
 namespace {
 
 std::unique_ptr<SessionsCollection> makeSessionsCollection(LogicalSessionCacheServer state) {
-    fprintf(stderr, "makeSessionsCollection\n");
     switch (state) {
         case LogicalSessionCacheServer::kSharded:
             // TODO SERVER-29203, replace with SessionsCollectionSharded

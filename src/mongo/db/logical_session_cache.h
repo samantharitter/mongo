@@ -41,6 +41,7 @@
 
 namespace mongo {
 
+class Client;
 class OperationContext;
 class ServiceContext;
 
@@ -99,11 +100,6 @@ public:
          * May be set with --setParameter logicalSessionRefreshMinutes=X.
          */
         Minutes refreshInterval = Minutes(logicalSessionRefreshMinutes);
-
-        /**
-         * Instantiates a test-only LogicalSessionCache.
-         */
-        bool testOnly = false;
     };
 
     /**
@@ -165,12 +161,18 @@ public:
      */
     void clear();
 
+    /**
+     * Refreshes the cache synchronously. This flushes all pending refreshes and
+     * inserts to the sessions collection.
+     */
+    void refreshNow(Client* client);
+
 private:
     /**
      * Internal methods to handle scheduling and perform refreshes for active
      * session records contained within the cache.
      */
-    void _refresh();
+    void _refresh(Client* client);
 
     /**
      * Returns true if a record has passed its given expiration.
@@ -184,8 +186,6 @@ private:
 
     const Minutes _refreshInterval;
     const Minutes _sessionTimeout;
-
-    bool _testOnly;
 
     std::unique_ptr<ServiceLiason> _service;
     std::unique_ptr<SessionsCollection> _sessionsColl;

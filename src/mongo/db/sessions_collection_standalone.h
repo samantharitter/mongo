@@ -51,25 +51,17 @@ public:
                                                  SignedLogicalSessionId lsid) override;
 
     /**
-     * Inserts the given record into the sessions collection.
-     *
-     * Returns a DuplicateSession error if the session already exists in the
-     * sessions collection.
-     */
-    Status insertRecord(OperationContext* opCtx, LogicalSessionRecord record) override;
-
-    /**
      * Updates the last-use times on the given sessions to be greater than
      * or equal to the current time.
      */
     Status refreshSessions(OperationContext* opCtx,
-                           LogicalSessionIdSet sessions,
+                           const LogicalSessionIdSet& sessions,
                            Date_t refreshTime) override;
 
     /**
      * Removes the authoritative records for the specified sessions.
      */
-    Status removeRecords(OperationContext* opCtx, LogicalSessionIdSet sessions) override;
+    Status removeRecords(OperationContext* opCtx, const LogicalSessionIdSet& sessions) override;
 };
 
 }  // namespace mongo

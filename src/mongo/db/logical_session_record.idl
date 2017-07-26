@@ -43,6 +43,7 @@ structs:
       _id:
         description: "The id for this session record"
         type: SignedLogicalSessionIdIDL
+        cpp_name: Id
       lastUse:
         description: "The time at which this record was last used. Note: the date expressed in this in-memory record object may not match the date on the authoritative record for this session, which is stored in the sessions collection."
         type: date
