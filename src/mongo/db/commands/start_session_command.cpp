@@ -94,7 +94,7 @@ public:
 
         auto lsCache = LogicalSessionCache::get(serviceContext);
 
-        Status startSessionStatus = lsCache->startSession(lsid.get());
+        Status startSessionStatus = lsCache->startSession(opCtx, lsid.get());
 
         if (!startSessionStatus.isOK()) {
             return appendCommandStatus(result, startSessionStatus);

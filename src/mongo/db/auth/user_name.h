@@ -69,6 +69,14 @@ public:
     }
 
     /**
+     * Get the full unique name of a user as a string, including its oid,
+     * formatted as "user<id>@db".
+     */
+    const std::string& getFullNameWithId() const {
+        return _fullNameWithId;
+    }
+
+    /**
      * Stringifies the object, for logging/debugging.
      */
     std::string toString() const {
@@ -90,6 +98,8 @@ public:
 private:
     std::string _fullName;  // The full name, stored as a string.  "user@db".
     size_t _splitPoint;     // The index of the "@" separating the user and db name parts.
+
+    std::string _fullNameWithId; // the full name, plus id, stored as a string "user<id>@db".
 };
 
 std::ostream& operator<<(std::ostream& os, const UserName& name);

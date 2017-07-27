@@ -135,7 +135,31 @@ public:
      * should only be used when starting new sessions and should not be used to
      * insert records for existing sessions.
      */
-    Status startSession(LogicalSessionId lsid);
+    Status startSession(OperationContext* opCtx, LogicalSessionId lsid);
+
+    /**
+     * Appends all active sessions for all users to the given
+     * BSONObjBuilder as follows:
+     *
+     *   username<user_id>@db : [ { id : <uuid>, lastUse : <date> }, ... ]
+     *
+     * Returns an error if an error occurred. The 'local' version of this method
+     * only appends sessions that are currently in the cache.
+     */
+    Status listAllSessions(BSONObjBuilder* builder);
+    Status listAllSessionsInCache(BSONObjBuilder* builder);
+
+    /**
+     * Appends all sessions belonging to the given user to the given BSONObjBuilder
+     * as follows:
+     *
+     *   sessions: [ { id : <uuid>, lastUse : <date> }, ... ]
+     *
+     * Returns an error if a network error occurred. The 'local' version of this
+     * method only appends sessions that are currently in the cache.
+     */
+    Status listSessions(OperationContext* opCtx, BSONObjBuilder* builder);
+    Status listSessionsInCache(OperationContext* opCtx, BSONObjBuilder* builder);
 
     /**
      * Removes all local records in this cache. Does not remove the corresponding

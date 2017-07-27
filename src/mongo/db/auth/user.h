@@ -27,6 +27,7 @@
 
 #pragma once
 
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -87,6 +88,18 @@ public:
      * Returns the user name for this user.
      */
     const UserName& getName() const;
+
+    /**
+     * Get the full unique name of a user as a string, including its oid,
+     * formatted as "user<id>@db".
+     */
+    const std::string& getFullNameWithId() const {
+        std::stringstream ss;
+        ss << getName().getUser();
+        ss << "<" << getID().value_or("none") << ">";
+        ss << "@" << getName().getDB();
+        return ss.str();
+    }
 
     /**
      * Returns the user's id.

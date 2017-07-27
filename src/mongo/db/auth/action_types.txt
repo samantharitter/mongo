@@ -69,6 +69,7 @@
 "listCollections",
 "listDatabases",
 "listIndexes",
+"listSessions",
 "listShards",
 "logRotate",
 "moveChunk",

@@ -64,6 +64,7 @@ structs:
     fields:
       id: LogicalSessionId
       lastUse: date
+      user: string
 
   LogicalSessionFromClient:
     description: "A struct representing a LogicalSessionId from external clients"

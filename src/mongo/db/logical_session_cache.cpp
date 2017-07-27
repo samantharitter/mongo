@@ -45,6 +45,26 @@ namespace mongo {
 namespace {
 const auto getLogicalSessionCache =
     ServiceContext::declareDecoration<std::unique_ptr<LogicalSessionCache>>();
+
+// Gets a string, user<id>@db, to use as a label on records. If auth
+// is not on, returns "".
+std::string getUserLabel(OperationContext* opCtx) {
+    auto client = opCtx->getClient();
+    ServiceContext* serviceContext = client->getServiceContext();
+    if (AuthorizationManager::get(serviceContext)->isAuthEnabled()) {
+        auto authzSession = AuthorizationSession::get(client);
+        auto userNameItr = authzSession->getAuthenticatedUserNames();
+
+        // We should always have exactly one user here.
+        invariant(userNameItr.more());
+        userName = userNameItr.next();
+        User* user = authzSession->lookupUser(userName);
+        invariant(user);
+        return user->getFullNameWithId();
+    }
+    return "";
+}
+
 }  // namespace
 
 MONGO_EXPORT_STARTUP_SERVER_PARAMETER(logicalSessionRecordCacheSize,
@@ -143,10 +163,11 @@ Status LogicalSessionCache::promote(LogicalSessionId lsid) {
     return Status::OK();
 }
 
-Status LogicalSessionCache::startSession(LogicalSessionId lsid) {
+Status LogicalSessionCache::startSession(OperationContext* opCtx, LogicalSessionId lsid) {
     LogicalSessionRecord lsr;
     lsr.setId(lsid);
     lsr.setLastUse(_service->now());
+    lsr.setUser(getUserLabel(opCtx));
 
     // Attempt to insert into the sessions collection first. This collection enforces
     // unique session ids, so it will act as concurrency control for us.
@@ -170,6 +191,39 @@ Status LogicalSessionCache::startSession(LogicalSessionId lsid) {
 
     return Status::OK();
 }
+    Status LogicalSessionCache::listAllSessions(BSONObjBuilder* builder) {
+        return Status::OK();
+    }
+
+    Status LogicalSessionCache::listAllSessionsInCache(BSONObjBuilder* builder) {
+        return Status::OK();
+    }
+
+    Status LogicalSessionCache::listSessions(OperationContext* opCtx, BSONObjBuilder* builder) {
+        return Status::OK();
+    }
+
+    Status LogicalSessionCache::listSessionsInCache(OperationContext* opCtx, BSONObjBuilder* builder) {
+        std::vector<decltype(_cache)::ListEntry> cacheCopy;
+        {
+            stdx::unique_lock<stdx::mutex> lk(_cacheMutex);
+            cacheCopy.assign(_cache.begin(), _cache.end());
+        }
+
+        auto label = getUserLabel(opCtx);
+
+        {
+            BSONArrayBuilder builder = builder.subarrayStart("sessions");
+            for (const auto& record : cacheCopy) {
+                if (lsr.getUser() == label) {
+                    // TODO: batching?? Like listCollections??
+                    builder.append(BSON("id" << lsr.getId().getId() << "lastUse" << lsr.getLastUse()));
+                }
+            }
+        }
+
+        return Status::OK();
+    }
 
 void LogicalSessionCache::_refresh() {
     LogicalSessionIdSet activeSessions;

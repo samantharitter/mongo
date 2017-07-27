@@ -651,6 +651,8 @@ void addInternalRolePrivileges(PrivilegeVector* privileges) {
 void addAnyBuiltinRolePrivileges(PrivilegeVector* privileges) {
     Privilege::addPrivilegeToPrivilegeVector(
         privileges, Privilege(ResourcePattern::forClusterResource(), ActionType::startSession));
+    Privilege::addPrivilegeToPrivilegeVector(
+        privileges, Privilege(ResourcePattern::forClusterResource(), ActionType::listSessions));
 }
 
 }  // namespace
