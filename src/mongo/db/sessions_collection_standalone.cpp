@@ -73,19 +73,4 @@ Status SessionsCollectionStandalone::removeRecords(OperationContext* opCtx,
     return doRemove(sessions, makeSendFn(&client));
 }
 
-SessionsCollection::SendBatchFn SessionsCollectionStandalone::makeSendFn(DBDirectClient* client) {
-    auto send = [client](BSONObj batch) -> Status {
-        BSONObj res;
-        auto ok = client->runCommand(SessionsCollection::kSessionsDb.toString(), batch, res);
-        if (!ok) {
-            return {ErrorCodes::UnknownError,
-                    client->getLastError(SessionsCollection::kSessionsDb.toString())};
-        }
-        return Status::OK();
-    };
-
-    return send;
-}
-
-
 }  // namespace mongo

@@ -28,6 +28,11 @@
 
 #pragma once
 
+#include <memory>
+
+#include "mongo/client/connection_string.h"
+#include "mongo/client/connpool.h"
+#include "mongo/client/remote_command_targeter.h"
 #include "mongo/db/logical_session_id.h"
 #include "mongo/db/sessions_collection.h"
 #include "mongo/util/time_support.h"
@@ -36,12 +41,23 @@ namespace mongo {
 
 class DBDirectClient;
 class OperationContext;
+class RemoteCommandTargeter;
 
 /**
- * Accesses the sessions collection directly for standalone servers.
+ * Accesses the sessions collection for replica set members.
  */
-class SessionsCollectionStandalone : public SessionsCollection {
+class SessionsCollectionRS : public SessionsCollection {
 public:
+    /**
+     * Constructs a new SessionsCollectionRS. Starts up a new RemoteCommandTargeter.
+     */
+    SessionsCollectionRS(ConnectionString cs);
+
+    /**
+     * Set or reset the connection string. Will reset the RemoteCommandTargeter.
+     */
+    void setConnectionString(ConnectionString cs);
+
     /**
      * Returns a LogicalSessionRecord for the given session id, or an error if
      * no such record was found.
@@ -61,6 +77,14 @@ public:
      * Removes the authoritative records for the specified sessions.
      */
     Status removeRecords(OperationContext* opCtx, const LogicalSessionIdSet& sessions) override;
+
+private:
+    StatusWith<HostAndPort> findMaster(OperationContext* opCtx);
+    StatusWith<std::unique_ptr<ScopedDbConnection>> makeConnection(OperationContext* opCtx);
+
+    stdx::mutex _lock;
+    ConnectionString _cs;
+    std::unique_ptr<RemoteCommandTargeter> _targeter;
 };
 
 }  // namespace mongo

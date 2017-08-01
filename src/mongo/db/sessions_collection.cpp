@@ -33,6 +33,7 @@
 #include <memory>
 
 #include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/client/dbclientinterface.h"
 #include "mongo/db/logical_session_id.h"
 #include "mongo/stdx/functional.h"
 #include "mongo/stdx/memory.h"
@@ -120,6 +121,20 @@ constexpr StringData SessionsCollection::kSessionsFullNS;
 
 
 SessionsCollection::~SessionsCollection() = default;
+
+SessionsCollection::SendBatchFn SessionsCollection::makeSendFn(DBClientBase* client) {
+    auto send = [client](BSONObj batch) -> Status {
+        BSONObj res;
+        auto ok = client->runCommand(SessionsCollection::kSessionsDb.toString(), batch, res);
+        if (!ok) {
+            return {ErrorCodes::UnknownError,
+                    client->getLastError(SessionsCollection::kSessionsDb.toString())};
+        }
+        return Status::OK();
+    };
+
+    return send;
+}
 
 Status SessionsCollection::doRefresh(const LogicalSessionRecordSet& sessions,
                                      Date_t refreshTime,

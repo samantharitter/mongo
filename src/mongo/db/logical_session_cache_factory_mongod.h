@@ -30,6 +30,7 @@
 
 #include <memory>
 
+#include "mongo/client/connection_string.h"
 #include "mongo/db/logical_session_cache.h"
 #include "mongo/db/service_liason.h"
 
@@ -37,6 +38,8 @@ namespace mongo {
 
 enum class LogicalSessionCacheServer { kSharded, kReplicaSet, kStandalone };
 
-std::unique_ptr<LogicalSessionCache> makeLogicalSessionCacheD(LogicalSessionCacheServer state);
+    // TODO: handle the case where we are a repl set member, but has not yet been initialized.
+std::unique_ptr<LogicalSessionCache> makeLogicalSessionCacheD(LogicalSessionCacheServer state,
+                                                              ConnectionString cs = ConnectionString());
 
 }  // namespace mongo

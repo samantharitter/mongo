@@ -2697,6 +2697,15 @@ ReplicationCoordinatorImpl::_setCurrentRSConfig_inlock(const ReplSetConfig& newC
         }
     }
 
+    // Update the logical session cache with the new config. If we are no longer in the
+    // set, update as a standalone.
+    auto coll = static_cast<SessionsCollectionRS*>(getLogicalSessionCache(getServiceContext()).getSessionsCollection());
+    if (_selfIndex >= 0) {
+        coll->setConnectionString(_rsConfig.getConnectionString());
+    } else {
+        coll->setConnectionString(ConnectionString());
+    }
+
     return action;
 }
 
