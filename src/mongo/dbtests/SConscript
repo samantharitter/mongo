@@ -71,6 +71,7 @@ dbtest = env.Program(
         'jsobjtests.cpp',
         'jsontests.cpp',
         'jstests.cpp',
+        'logical_sessions_tests.cpp',
         'matchertests.cpp',
         'mmaptests.cpp',
         'mock_dbclient_conn_test.cpp',
