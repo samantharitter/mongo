@@ -118,6 +118,20 @@ Status runBulkCmd(std::string label,
 
 SessionsCollection::~SessionsCollection() = default;
 
+SessionsCollection::SendBatchFn SessionsCollection::makeSendFn(DBClientBase* client) {
+    auto send = [client](BSONObj batch) -> Status {
+        BSONObj res;
+        auto ok = client->runCommand(SessionsCollection::kSessionsDb.toString(), batch, res);
+        if (!ok) {
+            return {ErrorCodes::UnknownError,
+                    client->getLastError(SessionsCollection::kSessionsDb.toString())};
+        }
+        return Status::OK();
+    };
+
+    return send;
+}
+
 Status SessionsCollection::doRefresh(const LogicalSessionRecordSet& sessions,
                                      Date_t refreshTime,
                                      SendBatchFn send) {

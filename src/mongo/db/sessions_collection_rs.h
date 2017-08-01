@@ -28,16 +28,49 @@
 
 #pragma once
 
-#include <memory>
-
-#include "mongo/db/logical_session_cache.h"
-#include "mongo/db/service_liason.h"
+#include "mongo/db/logical_session_id.h"
+#include "mongo/db/sessions_collection.h"
+#include "mongo/util/time_support.h"
 
 namespace mongo {
 
-enum class LogicalSessionCacheServer { kSharded, kReplicaSet, kStandalone };
+class DBDirectClient;
+class OperationContext;
+class RemoteCommandTargeter;
 
-std::unique_ptr<LogicalSessionCache> makeLogicalSessionCacheD(LogicalSessionCacheServer state,
-                                                              ConnectionString cs = ConnectionString());
+/**
+ * Accesses the sessions collection for replica set members.
+ */
+class SessionsCollectionRS : public SessionsCollection {
+public:
+    /**
+     * Constructs a new SessionsCollectionRS. Starts up a new RemoteCommandTargeter.
+     */
+    SessionsCollectionRS(ConnectionString cs);
+
+    /**
+     * Returns a LogicalSessionRecord for the given session id, or an error if
+     * no such record was found.
+     */
+    StatusWith<LogicalSessionRecord> fetchRecord(OperationContext* opCtx,
+                                                 const LogicalSessionId& lsid) override;
+
+    /**
+     * Updates the last-use times on the given sessions to be greater than
+     * or equal to the current time.
+     */
+    Status refreshSessions(OperationContext* opCtx,
+                           const LogicalSessionRecordSet& sessions,
+                           Date_t refreshTime) override;
+
+    /**
+     * Removes the authoritative records for the specified sessions.
+     */
+    Status removeRecords(OperationContext* opCtx, const LogicalSessionIdSet& sessions) override;
+
+private:
+
+    std::unique_ptr<RemoteCommandTargeter> _targeter;
+};
 
 }  // namespace mongo

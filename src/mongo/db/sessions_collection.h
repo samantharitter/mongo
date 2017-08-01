@@ -35,6 +35,7 @@ namespace mongo {
 
 class BSONArrayBuilder;
 class BSONObjBuilder;
+class DBClientBase;
 class OperationContext;
 
 /**
@@ -44,6 +45,7 @@ class OperationContext;
  * implement their own class that fulfill this interface.
  */
 class SessionsCollection {
+
 public:
     virtual ~SessionsCollection();
 
@@ -80,7 +82,11 @@ public:
     virtual Status removeRecords(OperationContext* opCtx, const LogicalSessionIdSet& sessions) = 0;
 
 protected:
+    /**
+     * Makes a send function for the given client.
+     */
     using SendBatchFn = stdx::function<Status(BSONObj batch)>;
+    SendBatchFn makeSendFn(DBClientBase* client);
 
     /**
      * Formats and sends batches of refreshes for the given set of sessions.

@@ -731,14 +731,17 @@ ExitCode _initAndListen(int listenPort) {
     globalServiceContext->setPeriodicRunner(std::move(runner));
 
     // Set up the logical session cache
-    LogicalSessionCacheServer kind = LogicalSessionCacheServer::kStandalone;
+    std::unique_ptr<LogicalSessionCache> sessionCache;
     if (shardingInitialized) {
-        kind = LogicalSessionCacheServer::kSharded;
+        sessionCache = makeLogicalSessionCacheD(LogicalSessionCacheServer::kSharded);
     } else if (replSettings.usingReplSets()) {
-        kind = LogicalSessionCacheServer::kReplicaSet;
+        auto replCoord = repl::ReplicationCoordinator::get(startupOpCtx.get());
+        sessionCache = makeLogicalSessionCacheD(LogicalSessionCacheServer::kReplicaSet,
+                                                replCoord.getConfig().getConnectionString());
+    } else {
+        sessionCache = makeLogicalSessionCacheD(LogicalSessionCacheServer::kStandalone);
     }
 
-    auto sessionCache = makeLogicalSessionCacheD(kind);
     LogicalSessionCache::set(globalServiceContext, std::move(sessionCache));
 
     // MessageServer::run will return when exit code closes its socket and we don't need the

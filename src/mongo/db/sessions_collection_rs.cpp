@@ -28,10 +28,15 @@
 
 #include "mongo/platform/basic.h"
 
-#include "mongo/db/sessions_collection_standalone.h"
+#include "mongo/db/sessions_collection_rs.h"
 
+#include "mongo/client/connection_string.h"
+#include "mongo/client/connpool.h"
 #include "mongo/client/dbclientinterface.h"
 #include "mongo/client/query.h"
+#include "mongo/client/read_preference.h"
+#include "mongo/client/remote_command_targeter.h"
+#include "mongo/client/remote_command_targeter_factory_impl.h"
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/operation_context.h"
 
@@ -44,7 +49,12 @@ BSONObj lsidQuery(const LogicalSessionId& lsid) {
 }
 }  // namespace
 
-StatusWith<LogicalSessionRecord> SessionsCollectionStandalone::fetchRecord(
+SessionsCollectionRS::SessionsCollectionRS(ConnectionString cs) {
+    RemoteCommandTargeterFactoryImpl factory;
+    _targeter = factory.create(cs);
+}
+
+StatusWith<LogicalSessionRecord> SessionsCollectionRS::fetchRecord(
     OperationContext* opCtx, const LogicalSessionId& lsid) {
     DBDirectClient client(opCtx);
     auto cursor = client.query(kSessionsFullNS.toString(), lsidQuery(lsid), 1);
@@ -60,17 +70,44 @@ StatusWith<LogicalSessionRecord> SessionsCollectionStandalone::fetchRecord(
     }
 }
 
-Status SessionsCollectionStandalone::refreshSessions(OperationContext* opCtx,
-                                                     const LogicalSessionRecordSet& sessions,
-                                                     Date_t refreshTime) {
-    DBDirectClient client(opCtx);
-    return doRefresh(sessions, refreshTime, makeSendFn(&client));
+StatusWith<HostAndPort> SessionsCollectionRS::findMaster(OperationContext* opCtx) {
+    return _targeter->findHost(opCtx, ReadPreferenceSetting(ReadPreference::PrimaryOnly));
 }
 
-Status SessionsCollectionStandalone::removeRecords(OperationContext* opCtx,
-                                                   const LogicalSessionIdSet& sessions) {
-    DBDirectClient client(opCtx);
-    return doRemove(sessions, makeSendFn(&client));
+StatusWith<ScopedDbConnection> SessionsCollectionRS::makeConnection(OperationContext* opCtx) {
+    auto res = findMaster();
+    if (!res.isOK()) {
+        return res;
+    }
+
+    try {
+        ScopedDbConnection conn(res.getValue().toString());
+        return conn;
+    } catch (...) {
+        return exceptionToStatus();
+    }
 }
+
+Status SessionsCollectionRS::refreshSessions(OperationContext* opCtx,
+                                             const LogicalSessionRecordSet& sessions,
+                                             Date_t refreshTime) {
+    auto res = makeConnection(opCtx);
+    if (!res.isOK()) {
+        return res;
+    }
+
+    return doRefresh(sessions, refreshTime, makeSendFn(res.getValue().conn()));
+}
+
+Status SessionsCollectionRS::removeRecords(OperationContext* opCtx,
+                                           const LogicalSessionIdSet& sessions) {
+    auto res = makeConnection(opCtx);
+    if (!res.isOK()) {
+        return res;
+    }
+
+    return doRemove(sessions, makeSendFn(res.getValue().conn()));
+}
+
 
 }  // namespace mongo
