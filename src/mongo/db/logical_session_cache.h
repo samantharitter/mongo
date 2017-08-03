@@ -159,6 +159,13 @@ public:
      */
     Date_t now();
 
+    /**
+     * Returns the sessions collection.
+     */
+    SessionsCollection* getSessionsCollection() const {
+        return _sessionsColl.get();
+    }
+
 private:
     /**
      * Internal methods to handle scheduling and perform refreshes for active

@@ -418,6 +418,13 @@ public:
         return _conn;
     }
 
+    /** releases ownership of the associated connection object */
+    DBClientBase* release() {
+        auto conn = _conn;
+        _conn = nullptr;
+        return conn;
+    }
+
     bool ok() const {
         return _conn != NULL;
     }

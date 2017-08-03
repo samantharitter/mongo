@@ -979,6 +979,7 @@ env.Library(
     ],
     LIBDEPS=[
         '$BUILD_DIR/mongo/base',
+        '$BUILD_DIR/mongo/client/clientdriver',
         'logical_session_id',
     ],
 )
@@ -991,6 +992,18 @@ env.Library(
     LIBDEPS=[
         '$BUILD_DIR/mongo/base',
         '$BUILD_DIR/mongo/db/logical_session_id',
+        'sessions_collection',
+    ],
+)
+
+env.Library(
+    target='sessions_collection_rs',
+    source=[
+        'sessions_collection_rs.cpp',
+    ],
+    LIBDEPS=[
+        '$BUILD_DIR/mongo/base',
+        '$BUILD_DIR/mongo/client/remote_command_targeter',
         'sessions_collection',
     ],
 )
@@ -1049,7 +1062,8 @@ envWithAsio.Library(
     LIBDEPS=[
         'logical_session_cache',
         'service_liason_mongod',
-        'sessions_collection_mock', # TODO SERVER-29202, SERVER-29203
+        'sessions_collection_mock', # TODO SERVER-29203
+        'sessions_collection_rs',
         'sessions_collection_standalone',
     ],
 )
