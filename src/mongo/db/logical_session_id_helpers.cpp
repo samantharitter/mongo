@@ -192,4 +192,15 @@ void initializeOperationSessionInfo(OperationContext* opCtx,
     }
 }
 
+    // TODO rebase with Jason
+    LogicalSessionIdSet makeLogicalSessionIds(const std::vector<LogicalSessionFromClient>& sessions,
+                                              OperationContext* opCtx) {
+        LogicalSessionIdSet lsids;
+        lsids.reserve(sessions.size());
+        for (auto&& session : sessions) {
+            lsids.emplace(makeLogicalSessionId(session, opCtx));
+        }
+
+        return lsids;
+    }
 }  // namespace mongo

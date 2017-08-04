@@ -919,8 +919,9 @@ class _CppSourceFileWriter(_CppFileWriterBase):
                     # For commands, check if this a well known command field that the IDL parser
                     # should ignore regardless of strict mode.
                     command_predicate = None
-                    if isinstance(struct, ast.Command):
-                        command_predicate = "!Command::isGenericArgument(fieldName)"
+                    #if isinstance(struct, ast.Command):
+                    # TDOD ^ bad
+                    command_predicate = "!Command::isGenericArgument(fieldName)"
 
                     with self._predicate(command_predicate):
                         self._writer.write_line('ctxt.throwUnknownField(fieldName);')
