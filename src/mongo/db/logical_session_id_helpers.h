@@ -39,6 +39,8 @@ LogicalSessionId makeLogicalSessionId(const LogicalSessionFromClient& lsid,
                                       OperationContext* opCtx);
 LogicalSessionId makeLogicalSessionId(OperationContext* opCtx);
 
+LogicalSessionIdSet makeLogicalSessionIds(const std::vector<LogicalSessionFromClient>& sessions,
+                                          OperationContext* opCtx);
 /**
  * Factory functions to make logical session records. The overloads that
  * take an OperationContext should be used when possible, as they will also set the
