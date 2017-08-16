@@ -27,6 +27,8 @@ env.Library(
         'write_op.cpp',
         'batch_write_op.cpp',
         'batch_write_exec.cpp',
+        '$BUILD_DIR/mongo/s/commands/chunk_manager_targeter.cpp',
+        '$BUILD_DIR/mongo/s/commands/cluster_write.cpp',
     ],
     LIBDEPS=[
         'batch_write_types',
