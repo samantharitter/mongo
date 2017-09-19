@@ -44,6 +44,7 @@
 #include "mongo/db/query/collation/collator_factory_interface.h"
 #include "mongo/db/repl/repl_set_config.h"
 #include "mongo/db/repl/replication_coordinator.h"
+#include "mongo/db/sessions_collection.h"
 #include "mongo/s/balancer_configuration.h"
 #include "mongo/s/catalog/sharding_catalog_manager.h"
 #include "mongo/s/catalog/type_database.h"
@@ -151,7 +152,9 @@ void validateAndDeduceFullRequestOptions(OperationContext* opCtx,
             !shardKeyPattern.isHashedPattern() || !request->getUnique());
 
     // Ensure the namespace is valid.
-    uassert(ErrorCodes::IllegalOperation, "can't shard system namespaces", !nss.isSystem());
+    uassert(ErrorCodes::IllegalOperation,
+            "can't shard system namespaces",
+            !nss.isSystem() || nss.ns() == SessionsCollection::kSessionsFullNS);
 
     // Ensure the collation is valid. Currently we only allow the simple collation.
     bool simpleCollationSpecified = false;
@@ -813,6 +816,23 @@ public:
         // isEmpty is used by multiple steps below.
         bool isEmpty = (conn->count(nss.ns()) == 0);
 
+        // Handle collections in the config db separately.
+        bool isOnConfig = primaryShard->isConfig();
+        if (isOnConfig) {
+            // Only whitelisted collections in config may be sharded
+            // (unless we are in test mode)
+            uassert(ErrorCodes::IllegalOperation,
+                    "only special collections in the config db may be sharded",
+                    nss.ns() == SessionsCollection::kSessionsFullNS ||
+                        Command::testCommandsEnabled);
+
+            // If this is a collection on the config db, it must be empty to be sharded,
+            // otherwise we might end up with chunks on the config servers.
+            uassert(ErrorCodes::IllegalOperation,
+                    "collections in the config db must be empty to be sharded",
+                    isEmpty);
+        }
+
         // Step 5.
         std::vector<BSONObj> initSplits;  // there will be at most numShards-1 of these
         std::vector<BSONObj> allSplits;   // all of the initial desired split points
@@ -833,7 +853,7 @@ public:
         // were specified in the request, i.e., by mapReduce. Otherwise, all the initial chunks are
         // placed on the primary shard, and may be distributed across shards through migrations
         // (below) if using a hashed shard key.
-        const bool distributeInitialChunks = request.getInitialSplitPoints().is_initialized();
+        const bool distributeInitialChunks = request.getInitialSplitPoints() || isOnConfig;
 
         // Step 6. Actually shard the collection.
         catalogManager->shardCollection(opCtx,
