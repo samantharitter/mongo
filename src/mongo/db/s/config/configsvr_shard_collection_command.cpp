@@ -813,6 +813,16 @@ public:
         // isEmpty is used by multiple steps below.
         bool isEmpty = (conn->count(nss.ns()) == 0);
 
+        // Handle collections in the config db separately.
+        bool isOnConfig = primaryShard->isConfig();
+        if (isOnConfig) {
+            // If this is a collection on the config db, it must be empty to be sharded,
+            // otherwise we might end up with chunks on the config servers.
+            uassert(ErrorCodes::IllegalOperation,
+                    "collections in the config db must be empty to be sharded",
+                    isEmpty);
+        }
+
         // Step 5.
         std::vector<BSONObj> initSplits;  // there will be at most numShards-1 of these
         std::vector<BSONObj> allSplits;   // all of the initial desired split points
@@ -833,7 +843,7 @@ public:
         // were specified in the request, i.e., by mapReduce. Otherwise, all the initial chunks are
         // placed on the primary shard, and may be distributed across shards through migrations
         // (below) if using a hashed shard key.
-        const bool distributeInitialChunks = request.getInitialSplitPoints().is_initialized();
+        const bool distributeInitialChunks = request.getInitialSplitPoints() || isOnConfig;
 
         // Step 6. Actually shard the collection.
         catalogManager->shardCollection(opCtx,

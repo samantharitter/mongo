@@ -219,17 +219,20 @@ StatusWith<CursorId> runQueryWithoutRetrying(OperationContext* opCtx,
 
     std::vector<std::pair<ShardId, BSONObj>> requests;
     for (const auto& shard : shards) {
-        invariant(!shard->isConfig() || shard->getConnString().type() != ConnectionString::INVALID);
+        invariant(shard->getConnString().type() != ConnectionString::INVALID);
 
         BSONObjBuilder cmdBuilder;
         qrToForward.getValue()->asFindCommand(&cmdBuilder);
 
-        if (chunkManager) {
-            ChunkVersion version(chunkManager->getVersion(shard->getId()));
-            version.appendForCommands(&cmdBuilder);
-        } else if (!query.nss().isOnInternalDb()) {
-            ChunkVersion version(ChunkVersion::UNSHARDED());
-            version.appendForCommands(&cmdBuilder);
+        // Do not attach the shardVersion to requests bound for the config servers.
+        if (shard->isConfig()) {
+            if (chunkManager) {
+                ChunkVersion version(chunkManager->getVersion(shard->getId()));
+                version.appendForCommands(&cmdBuilder);
+            } else if (!query.nss().isOnInternalDb()) {
+                ChunkVersion version(ChunkVersion::UNSHARDED());
+                version.appendForCommands(&cmdBuilder);
+            }
         }
 
         requests.emplace_back(shard->getId(), cmdBuilder.obj());

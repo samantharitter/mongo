@@ -52,6 +52,11 @@ class ShardFactory;
 class Shard;
 class ShardType;
 
+/**
+ * A ShardId for the config servers.
+ */
+extern const ShardId kConfigServerShard;
+
 class ShardRegistryData {
 public:
     ShardRegistryData(OperationContext* opCtx, ShardFactory* shardFactory);

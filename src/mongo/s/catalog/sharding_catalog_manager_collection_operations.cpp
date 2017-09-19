@@ -122,8 +122,13 @@ ChunkVersion createFirstChunks(OperationContext* opCtx,
                 0));
         }
 
-        // Since docs already exist for the collection, must use primary shard
-        shardIds.push_back(primaryShardId);
+        // If docs already exist for the collection, must use primary shard,
+        // otherwise defer to passed-in distribution option.
+        if (numObjects == 0 && distributeInitialChunks) {
+            Grid::get(opCtx)->shardRegistry()->getAllShardIds(&shardIds);
+        } else {
+            shardIds.push_back(primaryShardId);
+        }
     } else {
         // Make sure points are unique and ordered
         auto orderedPts = SimpleBSONObjComparator::kInstance.makeBSONObjSet();
@@ -285,30 +290,33 @@ void ShardingCatalogManager::shardCollection(OperationContext* opCtx,
             opCtx, ns, coll, true /*upsert*/));
     }
 
-    // Tell the primary mongod to refresh its data
-    // TODO:  Think the real fix here is for mongos to just
-    //        assume that all collections are sharded, when we get there
-    SetShardVersionRequest ssv = SetShardVersionRequest::makeForVersioningNoPersist(
-        shardRegistry->getConfigServerConnectionString(),
-        dbPrimaryShardId,
-        primaryShard->getConnString(),
-        NamespaceString(ns),
-        collVersion,
-        true);
-
+    // If the primary shard is not a config server, tell it to refresh its data.
+    // Config servers should not hold chunks of their sharded collections,
+    // so they do not need the shard version to be set.
     auto shard = uassertStatusOK(shardRegistry->getShard(opCtx, dbPrimaryShardId));
+    if (shard->isConfig()) {
+        // TODO:  Think the real fix here is for mongos to just
+        //        assume that all collections are sharded, when we get there
+        SetShardVersionRequest ssv = SetShardVersionRequest::makeForVersioningNoPersist(
+            shardRegistry->getConfigServerConnectionString(),
+            dbPrimaryShardId,
+            primaryShard->getConnString(),
+            NamespaceString(ns),
+            collVersion,
+            true);
 
-    auto ssvResponse =
-        shard->runCommandWithFixedRetryAttempts(opCtx,
-                                                ReadPreferenceSetting{ReadPreference::PrimaryOnly},
-                                                "admin",
-                                                ssv.toBSON(),
-                                                Shard::RetryPolicy::kIdempotent);
-    auto status = ssvResponse.isOK() ? std::move(ssvResponse.getValue().commandStatus)
-                                     : std::move(ssvResponse.getStatus());
-    if (!status.isOK()) {
-        warning() << "could not update initial version of " << ns << " on shard primary "
-                  << dbPrimaryShardId << causedBy(redact(status));
+        auto ssvResponse = shard->runCommandWithFixedRetryAttempts(
+            opCtx,
+            ReadPreferenceSetting{ReadPreference::PrimaryOnly},
+            "admin",
+            ssv.toBSON(),
+            Shard::RetryPolicy::kIdempotent);
+        auto status = ssvResponse.isOK() ? std::move(ssvResponse.getValue().commandStatus)
+                                         : std::move(ssvResponse.getStatus());
+        if (!status.isOK()) {
+            warning() << "could not update initial version of " << ns << " on shard primary "
+                      << dbPrimaryShardId << causedBy(redact(status));
+        }
     }
 
     catalogClient

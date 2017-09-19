@@ -83,6 +83,8 @@ namespace {
 const Seconds kRefreshPeriod(30);
 }  // namespace
 
+const ShardId kConfigServerShard = ShardId("config");
+
 ShardRegistry::ShardRegistry(std::unique_ptr<ShardFactory> shardFactory,
                              const ConnectionString& configServerCS)
     : _shardFactory(std::move(shardFactory)), _initConfigServerCS(configServerCS) {}
@@ -183,7 +185,7 @@ void ShardRegistry::updateReplSetHosts(const ConnectionString& newConnString) {
 void ShardRegistry::init() {
     stdx::unique_lock<stdx::mutex> reloadLock(_reloadMutex);
     invariant(_initConfigServerCS.isValid());
-    auto configShard = _shardFactory->createShard(ShardId("config"), _initConfigServerCS);
+    auto configShard = _shardFactory->createShard(kConfigServerShard, _initConfigServerCS);
     _data.addConfigShard(configShard);
     // set to invalid so it cant be started more than once.
     _initConfigServerCS = ConnectionString();
