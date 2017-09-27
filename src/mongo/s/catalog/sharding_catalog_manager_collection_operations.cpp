@@ -226,15 +226,17 @@ void ShardingCatalogManager::shardCollection(OperationContext* opCtx,
                                              const BSONObj& defaultCollation,
                                              bool unique,
                                              const vector<BSONObj>& initPoints,
-                                             const bool distributeInitialChunks) {
+                                             const bool distributeInitialChunks,
+                                             const ShardId primaryShardId) {
     const auto catalogClient = Grid::get(opCtx)->catalogClient();
     const auto shardRegistry = Grid::get(opCtx)->shardRegistry();
 
-    auto dbEntry =
-        uassertStatusOK(catalogClient->getDatabase(
-                            opCtx, nsToDatabase(ns), repl::ReadConcernLevel::kLocalReadConcern))
-            .value;
-    auto dbPrimaryShardId = dbEntry.getPrimary();
+    //auto dbEntry =
+    //    uassertStatusOK(catalogClient->getDatabase(
+    //                        opCtx, nsToDatabase(ns), repl::ReadConcernLevel::kLocalReadConcern))
+    //        .value;
+    //auto dbPrimaryShardId = dbEntry.getPrimary();
+    auto dbPrimaryShardId = primaryShardId;
     const auto primaryShard = uassertStatusOK(shardRegistry->getShard(opCtx, dbPrimaryShardId));
 
     // Fail if there are partially written chunks from a previous failed shardCollection.

@@ -429,14 +429,14 @@ shared_ptr<Notification<RemoteCommandResponse>> MigrationManager::_schedule(
                        "Migration cannot be executed because the balancer is not running"));
         }
     }
-
+    std::cout << "here 1 " << std::endl;
     const auto fromShardStatus =
         Grid::get(opCtx)->shardRegistry()->getShard(opCtx, migrateInfo.from);
     if (!fromShardStatus.isOK()) {
         return std::make_shared<Notification<RemoteCommandResponse>>(
             std::move(fromShardStatus.getStatus()));
     }
-
+    std::cout << "here 2 " << std::endl;
     const auto fromShard = fromShardStatus.getValue();
     auto fromHostStatus = fromShard->getTargeter()->findHost(
         opCtx, ReadPreferenceSetting{ReadPreference::PrimaryOnly});
@@ -444,7 +444,7 @@ shared_ptr<Notification<RemoteCommandResponse>> MigrationManager::_schedule(
         return std::make_shared<Notification<RemoteCommandResponse>>(
             std::move(fromHostStatus.getStatus()));
     }
-
+    std::cout << "here 3 " << std::endl;
     BSONObjBuilder builder;
     MoveChunkRequest::appendAsCommand(
         &builder,
@@ -457,7 +457,7 @@ shared_ptr<Notification<RemoteCommandResponse>> MigrationManager::_schedule(
         maxChunkSizeBytes,
         secondaryThrottle,
         waitForDelete);
-
+    std::cout << "here 4 " << std::endl;
     stdx::lock_guard<stdx::mutex> lock(_mutex);
 
     if (_state != State::kEnabled && _state != State::kRecovering) {
@@ -465,11 +465,11 @@ shared_ptr<Notification<RemoteCommandResponse>> MigrationManager::_schedule(
             Status(ErrorCodes::BalancerInterrupted,
                    "Migration cannot be executed because the balancer is not running"));
     }
-
+    std::cout << "here 5 " << std::endl;
     Migration migration(nss, builder.obj());
 
     auto retVal = migration.completionNotification;
-
+    std::cout << "here 6 " << std::endl;
     _schedule(lock, opCtx, fromHostStatus.getValue(), std::move(migration));
 
     return retVal;
@@ -481,13 +481,13 @@ void MigrationManager::_schedule(WithLock lock,
                                  Migration migration) {
     executor::TaskExecutor* const executor =
         Grid::get(opCtx)->getExecutorPool()->getFixedExecutor();
-
+    std::cout << "here 7 " << std::endl;
     const NamespaceString nss(migration.nss);
 
     auto it = _activeMigrations.find(nss);
     if (it == _activeMigrations.end()) {
         const std::string whyMessage(stream() << "Migrating chunk(s) in collection " << nss.ns());
-
+        std::cout << "here 8 " << std::endl;
         // Acquire the collection distributed lock (blocking call)
         auto statusWithDistLockHandle =
             Grid::get(opCtx)->catalogClient()->getDistLockManager()->lockWithSessionID(
@@ -496,7 +496,7 @@ void MigrationManager::_schedule(WithLock lock,
                 whyMessage,
                 _lockSessionID,
                 DistLockManager::kSingleLockAttemptTimeout);
-
+        std::cout << "here 9 " << std::endl;
         if (!statusWithDistLockHandle.isOK()) {
             migration.completionNotification->set(
                 Status(statusWithDistLockHandle.getStatus().code(),
@@ -505,19 +505,19 @@ void MigrationManager::_schedule(WithLock lock,
                                 << statusWithDistLockHandle.getStatus().reason()));
             return;
         }
-
+        std::cout << "here 10 " << std::endl;
         it = _activeMigrations.insert(std::make_pair(nss, MigrationsList())).first;
     }
 
     auto migrations = &it->second;
-
+    std::cout << "here 11 " << std::endl;
     // Add ourselves to the list of migrations on this collection
     migrations->push_front(std::move(migration));
     auto itMigration = migrations->begin();
 
     const RemoteCommandRequest remoteRequest(
         targetHost, NamespaceString::kAdminDb.toString(), itMigration->moveChunkCmdObj, opCtx);
-
+    std::cout << "here 12 " << std::endl;
     StatusWith<executor::TaskExecutor::CallbackHandle> callbackHandleWithStatus =
         executor->scheduleRemoteCommand(
             remoteRequest,
@@ -525,16 +525,16 @@ void MigrationManager::_schedule(WithLock lock,
                 Client::initThread(getThreadName());
                 ON_BLOCK_EXIT([&] { Client::destroy(); });
                 auto opCtx = cc().makeOperationContext();
-
+                std::cout << "here in the remote command cb thread " << std::endl;
                 stdx::lock_guard<stdx::mutex> lock(_mutex);
                 _complete(lock, opCtx.get(), itMigration, args.response);
             });
-
+    std::cout << "here 13 " << std::endl;
     if (callbackHandleWithStatus.isOK()) {
         itMigration->callbackHandle = std::move(callbackHandleWithStatus.getValue());
         return;
     }
-
+    std::cout << "here 14 " << std::endl;
     _complete(lock, opCtx, itMigration, std::move(callbackHandleWithStatus.getStatus()));
 }
 

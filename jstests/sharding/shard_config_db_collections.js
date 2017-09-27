@@ -63,10 +63,26 @@
     // CRUD operations on sharded collections in config
     {
         // Insertion and retrieval
-        assert.writeOK(config.sharded.insert({_id: 10}));
-        assert.eq({_id: 10}, config.sharded.findOne());
+        assert.commandWorked(st.splitAt("config.sharded", {_id: 0}));
+        print("after chunk split");
+        st.printShardingStatus();
+        assert.commandWorked(
+            admin.runCommand({moveChunk: "config.sharded", find: {_id: -10}, to: "shard0000"}));
+        print("after moving one chunk to shard0000");
+        st.printShardingStatus();
+        //assert.commandWorked(
+        //    admin.runCommand({moveChunk: "config.sharded", find: {_id: 10}, to: "shard0001"}));
 
-        assert.writeOK(config.sharded.insert({_id: 12}));
+        assert.writeOK(config.sharded.insert({_id: -10}));
+        assert.writeOK(config.sharded.insert({_id: 10}));
+        assert.eq({_id: -10}, config.sharded.findOne({_id: -10}));
+        assert.eq({_id: 10}, config.sharded.findOne({_id: 10}));
+
+        var shard0000 = st._connections[0].getDB("config");
+        var shard0001 = st._connections[1].getDB("config");
+        assert.eq({_id: -10}, shard0000.sharded.findOne());
+        //assert.eq({_id: 10}, shard0001.sharded.findOne());
+
         assert.eq(2, config.sharded.count());
 
         for (var i = 0; i < 100; i++) {
@@ -74,8 +90,8 @@
         }
 
         // Updates
-        assert.writeOK(config.sharded.update({_id: 12}, {$set: {a: 15}}));
-        assert.writeOK(config.sharded.update({_id: 12}, {$set: {a: 20}}));
+        assert.writeOK(config.sharded.update({_id: 10}, {$set: {a: 15}}));
+        assert.writeOK(config.sharded.update({_id: 10}, {$set: {a: 20}}));
 
         // Deletes
         assert.writeOK(config.sharded.remove({_id: 10}));

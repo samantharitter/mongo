@@ -529,14 +529,17 @@ void migrateAndFurtherSplitInitialChunks(OperationContext* opCtx,
                                          const ShardKeyPattern& shardKeyPattern,
                                          const std::vector<BSONObj>& allSplits) {
     auto catalogCache = Grid::get(opCtx)->catalogCache();
-
-    if (!shardKeyPattern.isHashedPattern()) {
-        // Only initially move chunks when using a hashed shard key.
+    std::cout << "in migrateAndFurtherSplitInitialChunks for " << nss << std::endl;
+    if (!shardKeyPattern.isHashedPattern() && nss.db() != NamespaceString::kConfigDb) {
+        // Only initially move chunks when using a hashed shard key, or
+        // when sharding a collection in the config db.
+        std::cout << "not valid to move chunks" << std::endl;
         return;
     }
 
     if (!isEmpty) {
         // If the collection is not empty, rely on the balancer to migrate the chunks.
+        std::cout << "not empty" << std::endl;
         return;
     }
 
@@ -560,6 +563,7 @@ void migrateAndFurtherSplitInitialChunks(OperationContext* opCtx,
 
         // Can't move chunk to shard it's already on
         if (to->getId() == chunk->getShardId()) {
+            std::cout << "already on the right shard: " << to->getId() << std::endl;
             continue;
         }
 
@@ -569,7 +573,7 @@ void migrateAndFurtherSplitInitialChunks(OperationContext* opCtx,
         chunkType.setMax(chunk->getMax());
         chunkType.setShard(chunk->getShardId());
         chunkType.setVersion(chunkManager->getVersion());
-
+        std::cout << "moving a chunk to " << to->getId() << std::endl;
         Status moveStatus = configsvr_client::moveChunk(
             opCtx,
             chunkType,
@@ -737,7 +741,7 @@ public:
         const NamespaceString nss(parseNs(dbname, cmdObj));
         auto request = ConfigsvrShardCollectionRequest::parse(
             IDLParserErrorContext("ConfigsvrShardCollectionRequest"), cmdObj);
-
+        std::cout << "sharding collection " << nss << std::endl;
         auto const catalogManager = ShardingCatalogManager::get(opCtx);
         auto const catalogCache = Grid::get(opCtx)->catalogCache();
 
@@ -785,8 +789,20 @@ public:
         Grid::get(opCtx)->shardRegistry()->getAllShardIds(&shardIds);
         const int numShards = shardIds.size();
 
+        // If this is the config db, pick a random primary shard, otherwise make a
+        // connection to the real primary shard for this database.
+        auto primaryShardId = [&]() {
+            if (nss.db() == NamespaceString::kConfigDb) {
+                invariant(numShards > 0);
+                return shardIds[0];
+            } else {
+                return dbType.getPrimary();
+            }
+        }();
+
+        std::cout << "using " << primaryShardId << " as the primary shard for " << nss << std::endl;
         auto primaryShard = uassertStatusOK(
-            Grid::get(opCtx)->shardRegistry()->getShard(opCtx, dbType.getPrimary()));
+           Grid::get(opCtx)->shardRegistry()->getShard(opCtx, dbType.getPrimary()));
         ScopedDbConnection conn(primaryShard->getConnString());
         ON_BLOCK_EXIT([&conn] { conn.done(); });
 
@@ -808,7 +824,7 @@ public:
 
         // Step 3.
         validateShardKeyAgainstExistingIndexes(
-            opCtx, nss, proposedKey, shardKeyPattern, primaryShard, conn, request);
+                                               opCtx, nss, proposedKey, shardKeyPattern, primaryShard, conn, request);
 
         // Step 4.
         auto uuid = getUUIDFromPrimaryShard(nss, conn);
@@ -817,8 +833,7 @@ public:
         bool isEmpty = (conn->count(nss.ns()) == 0);
 
         // Handle collections in the config db separately.
-        bool isOnConfig = primaryShard->isConfig();
-        if (isOnConfig) {
+        if (nss.db() == NamespaceString::kConfigDb) {
             // Only whitelisted collections in config may be sharded
             // (unless we are in test mode)
             uassert(ErrorCodes::IllegalOperation,
@@ -853,8 +868,9 @@ public:
         // were specified in the request, i.e., by mapReduce. Otherwise, all the initial chunks are
         // placed on the primary shard, and may be distributed across shards through migrations
         // (below) if using a hashed shard key.
-        const bool distributeInitialChunks = request.getInitialSplitPoints() || isOnConfig;
-
+        //const bool distributeInitialChunks = request.getInitialSplitPoints() || isOnConfig;
+        const bool distributeInitialChunks = request.getInitialSplitPoints().is_initialized();
+        std::cout << "calling into the catalog manager" << std::endl;
         // Step 6. Actually shard the collection.
         catalogManager->shardCollection(opCtx,
                                         nss.ns(),
@@ -863,7 +879,8 @@ public:
                                         *request.getCollation(),
                                         request.getUnique(),
                                         initSplits,
-                                        distributeInitialChunks);
+                                        distributeInitialChunks,
+                                        primaryShardId);
         result << "collectionsharded" << nss.ns();
         if (uuid) {
             result << "collectionUUID" << *uuid;
