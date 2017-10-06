@@ -802,6 +802,8 @@ ExitCode _initAndListen(int listenPort) {
     LogicalSessionCacheServer kind = LogicalSessionCacheServer::kStandalone;
     if (serverGlobalParams.clusterRole == ClusterRole::ShardServer) {
         kind = LogicalSessionCacheServer::kSharded;
+    } else if (serverGlobalParams.clusterRole == ClusterRole::ConfigServer) {
+        kind = LogicalSessionCacheServer::kConfigServer;
     } else if (replSettings.usingReplSets()) {
         kind = LogicalSessionCacheServer::kReplicaSet;
     }

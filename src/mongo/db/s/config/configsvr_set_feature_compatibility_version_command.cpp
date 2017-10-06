@@ -36,6 +36,7 @@
 #include "mongo/db/commands/feature_compatibility_version.h"
 #include "mongo/db/commands/feature_compatibility_version_command_parser.h"
 #include "mongo/db/repl/repl_client_info.h"
+#include "mongo/db/sessions_collection.h"
 #include "mongo/s/catalog/sharding_catalog_client_impl.h"
 #include "mongo/s/catalog/sharding_catalog_manager.h"
 #include "mongo/s/catalog/type_collection.h"
@@ -115,6 +116,13 @@ public:
 
         // On success, set featureCompatibilityVersion on self.
         FeatureCompatibilityVersion::set(opCtx, version);
+
+        // On downgrade, drop the sessions collection after setting FCV to 3.4, otherwise
+        // we may have a race where somebody recreates it.
+        if (version == FeatureCompatibilityVersionCommandParser::kVersion34) {
+            uassertStatusOK(Grid::get(opCtx)->catalogClient()->dropCollection(
+                opCtx, SessionsCollection::kSessionsNamespaceString));
+        }
 
         return true;
     }

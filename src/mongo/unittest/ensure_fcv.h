@@ -28,42 +28,29 @@
 
 #pragma once
 
-#include "mongo/db/logical_session_id.h"
-#include "mongo/db/sessions_collection.h"
-#include "mongo/util/time_support.h"
+#include "mongo/db/server_options.h"
 
 namespace mongo {
-
-class DBDirectClient;
-class OperationContext;
+namespace unittest {
 
 /**
- * Accesses the sessions collection directly for standalone servers.
+ * Helper class for tests to set FCV to their desired version. Will unset
+ * FCV when its destructor runs.
  */
-class SessionsCollectionStandalone : public SessionsCollection {
+class EnsureFCV {
 public:
-    /**
-     * Ensures that the sessions collection exists and has the proper indexes.
-     */
-    Status setupSessionsCollection(OperationContext* opCtx) override;
+    using Version = ServerGlobalParams::FeatureCompatibility::Version;
+    EnsureFCV(Version version)
+        : _origVersion(serverGlobalParams.featureCompatibility.version.load()) {
+        serverGlobalParams.featureCompatibility.version.store(version);
+    }
+    ~EnsureFCV() {
+        serverGlobalParams.featureCompatibility.version.store(_origVersion);
+    }
 
-    /**
-     * Updates the last-use times on the given sessions to be greater than
-     * or equal to the current time.
-     */
-    Status refreshSessions(OperationContext* opCtx,
-                           const LogicalSessionRecordSet& sessions) override;
-
-    /**
-     * Removes the authoritative records for the specified sessions.
-     */
-    Status removeRecords(OperationContext* opCtx, const LogicalSessionIdSet& sessions) override;
-
-    StatusWith<LogicalSessionIdSet> findRemovedSessions(
-        OperationContext* opCtx, const LogicalSessionIdSet& sessions) override;
-
-    Status removeTransactionRecords(OperationContext* opCtx,
-                                    const LogicalSessionIdSet& sessions) override;
+private:
+    const Version _origVersion;
 };
 
+}  // namespace unittest
 }  // namespace mongo

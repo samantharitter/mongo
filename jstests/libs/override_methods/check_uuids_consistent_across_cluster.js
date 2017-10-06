@@ -74,6 +74,7 @@ ShardingTest.prototype.checkUUIDsConsistentAcrossCluster = function() {
                     shardConnStringToConn[shardConnString] = new Mongo(shardConnString);
                 }
                 let shardConn = shardConnStringToConn[shardConnString];
+                shardConn.slaveOk = true;
 
                 print("running listCollections against " + shardConn +
                       " to check UUID consistency for " + authoritativeCollMetadata._id);

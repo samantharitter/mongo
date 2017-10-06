@@ -8,6 +8,9 @@
     // Create a cluster with 1 shard.
     var cluster = new ShardingTest({shards: 2});
 
+    // Ensure that the sessions collection exists.
+    cluster.c0.getDB("admin").runCommand({refreshLogicalSessionCacheNow: 1});
+
     // Test that we can refresh without any sessions, as a sanity check.
     {
         assert.commandWorked(cluster.s.getDB(sessionsDb).runCommand(refresh));

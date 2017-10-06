@@ -180,7 +180,8 @@
         assert(!cursor.hasNext());
 
         // Count query without filter.
-        assert.eq(configDB.collections.count(), testNamespaces.length);
+        // Note: the +1 here is for the internal config.system.sessions collection.
+        assert.eq(configDB.collections.count(), testNamespaces.length + 1);
     };
 
     /**

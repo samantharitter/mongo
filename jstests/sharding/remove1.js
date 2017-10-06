@@ -2,6 +2,9 @@
 
     var s = new ShardingTest({name: "remove_shard1", shards: 2});
 
+    // Remove config.system.sessions so it doesn't interfere with this test.
+    s.getDB('config').system.sessions.drop();
+
     assert.eq(2, s.config.shards.count(), "initial server count wrong");
 
     assert.writeOK(

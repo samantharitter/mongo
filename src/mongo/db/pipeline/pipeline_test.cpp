@@ -54,6 +54,7 @@
 #include "mongo/db/repl/replication_coordinator_mock.h"
 #include "mongo/dbtests/dbtests.h"
 #include "mongo/unittest/death_test.h"
+#include "mongo/unittest/ensure_fcv.h"
 
 namespace PipelineTests {
 
@@ -69,21 +70,6 @@ void setMockReplicationCoordinatorOnOpCtx(OperationContext* opCtx) {
         opCtx->getServiceContext(),
         stdx::make_unique<repl::ReplicationCoordinatorMock>(opCtx->getServiceContext()));
 }
-
-class EnsureFCV {
-public:
-    using Version = ServerGlobalParams::FeatureCompatibility::Version;
-    EnsureFCV(Version version)
-        : _origVersion(serverGlobalParams.featureCompatibility.version.load()) {
-        serverGlobalParams.featureCompatibility.version.store(version);
-    }
-    ~EnsureFCV() {
-        serverGlobalParams.featureCompatibility.version.store(_origVersion);
-    }
-
-private:
-    const Version _origVersion;
-};
 }  // namespace
 
 namespace Optimizations {
