@@ -45,7 +45,7 @@ assert.eq(cconfig, {_id: "test.foo", key: {num: 1}, unique: false}, "Sharded con
 
 s.config.collections.find().forEach(printjson);
 
-assert.eq(1, s.config.chunks.count(), "num chunks A");
+assert.eq(1, s.config.chunks.count({"ns": "test.foo"}), "num chunks A");
 si = s.config.chunks.findOne();
 assert(si);
 assert.eq(si.ns, "test.foo");

@@ -47,7 +47,8 @@
     }
 
     s.printChunks();
-    assert.eq(numObjs / 2, s.config.chunks.count(), 'Split was incorrect');
+    assert.eq(
+        numObjs / 2, s.config.chunks.count({"ns": "test.sharded_coll"}), 'Split was incorrect');
     assert.eq(numObjs / 4, s.config.chunks.count({shard: s.shard0.shardName}));
     assert.eq(numObjs / 4, s.config.chunks.count({shard: s.shard1.shardName}));
 

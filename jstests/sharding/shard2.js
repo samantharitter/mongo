@@ -21,10 +21,10 @@
     assert.commandWorked(s.s0.adminCommand({enablesharding: "test"}));
     s.ensurePrimaryShard('test', s.shard1.shardName);
     assert.commandWorked(s.s0.adminCommand({shardcollection: "test.foo", key: {num: 1}}));
-    assert.eq(1, s.config.chunks.count(), "sanity check 1");
+    assert.eq(1, s.config.chunks.count({"ns": "test.foo"}), "sanity check 1");
 
     assert.commandWorked(s.s0.adminCommand({split: "test.foo", middle: {num: 0}}));
-    assert.eq(2, s.config.chunks.count(), "should be 2 shards");
+    assert.eq(2, s.config.chunks.count({"ns": "test.foo"}), "should be 2 shards");
     var chunks = s.config.chunks.find().toArray();
     assert.eq(chunks[0].shard, chunks[1].shard, "server should be the same after a split");
 
@@ -62,7 +62,7 @@
     assert.eq(1, primary.foo.find().length(), "primary should only have 1 after move shard");
 
     assert.eq(2,
-              s.config.chunks.count(),
+              s.config.chunks.count({"ns": "test.foo"}),
               "still should have 2 shards after move not:" + s.getChunksString());
     var chunks = s.config.chunks.find().toArray();
     assert.neq(chunks[0].shard, chunks[1].shard, "servers should NOT be the same after the move");
@@ -232,7 +232,7 @@
         _waitForDelete: true
     }));
     assert.eq(2, s.onNumShards("foo"), "on 2 shards again");
-    assert.eq(3, s.config.chunks.count(), "only 3 chunks");
+    assert.eq(3, s.config.chunks.count({"ns": "test.foo"}), "only 3 chunks");
 
     print("YO : " + tojson(db.runCommand("serverStatus")));
 

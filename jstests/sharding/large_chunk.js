@@ -31,7 +31,7 @@
 
     assert.commandWorked(s.s0.adminCommand({shardcollection: "test.foo", key: {_id: 1}}));
 
-    assert.eq(1, s.config.chunks.count(), "step 1 - need one large chunk");
+    assert.eq(1, s.config.chunks.count({"ns": "test.foo"}), "step 1 - need one large chunk");
 
     var primary = s.getPrimaryShard("test").getDB("test");
     var secondary = s.getOther(primary).getDB("test");
