@@ -67,6 +67,7 @@ StatusWith<HostAndPort> RemoteCommandTargeterRS::findHostWithMaxWait(
 
 StatusWith<HostAndPort> RemoteCommandTargeterRS::findHost(OperationContext* opCtx,
                                                           const ReadPreferenceSetting& readPref) {
+    log() << "finding host on targeter RS";
     auto clock = opCtx->getServiceContext()->getFastClockSource();
     auto startDate = clock->now();
     while (true) {

@@ -166,8 +166,7 @@ bool ServiceEntryPointImpl::shutdown(Milliseconds timeout) {
     const auto checkInterval = std::min(Milliseconds(250), timeout);
 
     auto noWorkersLeft = [this] { return numOpenSessions() == 0; };
-    while (timeSpent < timeout &&
-           !_shutdownCondition.wait_for(lk, checkInterval.toSystemDuration(), noWorkersLeft)) {
+    while (!_shutdownCondition.wait_for(lk, checkInterval.toSystemDuration(), noWorkersLeft)) {
         log(LogComponent::kNetwork) << "shutdown: still waiting on " << numOpenSessions()
                                     << " active workers to drain... ";
         timeSpent += checkInterval;

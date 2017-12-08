@@ -66,7 +66,6 @@ NetworkInterfaceASIO::Options::Options() = default;
 NetworkInterfaceASIO::NetworkInterfaceASIO(Options options)
     : _options(std::move(options)),
       _io_service(),
-      _metadataHook(std::move(_options.metadataHook)),
       _hook(std::move(_options.networkConnectionHook)),
       _state(State::kReady),
       _timerFactory(std::move(_options.timerFactory)),
@@ -174,12 +173,13 @@ void NetworkInterfaceASIO::startup() {
 }
 
 void NetworkInterfaceASIO::shutdown() {
+    log() << "shutting down NetworkInterfaceASIO...";
     _state.store(State::kShutdown);
     _io_service.stop();
     for (auto&& worker : _serviceRunners) {
         worker.join();
     }
-    LOG(2) << "NetworkInterfaceASIO shutdown successfully";
+    log() << "NetworkInterfaceASIO shutdown successfully";
 }
 
 void NetworkInterfaceASIO::waitForWork() {
@@ -250,6 +250,7 @@ Status attachMetadataIfNeeded(RemoteCommandRequest& request,
 
 Status NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cbHandle,
                                           RemoteCommandRequest& request,
+                                          rpc::EgressMetadataHook* metadataHook,
                                           const RemoteCommandCompletionFn& onFinish) {
     MONGO_ASIO_INVARIANT(onFinish, "Invalid completion function");
     {
@@ -267,12 +268,12 @@ Status NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cb
 
     auto getConnectionStartTime = now();
 
-    auto statusMetadata = attachMetadataIfNeeded(request, _metadataHook.get());
+    auto statusMetadata = attachMetadataIfNeeded(request, metadataHook);
     if (!statusMetadata.isOK()) {
         return statusMetadata;
     }
 
-    auto nextStep = [this, getConnectionStartTime, cbHandle, request, onFinish](
+    auto nextStep = [this, getConnectionStartTime, cbHandle, request, metadataHook, onFinish](
         StatusWith<ConnectionPool::ConnectionHandle> swConn) {
 
         if (!swConn.isOK()) {
@@ -341,6 +342,7 @@ Status NetworkInterfaceASIO::startCommand(const TaskExecutor::CallbackHandle& cb
 
         op->_cbHandle = std::move(cbHandle);
         op->_request = std::move(request);
+        op->_hook = metadataHook;
         op->_onFinish = std::move(onFinish);
         op->_connectionPoolHandle = std::move(swConn.getValue());
         op->startProgress(getConnectionStartTime);

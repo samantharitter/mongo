@@ -274,6 +274,7 @@ void Fetcher::shutdown() {
             _state = State::kComplete;
             return;
         case State::kRunning:
+            std::cout << "shutting down while running" << std::endl;
             _state = State::kShuttingDown;
             break;
         case State::kShuttingDown:
@@ -281,7 +282,7 @@ void Fetcher::shutdown() {
             // Nothing to do if we are already in ShuttingDown or Complete state.
             return;
     }
-
+    std::cout << "from fetcher shutdown, set state to " << _state << std::endl;
     _firstRemoteCommandScheduler.shutdown();
 
     if (_getMoreCallbackHandle) {
@@ -425,6 +426,7 @@ void Fetcher::_sendKillCursors(const CursorId id, const NamespaceString& nss) {
         }
     }
 }
+
 void Fetcher::_finishCallback() {
     // After running callback function, clear '_work' to release any resources that might be held by
     // this function object.
@@ -433,14 +435,16 @@ void Fetcher::_finishCallback() {
     // 'tempWork' must be declared before lock guard 'lk' so that it is destroyed outside the lock.
     Fetcher::CallbackFn tempWork;
 
-    stdx::lock_guard<stdx::mutex> lk(_mutex);
-    invariant(State::kComplete != _state);
-    _state = State::kComplete;
-    _first = false;
-    _condition.notify_all();
+    {
+        stdx::lock_guard<stdx::mutex> lk(_mutex);
+        invariant(State::kComplete != _state);
+        _state = State::kComplete;
+        _first = false;
+        _condition.notify_all();
 
-    invariant(_work);
-    std::swap(_work, tempWork);
+        invariant(_work);
+        std::swap(_work, tempWork);
+    }
 }
 
 std::ostream& operator<<(std::ostream& os, const Fetcher::State& state) {

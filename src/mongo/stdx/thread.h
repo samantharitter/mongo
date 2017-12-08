@@ -31,8 +31,11 @@
 #include <chrono>
 #include <ctime>
 #include <exception>
+#include <signal.h>
 #include <thread>
 #include <type_traits>
+
+#include <iostream>
 
 namespace mongo {
 namespace stdx {
@@ -78,7 +81,15 @@ public:
         typename std::enable_if<!std::is_same<thread, typename std::decay<Function>::type>::value,
                                 int>::type = 0>
     explicit thread(Function&& f, Args&&... args) try:
-        ::std::thread::thread(std::forward<Function>(f), std::forward<Args>(args)...) {}  // NOLINT
+        ::std::thread::thread(std::forward<Function>(f), std::forward<Args>(args)...) {
+            sigset_t mask;
+            pthread_sigmask(SIG_SETMASK, nullptr, &mask);
+            std::cout << "inside new thread, examining signal set " << std::endl;
+            std::cout << "contains SIGHUP? " << sigismember(&mask, 1) << std::endl;
+            std::cout << "contains SIGINT? " << sigismember(&mask, 2) << std::endl;
+            std::cout << "contains SIGTERM? " << sigismember(&mask, 15) << std::endl;
+            std::cout << "contains SIGUSR1? " << sigismember(&mask, 10) << std::endl;
+        }  // NOLINT
     catch (...) {
         std::terminate();
     }

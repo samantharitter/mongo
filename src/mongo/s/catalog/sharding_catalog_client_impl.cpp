@@ -780,6 +780,7 @@ StatusWith<std::vector<TagsType>> ShardingCatalogClientImpl::getTagsForCollectio
 StatusWith<repl::OpTimeWith<std::vector<ShardType>>> ShardingCatalogClientImpl::getAllShards(
     OperationContext* opCtx, repl::ReadConcernLevel readConcern) {
     std::vector<ShardType> shards;
+    log() << "running exhaustive find on config";
     auto findStatus = _exhaustiveFindOnConfig(opCtx,
                                               kConfigReadSelector,
                                               readConcern,

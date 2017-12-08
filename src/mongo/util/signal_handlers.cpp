@@ -163,6 +163,7 @@ void eventProcessingThread() {
 // not need to be safe to call in signal context.
 sigset_t asyncSignals;
 void signalProcessingThread(LogFileStatus rotate) {
+    log() << "in the signal processing thread";
     setThreadName("signalProcessingThread");
 
     time_t signalTimeSeconds = -1;
@@ -174,6 +175,7 @@ void signalProcessingThread(LogFileStatus rotate) {
             MONGO_IDLE_THREAD_BLOCK;
             return sigwait(&asyncSignals, &actualSignal);
         }();
+        log() << "signal processing thread handling signal " << actualSignal;
         fassert(16781, status == 0);
         switch (actualSignal) {
             case SIGUSR1:
@@ -191,6 +193,7 @@ void signalProcessingThread(LogFileStatus rotate) {
                 }
                 break;
             default:
+                write(1, "hey\n", 4);
                 // interrupt/terminate signal
                 log() << "got signal " << actualSignal << " (" << strsignal(actualSignal)
                       << "), will terminate after current cmd ends" << endl;
@@ -198,6 +201,7 @@ void signalProcessingThread(LogFileStatus rotate) {
                 break;
         }
     }
+    log() << "the signal processing thread is exiting.";
 }
 #endif
 }  // namespace
@@ -225,6 +229,7 @@ void startSignalProcessingThread(LogFileStatus rotate) {
     stdx::thread(eventProcessingThread).detach();
 #else
     // Mask signals in the current (only) thread. All new threads will inherit this mask.
+    std::cout << "setting signal mask for this thread" << std::endl;
     invariant(pthread_sigmask(SIG_SETMASK, &asyncSignals, 0) == 0);
     // Spawn a thread to capture the signals we just masked off.
     stdx::thread(signalProcessingThread, rotate).detach();

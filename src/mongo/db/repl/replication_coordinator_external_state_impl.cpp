@@ -280,6 +280,7 @@ void ReplicationCoordinatorExternalStateImpl::_stopDataReplication_inlock(Operat
     }
 
     if (oldBgSync) {
+        log() << "Waiting for replication fetcher thread to shut down...";
         oldBgSync->join(opCtx);
     }
 
@@ -298,16 +299,18 @@ void ReplicationCoordinatorExternalStateImpl::startThreads(const ReplSettings& s
     log() << "Starting replication storage threads";
     _service->getGlobalStorageEngine()->setJournalListener(this);
 
+    invariant(_service->getNetworkInterface(), "no NetworkInterface on the service context");
+
     auto hookList = stdx::make_unique<rpc::EgressMetadataHookList>();
     hookList->addHook(stdx::make_unique<rpc::LogicalTimeMetadataHook>(_service));
     _taskExecutor = stdx::make_unique<executor::ThreadPoolTaskExecutor>(
-        makeThreadPool(),
-        executor::makeNetworkInterface("NetworkInterfaceASIO-RS", nullptr, std::move(hookList)));
-    _taskExecutor->startup();
+                                                                        makeThreadPool(), _service->getNetworkInterface(),
+                                                                        std::move(hookList));
+        _taskExecutor->startup();
 
-    _writerPool = SyncTail::makeWriterPool();
+        _writerPool = SyncTail::makeWriterPool();
 
-    _startedThreads = true;
+        _startedThreads = true;
 }
 
 void ReplicationCoordinatorExternalStateImpl::startMasterSlave(OperationContext* opCtx) {

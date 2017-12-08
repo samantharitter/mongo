@@ -1,4 +1,3 @@
-
 // Test replication of collection renaming
 
 baseName = "jstests_replsets_replset6";
@@ -65,3 +64,5 @@ assert.eq(1, s.getDB(second).two.findOne().a);
 
 // Make sure the source collection no longer exists.
 assert.eq(-1, s.getDB(first).getCollectionNames().indexOf("one"));
+
+rt.stopSet();

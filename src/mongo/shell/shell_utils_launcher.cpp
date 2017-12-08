@@ -715,11 +715,14 @@ bool wait_for_pid(ProcessId pid, bool block = true, int* exit_code = NULL) {
     int ret;
     do {
         ret = waitpid(pid.toNative(), &tmp, (block ? 0 : WNOHANG));
+        //ret = waitpid(pid.toNative(), &tmp, 0);
     } while (ret == -1 && errno == EINTR);
     if (ret && exit_code) {
         if (WIFEXITED(tmp)) {
+            log() << "WIFEXITED";
             *exit_code = WEXITSTATUS(tmp);
         } else if (WIFSIGNALED(tmp)) {
+            log() << "WIFSignaled";
             *exit_code = -WTERMSIG(tmp);
         } else {
             MONGO_UNREACHABLE;
@@ -951,6 +954,7 @@ inline void kill_wrapper(ProcessId pid, int sig, int port, const BSONObj& opt) {
 }
 
 int killDb(int port, ProcessId _pid, int signal, const BSONObj& opt) {
+    log() << "going to kill process with signal " << signal;
     ProcessId pid;
     if (port > 0) {
         if (!registry.isPortRegistered(port)) {

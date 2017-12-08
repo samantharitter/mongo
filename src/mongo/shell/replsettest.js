@@ -1897,6 +1897,7 @@ var ReplSetTest = function(opts) {
      * @param {Object} opts @see MongoRunner.stopMongod
      */
     this.stop = function(n, signal, opts) {
+        print('ReplSetTest stop!!!!');
         // Flatten array of nodes to stop
         if (n.length) {
             var nodes = n;
@@ -1906,7 +1907,7 @@ var ReplSetTest = function(opts) {
                 if (this.stop(nodes[i], signal, opts))
                     stopped.push(nodes[i]);
             }
-
+            print('returning from this loop');
             return stopped;
         }
 

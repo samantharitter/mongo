@@ -34,6 +34,7 @@
 #include "mongo/db/client.h"
 #include "mongo/db/op_observer.h"
 #include "mongo/db/operation_context.h"
+#include "mongo/executor/network_interface.h"
 #include "mongo/stdx/memory.h"
 #include "mongo/transport/service_entry_point.h"
 #include "mongo/transport/session.h"
@@ -175,6 +176,15 @@ void ServiceContext::setPeriodicRunner(std::unique_ptr<PeriodicRunner> runner) {
 
 PeriodicRunner* ServiceContext::getPeriodicRunner() const {
     return _runner.get();
+}
+
+std::shared_ptr<executor::NetworkInterface> ServiceContext::getNetworkInterface() const {
+    return _networkInterface;
+}
+
+void ServiceContext::setNetworkInterface(
+    std::shared_ptr<executor::NetworkInterface> networkInterface) {
+    _networkInterface = std::move(networkInterface);
 }
 
 transport::TransportLayer* ServiceContext::getTransportLayer() const {

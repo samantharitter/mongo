@@ -244,6 +244,7 @@ void BackgroundSync::_runProducer() {
 }
 
 void BackgroundSync::_produce() {
+    log() << "bgsync 1";
     if (MONGO_FAIL_POINT(stopReplProducer)) {
         // This log output is used in js tests so please leave it.
         log() << "bgsync - stopReplProducer fail point "
@@ -258,7 +259,7 @@ void BackgroundSync::_produce() {
         mongo::sleepsecs(1);
         return;
     }
-
+    log() << "bgsync 2";
     // this oplog reader does not do a handshake because we don't want the server it's syncing
     // from to track how far it has synced
     HostAndPort oldSource;
@@ -281,7 +282,7 @@ void BackgroundSync::_produce() {
 
         oldSource = _syncSourceHost;
     }
-
+    log() << "bgsync 3";
     // find a target to sync from the last optime fetched
     {
         OpTime minValidSaved;
@@ -303,6 +304,7 @@ void BackgroundSync::_produce() {
             requiredOpTime,
             [&syncSourceResp](const SyncSourceResolverResponse& resp) { syncSourceResp = resp; });
     }
+    log() << "bgsync 4";
     // This may deadlock if called inside the mutex because SyncSourceResolver::startup() calls
     // ReplicationCoordinator::chooseNewSyncSource(). ReplicationCoordinatorImpl's mutex has to
     // acquired before BackgroundSync's.
@@ -319,7 +321,7 @@ void BackgroundSync::_produce() {
         stdx::lock_guard<stdx::mutex> lock(_mutex);
         _syncSourceResolver.reset();
     }
-
+    log() << "bgsync 5";
     if (syncSourceResp.syncSourceStatus == ErrorCodes::OplogStartMissing) {
         // All (accessible) sync sources were too stale.
         if (_replCoord->getMemberState().primary()) {
@@ -335,14 +337,14 @@ void BackgroundSync::_produce() {
         if (_tooStale) {
             return;
         }
-
+        log() << "bgsync 5 - 1 if";
         // Mark yourself as too stale.
         _tooStale = true;
 
         // Need to take global X lock to transition out of SECONDARY.
         auto opCtx = cc().makeOperationContext();
         Lock::GlobalWrite globalWriteLock(opCtx.get());
-
+        log() << "bgsync 5 - 2 if";
         error() << "too stale to catch up -- entering maintenance mode";
         log() << "Our newest OpTime : " << lastOpTimeFetched;
         log() << "Earliest OpTime available is " << syncSourceResp.earliestOpTimeSeen;
@@ -365,6 +367,7 @@ void BackgroundSync::_produce() {
             _syncSourceHost = syncSourceResp.getSyncSource();
             source = _syncSourceHost;
         }
+        log() << "bgsync 5 - 2 else if";
         // If our sync source has not changed, it is likely caused by our heartbeat data map being
         // out of date. In that case we sleep for 1 second to reduce the amount we spin waiting
         // for our map to update.
@@ -375,6 +378,7 @@ void BackgroundSync::_produce() {
             sleepsecs(1);
         }
     } else {
+        log() << "bgsync 5 - 3 else";
         if (!syncSourceResp.isOK()) {
             log() << "failed to find sync source, received error "
                   << syncSourceResp.syncSourceStatus.getStatus();
@@ -384,6 +388,7 @@ void BackgroundSync::_produce() {
         return;
     }
 
+    log() << "bgsync 6";
     // If we find a good sync source after having gone too stale, disable maintenance mode so we can
     // transition to SECONDARY.
     if (_tooStale) {
@@ -397,7 +402,7 @@ void BackgroundSync::_produce() {
             warning() << "Failed to leave maintenance mode: " << status;
         }
     }
-
+    log() << "bgsync 7";
     long long lastHashFetched;
     {
         stdx::lock_guard<stdx::mutex> lock(_mutex);
@@ -407,11 +412,11 @@ void BackgroundSync::_produce() {
         lastOpTimeFetched = _lastOpTimeFetched;
         lastHashFetched = _lastFetchedHash;
     }
-
+    log() << "bgsync 8";
     if (!_replCoord->getMemberState().primary()) {
         _replCoord->signalUpstreamUpdater();
     }
-
+    log() << "bgsync 9";
     // Set the applied point if unset. This is most likely the first time we've established a sync
     // source since stepping down or otherwise clearing the applied point. We need to set this here,
     // before the OplogWriter gets a chance to append to the oplog.
@@ -422,13 +427,14 @@ void BackgroundSync::_produce() {
                 opCtx.get(), _replCoord->getMyLastAppliedOpTime());
         }
     }
-
+    log() << "bgsync 10";
     // "lastFetched" not used. Already set in _enqueueDocuments.
     Status fetcherReturnStatus = Status::OK();
     DataReplicatorExternalStateBackgroundSync dataReplicatorExternalState(
         _replCoord, _replicationCoordinatorExternalState, this);
     OplogFetcher* oplogFetcher;
     try {
+        log() << "bgsync 11";
         auto onOplogFetcherShutdownCallbackFn = [&fetcherReturnStatus](const Status& status) {
             fetcherReturnStatus = status;
         };
@@ -449,16 +455,18 @@ void BackgroundSync::_produce() {
             },
             onOplogFetcherShutdownCallbackFn,
             bgSyncOplogFetcherBatchSize);
+        log() << "bgsync 12";
         stdx::lock_guard<stdx::mutex> lock(_mutex);
         if (_state != ProducerState::Running) {
             return;
         }
+        log() << "bgsync 13";
         _oplogFetcher = std::move(oplogFetcherPtr);
         oplogFetcher = _oplogFetcher.get();
     } catch (const mongo::DBException&) {
         fassertFailedWithStatus(34440, exceptionToStatus());
     }
-
+    log() << "bgsync 14";
     const auto logLevel = Command::testCommandsEnabled ? 0 : 1;
     LOG(logLevel) << "scheduling fetcher to read remote oplog on " << _syncSourceHost
                   << " starting at " << oplogFetcher->getFindQuery_forTest()["filter"];
@@ -468,10 +476,10 @@ void BackgroundSync::_produce() {
                   << scheduleStatus;
         return;
     }
-
+    log() << "bgsync 15";
     oplogFetcher->join();
     LOG(1) << "fetcher stopped reading remote oplog on " << source;
-
+    log() << "bgsync 16";
     // If the background sync is stopped after the fetcher is started, we need to
     // re-evaluate our sync source and oplog common point.
     if (getState() != ProducerState::Running) {
@@ -480,7 +488,7 @@ void BackgroundSync::_produce() {
                  "sync source.";
         return;
     }
-
+    log() << "bgsync 17";
     if (fetcherReturnStatus.code() == ErrorCodes::OplogOutOfOrder) {
         // This is bad because it means that our source
         // has not returned oplog entries in ascending ts order, and they need to be.
@@ -503,6 +511,7 @@ void BackgroundSync::_produce() {
         warning() << "Fetcher stopped querying remote oplog with error: "
                   << redact(fetcherReturnStatus);
     }
+    log() << "bgsync 18";
 }
 
 Status BackgroundSync::_enqueueDocuments(Fetcher::Documents::const_iterator begin,

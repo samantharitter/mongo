@@ -66,6 +66,8 @@
 #include "mongo/db/session_killer.h"
 #include "mongo/db/startup_warnings_common.h"
 #include "mongo/db/wire_version.h"
+#include "mongo/executor/network_interface.h"
+#include "mongo/executor/network_interface_factory.h"
 #include "mongo/executor/task_executor_pool.h"
 #include "mongo/platform/process_id.h"
 #include "mongo/rpc/metadata/egress_metadata_hook_list.h"
@@ -77,6 +79,7 @@
 #include "mongo/s/client/shard_registry.h"
 #include "mongo/s/client/shard_remote.h"
 #include "mongo/s/client/sharding_connection_hook.h"
+#include "mongo/s/client/sharding_network_connection_hook.h"
 #include "mongo/s/commands/kill_sessions_remote.h"
 #include "mongo/s/config_server_catalog_cache_loader.h"
 #include "mongo/s/grid.h"
@@ -225,6 +228,12 @@ static void cleanupTask() {
             catalog->shutDown(opCtx);
         }
 
+        // Shut down egress networking
+        if (auto ni = serviceContext->getNetworkInterface()) {
+            log(LogComponent::kNetwork) << "shutting down egress networking...";
+            ni->shutdown();
+        }
+
 #if __has_feature(address_sanitizer)
         // When running under address sanitizer, we get false positive leaks due to disorder around
         // the lifecycle of a connection and request. When we are running under ASAN, we try a lot
@@ -354,6 +363,12 @@ static ExitCode runMongosServer() {
         return EXIT_NET_ERROR;
     }
     getGlobalServiceContext()->setTransportLayer(std::move(tl));
+
+    {
+        auto net = executor::makeNetworkInterface("THE-NIA-FOR-MONGOS!", stdx::make_unique<ShardingNetworkConnectionHook>());
+        net->startup();
+        getGlobalServiceContext()->setNetworkInterface(std::move(net));
+    }
 
     auto unshardedHookList = stdx::make_unique<rpc::EgressMetadataHookList>();
     unshardedHookList->addHook(

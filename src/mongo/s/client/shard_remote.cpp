@@ -52,6 +52,7 @@
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
 #include "mongo/util/time_support.h"
+#include "mongo/util/stacktrace.h"
 
 namespace mongo {
 
@@ -232,11 +233,14 @@ StatusWith<Shard::QueryResponse> ShardRemote::_exhaustiveFindOnConfig(
     const BSONObj& query,
     const BSONObj& sort,
     boost::optional<long long> limit) {
+    log() << "running exhaustive find from shard_remote";
+    //printStackTrace();
     invariant(getId() == "config");
     ReadPreferenceSetting readPrefWithMinOpTime(readPref);
     readPrefWithMinOpTime.minOpTime = grid.configOpTime();
-
+    log() << "finding host";
     const auto host = _targeter->findHost(opCtx, readPrefWithMinOpTime);
+    log() << "found host";
     if (!host.isOK()) {
         return host.getStatus();
     }
@@ -249,7 +253,7 @@ StatusWith<Shard::QueryResponse> ShardRemote::_exhaustiveFindOnConfig(
     auto fetcherCallback = [&status, &response](const Fetcher::QueryResponseStatus& dataStatus,
                                                 Fetcher::NextAction* nextAction,
                                                 BSONObjBuilder* getMoreBob) {
-
+        log() << "inside the fetcher callback";
         // Throw out any accumulated results on error
         if (!dataStatus.isOK()) {
             status = dataStatus.getStatus();
@@ -279,10 +283,12 @@ StatusWith<Shard::QueryResponse> ShardRemote::_exhaustiveFindOnConfig(
         status = Status::OK();
 
         if (!getMoreBob) {
+            log() << "returning from getmore bob";
             return;
         }
         getMoreBob->append("getMore", data.cursorId);
         getMoreBob->append("collection", data.nss.coll());
+        log() << "done with fetcher callback";
     };
 
     BSONObj readConcernObj;
@@ -314,6 +320,7 @@ StatusWith<Shard::QueryResponse> ShardRemote::_exhaustiveFindOnConfig(
         qr.asFindCommand(&findCmdBuilder);
     }
 
+    log() << "making fetcher";
     Fetcher fetcher(Grid::get(opCtx)->getExecutorPool()->getFixedExecutor(),
                     host.getValue(),
                     nss.db().toString(),
@@ -326,9 +333,9 @@ StatusWith<Shard::QueryResponse> ShardRemote::_exhaustiveFindOnConfig(
     if (!scheduleStatus.isOK()) {
         return scheduleStatus;
     }
-
+    log() << "calling fetcher:join()";
     fetcher.join();
-
+    log() << "joined";
     updateReplSetMonitor(host.getValue(), status);
 
     if (!status.isOK()) {
