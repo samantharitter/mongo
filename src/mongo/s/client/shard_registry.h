@@ -245,8 +245,8 @@ public:
     void init();
 
     /**
-     * Shuts down _executor. Needs to be called explicitly because ShardRegistry is never destroyed
-     * as it's owned by the static grid object.
+     * Shuts down the ShardRegistry. Needs to be called explicitly because ShardRegistry is
+     * never destroyed as it's owned by the static grid object.
      */
     void shutdown();
 
@@ -279,12 +279,18 @@ private:
      * shard
      */
     ConnectionString _initConfigServerCS;
-    void _internalReload(const executor::TaskExecutor::CallbackArgs& cbArgs);
+    void _internalReload();
     ShardRegistryData _data;
+
+    bool _reload(OperationContext* opCtx, stdx::unique_lock<stdx::mutex>& lk);
 
     // Protects the _reloadState and _initConfigServerCS during startup.
     mutable stdx::mutex _reloadMutex;
     stdx::condition_variable _inReloadCV;
+    stdx::thread _reloadThread;
+
+    enum class State { kReady, kRunning, kComplete };
+    State _state;
 
     enum class ReloadState {
         Idle,       // no other thread is loading data from config server in reload().
@@ -294,12 +300,6 @@ private:
 
     ReloadState _reloadState{ReloadState::Idle};
     bool _isUp{false};
-
-    // Executor for reloading.
-    std::unique_ptr<executor::TaskExecutor> _executor{};
-
-    // Set to true in shutdown call to prevent calling it twice.
-    bool _isShutdown{false};
 };
 
 }  // namespace mongo

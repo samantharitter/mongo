@@ -87,7 +87,7 @@ void NetworkInterfaceASIOIntegrationFixture::startCommand(
     const TaskExecutor::CallbackHandle& cbHandle,
     RemoteCommandRequest& request,
     StartCommandCB onFinish) {
-    net().startCommand(cbHandle, request, onFinish).transitional_ignore();
+    net().startCommand(cbHandle, request, nullptr, onFinish).transitional_ignore();
 }
 
 Deferred<RemoteCommandResponse> NetworkInterfaceASIOIntegrationFixture::runCommand(
@@ -97,6 +97,7 @@ Deferred<RemoteCommandResponse> NetworkInterfaceASIOIntegrationFixture::runComma
         .startCommand(
             cbHandle,
             request,
+            nullptr,
             [deferred](RemoteCommandResponse resp) mutable { deferred.emplace(std::move(resp)); })
         .transitional_ignore();
     return deferred;

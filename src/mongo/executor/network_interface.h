@@ -37,6 +37,10 @@
 
 namespace mongo {
 
+namespace rpc {
+class EgressMetadataHook;
+}  // namespace rpc
+
 class BSONObjBuilder;
 
 namespace executor {
@@ -128,6 +132,7 @@ public:
      */
     virtual Status startCommand(const TaskExecutor::CallbackHandle& cbHandle,
                                 RemoteCommandRequest& request,
+                                rpc::EgressMetadataHook* hook,
                                 const RemoteCommandCompletionFn& onFinish) = 0;
 
     /**

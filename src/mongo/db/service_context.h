@@ -54,6 +54,10 @@ class OperationContext;
 class OpObserver;
 class ServiceEntryPoint;
 
+namespace executor {
+class NetworkInterface;
+}  // namespace executor
+
 namespace transport {
 class TransportLayer;
 }  // namespace transport
@@ -339,6 +343,16 @@ public:
     //
 
     /**
+     * Get the NetworkInterface for this service.
+     */
+    std::shared_ptr<executor::NetworkInterface> getNetworkInterface() const;
+
+    /**
+     * Set the NetworkInterface for this service.
+     */
+    void setNetworkInterface(std::shared_ptr<executor::NetworkInterface> networkInterface);
+
+    /**
      * Get the master TransportLayer. Routes to all other TransportLayers that
      * may be in use within this service.
      *
@@ -464,6 +478,11 @@ private:
      * The periodic runner.
      */
     std::unique_ptr<PeriodicRunner> _runner;
+
+    /**
+     * The network interface.
+     */
+    std::shared_ptr<executor::NetworkInterface> _networkInterface;
 
     /**
      * The TransportLayer.

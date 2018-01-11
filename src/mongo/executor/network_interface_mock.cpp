@@ -37,6 +37,7 @@
 #include <iterator>
 
 #include "mongo/executor/connection_pool_stats.h"
+#include "mongo/rpc/metadata/metadata_hook.h"
 #include "mongo/stdx/functional.h"
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
@@ -113,6 +114,7 @@ std::string NetworkInterfaceMock::getHostName() {
 
 Status NetworkInterfaceMock::startCommand(const CallbackHandle& cbHandle,
                                           RemoteCommandRequest& request,
+                                          rpc::EgressMetadataHook* hook,
                                           const RemoteCommandCompletionFn& onFinish) {
     if (inShutdown()) {
         return {ErrorCodes::ShutdownInProgress, "NetworkInterfaceMock shutdown in progress"};

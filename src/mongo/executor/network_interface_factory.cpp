@@ -48,19 +48,16 @@
 namespace mongo {
 namespace executor {
 
-std::unique_ptr<NetworkInterface> makeNetworkInterface(std::string instanceName) {
-    return makeNetworkInterface(std::move(instanceName), nullptr, nullptr);
+std::shared_ptr<NetworkInterface> makeNetworkInterface(std::string instanceName) {
+    return makeNetworkInterface(std::move(instanceName), nullptr);
 }
 
-std::unique_ptr<NetworkInterface> makeNetworkInterface(
-    std::string instanceName,
-    std::unique_ptr<NetworkConnectionHook> hook,
-    std::unique_ptr<rpc::EgressMetadataHook> metadataHook,
-    ConnectionPool::Options connPoolOptions) {
+std::shared_ptr<NetworkInterface> makeNetworkInterface(std::string instanceName,
+                                                       std::unique_ptr<NetworkConnectionHook> hook,
+                                                       ConnectionPool::Options connPoolOptions) {
     NetworkInterfaceASIO::Options options{};
     options.instanceName = std::move(instanceName);
     options.networkConnectionHook = std::move(hook);
-    options.metadataHook = std::move(metadataHook);
     options.timerFactory = stdx::make_unique<AsyncTimerFactoryASIO>();
     options.connectionPoolOptions = connPoolOptions;
 
@@ -73,7 +70,7 @@ std::unique_ptr<NetworkInterface> makeNetworkInterface(
     if (!options.streamFactory)
         options.streamFactory = stdx::make_unique<AsyncStreamFactory>();
 
-    return stdx::make_unique<NetworkInterfaceASIO>(std::move(options));
+    return std::make_shared<NetworkInterfaceASIO>(std::move(options));
 }
 
 }  // namespace executor

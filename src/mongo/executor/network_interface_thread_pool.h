@@ -50,7 +50,7 @@ class NetworkInterface;
  */
 class NetworkInterfaceThreadPool final : public ThreadPoolInterface {
 public:
-    NetworkInterfaceThreadPool(NetworkInterface* net);
+    NetworkInterfaceThreadPool(std::shared_ptr<NetworkInterface> net);
     ~NetworkInterfaceThreadPool() override;
 
     void startup() override;
@@ -62,7 +62,7 @@ private:
     void consumeTasks(stdx::unique_lock<stdx::mutex> lk);
     void dtorImpl();
 
-    NetworkInterface* const _net;
+    std::shared_ptr<NetworkInterface> const _net;
 
     // Protects all of the pool state below
     stdx::mutex _mutex;

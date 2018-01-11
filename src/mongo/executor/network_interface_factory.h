@@ -47,15 +47,14 @@ class NetworkConnectionHook;
 /**
  * Returns a new NetworkInterface.
  */
-std::unique_ptr<NetworkInterface> makeNetworkInterface(std::string instanceName);
+std::shared_ptr<NetworkInterface> makeNetworkInterface(std::string instanceName);
 
 /**
  * Returns a new NetworkInterface with the given connection hook set.
  */
-std::unique_ptr<NetworkInterface> makeNetworkInterface(
+std::shared_ptr<NetworkInterface> makeNetworkInterface(
     std::string instanceName,
     std::unique_ptr<NetworkConnectionHook> hook,
-    std::unique_ptr<rpc::EgressMetadataHook> metadataHook,
     ConnectionPool::Options options = ConnectionPool::Options());
 
 }  // namespace executor

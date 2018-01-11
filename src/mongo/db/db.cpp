@@ -726,6 +726,8 @@ ExitCode _initAndListen(int listenPort) {
 
     serviceContext->createLockFile();
 
+    serviceContext->getNetworkInterface()->startup();
+
     serviceContext->setServiceEntryPoint(
         stdx::make_unique<ServiceEntryPointMongod>(serviceContext));
 
@@ -931,9 +933,11 @@ ExitCode _initAndListen(int listenPort) {
 
             Balancer::create(startupOpCtx->getServiceContext());
 
+            invariant(startupOpCtx->getServiceContext()->getNetworkInterface());
+
             ShardingCatalogManager::create(
                 startupOpCtx->getServiceContext(),
-                makeShardingTaskExecutor(executor::makeNetworkInterface("AddShard-TaskExecutor")));
+                makeShardingTaskExecutor(startupOpCtx->getServiceContext()->getNetworkInterface()));
         } else if (replSettings.usingReplSets()) {  // standalone replica set
             auto keysCollectionClient = stdx::make_unique<KeysCollectionClientDirect>();
             auto keyManager = std::make_shared<KeysCollectionManager>(
@@ -1155,12 +1159,16 @@ auto makeReplicationExecutor(ServiceContext* serviceContext) {
     tpOptions.onCreateThread = [](const std::string& threadName) {
         Client::initThread(threadName.c_str());
     };
+
+    invariant(serviceContext->getNetworkInterface());
+
     auto hookList = stdx::make_unique<rpc::EgressMetadataHookList>();
     hookList->addHook(stdx::make_unique<rpc::LogicalTimeMetadataHook>(serviceContext));
+
     return stdx::make_unique<executor::ThreadPoolTaskExecutor>(
         stdx::make_unique<ThreadPool>(tpOptions),
-        executor::makeNetworkInterface(
-            "NetworkInterfaceASIO-Replication", nullptr, std::move(hookList)));
+        serviceContext->getNetworkInterface(),
+        std::move(hookList));
 }
 
 MONGO_INITIALIZER_WITH_PREREQUISITES(CreateReplicationManager,
@@ -1190,6 +1198,13 @@ MONGO_INITIALIZER_WITH_PREREQUISITES(CreateReplicationManager,
 
     auto logicalClock = stdx::make_unique<LogicalClock>(serviceContext);
     LogicalClock::set(serviceContext, std::move(logicalClock));
+
+    // TODO this is gross, but idk what to do about it.
+    {
+        auto net = executor::makeNetworkInterface("THE-NIA!");
+        // net->startup();
+        serviceContext->setNetworkInterface(std::move(net));
+    }
 
     auto replCoord = stdx::make_unique<repl::ReplicationCoordinatorImpl>(
         serviceContext,
@@ -1277,6 +1292,12 @@ void shutdownTask() {
     }
 
     ReplicaSetMonitor::shutdown();
+
+    // Shut down egress networking
+    if (auto ni = serviceContext->getNetworkInterface()) {
+        log(LogComponent::kNetwork) << "shutting down egress networking...";
+        ni->shutdown();
+    }
 
     if (auto sr = Grid::get(serviceContext)->shardRegistry()) {
         sr->shutdown();
