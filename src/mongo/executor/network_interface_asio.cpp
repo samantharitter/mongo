@@ -58,7 +58,7 @@ namespace mongo {
 namespace executor {
 
 namespace {
-const std::size_t kIOServiceWorkers = 1;
+const std::size_t kIOServiceWorkers = 10;
 }  // namespace
 
 NetworkInterfaceASIO::Options::Options() = default;
