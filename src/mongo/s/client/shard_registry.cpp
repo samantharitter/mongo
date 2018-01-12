@@ -100,7 +100,9 @@ void ShardRegistry::shutdown() {
     log() << "shutting down the Shard Registry...";
     {
         stdx::lock_guard<stdx::mutex> lk(_reloadMutex);
-        if (_state == State::kComplete) {
+
+        // Only shut down once, and only if we've started up.
+        if (_state == State::kComplete || _state == State::kReady) {
             return;
         }
         _state = State::kComplete;

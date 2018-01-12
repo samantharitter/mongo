@@ -89,7 +89,7 @@ using unittest::assertGet;
 
 namespace {
 std::unique_ptr<ShardingTaskExecutor> makeShardingTestExecutor(
-    std::unique_ptr<NetworkInterfaceMock> net) {
+    std::shared_ptr<NetworkInterfaceMock> net) {
     auto testExecutor = makeThreadPoolTestExecutor(std::move(net));
     return stdx::make_unique<ShardingTaskExecutor>(std::move(testExecutor));
 }
@@ -123,19 +123,21 @@ void ShardingTestFixture::setUp() {
     _opCtx = _client->makeOperationContext();
 
     // Set up executor pool used for most operations.
-    auto fixedNet = stdx::make_unique<executor::NetworkInterfaceMock>();
-    fixedNet->setEgressMetadataHook(
+    _mockNetwork = std::make_shared<executor::NetworkInterfaceMock>();
+    _mockNetwork->setEgressMetadataHook(
         stdx::make_unique<rpc::ShardingEgressMetadataHookForMongos>(serviceContext()));
-    _mockNetwork = fixedNet.get();
-    auto fixedExec = makeShardingTestExecutor(std::move(fixedNet));
+    _mockNetwork->startup();
+
+    auto fixedExec = makeShardingTestExecutor(_mockNetwork);
     _networkTestEnv = stdx::make_unique<NetworkTestEnv>(fixedExec.get(), _mockNetwork);
     _executor = fixedExec.get();
 
-    auto netForPool = stdx::make_unique<executor::NetworkInterfaceMock>();
-    netForPool->setEgressMetadataHook(
+    _mockNetworkForPool = std::make_shared<executor::NetworkInterfaceMock>();
+    _mockNetworkForPool->setEgressMetadataHook(
         stdx::make_unique<rpc::ShardingEgressMetadataHookForMongos>(serviceContext()));
-    auto _mockNetworkForPool = netForPool.get();
-    auto execForPool = makeShardingTestExecutor(std::move(netForPool));
+    _mockNetworkForPool->startup();
+
+    auto execForPool = makeShardingTestExecutor(_mockNetworkForPool);
     _networkTestEnvForPool =
         stdx::make_unique<NetworkTestEnv>(execForPool.get(), _mockNetworkForPool);
     std::vector<std::unique_ptr<executor::TaskExecutor>> executorsForPool;
@@ -207,6 +209,9 @@ void ShardingTestFixture::tearDown() {
     Grid::get(operationContext())->catalogClient()->shutDown(_opCtx.get());
     Grid::get(operationContext())->clearForUnitTests();
 
+    _mockNetwork->shutdown();
+    _mockNetworkForPool->shutdown();
+
     _transportSession.reset();
     _opCtx.reset();
     _client.reset();
@@ -241,7 +246,7 @@ RemoteCommandTargeterMock* ShardingTestFixture::configTargeter() const {
     return _configTargeter;
 }
 
-executor::NetworkInterfaceMock* ShardingTestFixture::network() const {
+std::shared_ptr<executor::NetworkInterfaceMock> ShardingTestFixture::network() const {
     invariant(_mockNetwork);
 
     return _mockNetwork;

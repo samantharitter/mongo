@@ -57,7 +57,7 @@ void NetworkInterfaceASIOIntegrationFixture::startNet(NetworkInterfaceASIO::Opti
 #else
     options.connectionPoolOptions.maxConnections = 256u;
 #endif
-    _net = stdx::make_unique<NetworkInterfaceASIO>(std::move(options));
+    _net = std::make_shared<NetworkInterfaceASIO>(std::move(options));
     _net->startup();
 }
 

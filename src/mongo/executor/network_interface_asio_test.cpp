@@ -109,7 +109,7 @@ public:
         // keep unowned pointer, but pass ownership to NIA
         _streamFactory = factory.get();
         options.streamFactory = std::move(factory);
-        _net = stdx::make_unique<NetworkInterfaceASIO>(std::move(options));
+        _net = std::make_shared<NetworkInterfaceASIO>(std::move(options));
         _net->startup();
     }
 
@@ -161,7 +161,7 @@ public:
 protected:
     AsyncTimerFactoryMock* _timerFactory;
     AsyncMockStreamFactory* _streamFactory;
-    std::unique_ptr<NetworkInterfaceASIO> _net;
+    std::shared_ptr<NetworkInterfaceASIO> _net;
 };
 
 TEST_F(NetworkInterfaceASIOTest, CancelMissingOperation) {
@@ -600,7 +600,7 @@ public:
         options.streamFactory = std::move(factory);
         options.networkConnectionHook = std::move(hook);
         options.timerFactory = stdx::make_unique<AsyncTimerFactoryMock>();
-        _net = stdx::make_unique<NetworkInterfaceASIO>(std::move(options));
+        _net = std::make_shared<NetworkInterfaceASIO>(std::move(options));
         _net->startup();
     }
 };

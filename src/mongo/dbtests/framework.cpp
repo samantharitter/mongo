@@ -46,6 +46,7 @@
 #include "mongo/db/service_context_d.h"
 #include "mongo/dbtests/dbtests.h"
 #include "mongo/dbtests/framework_options.h"
+#include "mongo/executor/network_interface_mock.h"
 #include "mongo/scripting/dbdirectclient_factory.h"
 #include "mongo/scripting/engine.h"
 #include "mongo/stdx/mutex.h"
@@ -80,6 +81,10 @@ int runDbTests(int argc, char** argv) {
     Client::initThread("testsuite");
 
     auto globalServiceContext = getGlobalServiceContext();
+
+    // Create a network interface for the service context.
+    auto net = std::make_shared<executor::NetworkInterfaceMock>();
+    globalServiceContext->setNetworkInterface(net);
 
     // DBTests run as if in the database, so allow them to create direct clients.
     DBDirectClientFactory::get(globalServiceContext)
