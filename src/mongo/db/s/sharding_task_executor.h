@@ -70,8 +70,6 @@ public:
     void cancel(const CallbackHandle& cbHandle) override;
     void wait(const CallbackHandle& cbHandle) override;
 
-    void appendConnectionStats(ConnectionPoolStats* stats) const override;
-
 private:
     std::unique_ptr<ThreadPoolTaskExecutor> _executor;
 };

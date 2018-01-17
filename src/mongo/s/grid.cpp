@@ -88,17 +88,6 @@ void Grid::init(std::unique_ptr<ShardingCatalogClient> catalogClient,
     _shardRegistry->init();
 }
 
-Grid::CustomConnectionPoolStatsFn Grid::getCustomConnectionPoolStatsFn() const {
-    stdx::lock_guard<stdx::mutex> lk(_mutex);
-    return _customConnectionPoolStatsFn;
-}
-
-void Grid::setCustomConnectionPoolStatsFn(CustomConnectionPoolStatsFn statsFn) {
-    stdx::lock_guard<stdx::mutex> lk(_mutex);
-    invariant(!_customConnectionPoolStatsFn || !statsFn);
-    _customConnectionPoolStatsFn = std::move(statsFn);
-}
-
 bool Grid::allowLocalHost() const {
     return _allowLocalShard;
 }

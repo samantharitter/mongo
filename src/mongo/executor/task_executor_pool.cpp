@@ -97,14 +97,5 @@ TaskExecutor* TaskExecutorPool::getFixedExecutor() {
     return _fixedExecutor.get();
 }
 
-void TaskExecutorPool::appendConnectionStats(ConnectionPoolStats* stats) const {
-    // Get stats from our fixed executor.
-    _fixedExecutor->appendConnectionStats(stats);
-    // Get stats from our pooled executors.
-    for (auto&& executor : _executors) {
-        executor->appendConnectionStats(stats);
-    }
-}
-
 }  // namespace executor
 }  // namespace mongo

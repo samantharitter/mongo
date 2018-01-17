@@ -161,8 +161,6 @@ public:
 
     virtual void appendSlaveInfoData(BSONObjBuilder* result);
 
-    void appendConnectionStats(executor::ConnectionPoolStats* stats) const override;
-
     virtual ReplSetConfig getConfig() const;
 
     virtual void processReplSetGetConfig(BSONObjBuilder* result);

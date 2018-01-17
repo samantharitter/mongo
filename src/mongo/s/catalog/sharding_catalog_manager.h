@@ -310,11 +310,6 @@ public:
     //
 
     /**
-     * Append information about the connection pools owned by the CatalogManager.
-     */
-    void appendConnectionStats(executor::ConnectionPoolStats* stats);
-
-    /**
      * Only used for unit-tests, clears a previously-created catalog manager from the specified
      * service context, so that 'create' can be called again.
      */

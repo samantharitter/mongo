@@ -852,10 +852,6 @@ StatusWith<ShardDrainingStatus> ShardingCatalogManager::removeShard(OperationCon
     return ShardDrainingStatus::COMPLETED;
 }
 
-void ShardingCatalogManager::appendConnectionStats(executor::ConnectionPoolStats* stats) {
-    _executorForAddShard->appendConnectionStats(stats);
-}
-
 BSONObj ShardingCatalogManager::createShardIdentityUpsertForAddShard(OperationContext* opCtx,
                                                                      const std::string& shardName) {
     BatchedCommandRequest request([&] {

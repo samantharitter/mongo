@@ -109,9 +109,5 @@ void TaskExecutorProxy::wait(const CallbackHandle& cbHandle) {
     _executor->wait(cbHandle);
 }
 
-void TaskExecutorProxy::appendConnectionStats(executor::ConnectionPoolStats* stats) const {
-    _executor->appendConnectionStats(stats);
-}
-
 }  // namespace unittest
 }  // namespace mongo
