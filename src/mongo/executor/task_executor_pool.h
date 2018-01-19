@@ -52,12 +52,6 @@ class TaskExecutor;
 class TaskExecutorPool final {
 public:
     /**
-     * Based on properties of the system (e.g. the number of cores), suggests a number of executors
-     * to add to the pool.
-     */
-    static size_t getSuggestedPoolSize();
-
-    /**
      * Initializes the underlying executors. This method may be called at most once for the lifetime
      * of an executor.
      *

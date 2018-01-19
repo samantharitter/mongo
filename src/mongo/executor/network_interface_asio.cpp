@@ -36,6 +36,7 @@
 
 #include <utility>
 
+#include "mongo/db/server_parameters.h"
 #include "mongo/executor/async_stream_factory.h"
 #include "mongo/executor/async_stream_interface.h"
 #include "mongo/executor/async_timer_asio.h"
@@ -51,15 +52,16 @@
 #include "mongo/util/log.h"
 #include "mongo/util/net/sock.h"
 #include "mongo/util/net/ssl_manager.h"
+#include "mongo/util/processinfo.h"
 #include "mongo/util/table_formatter.h"
 #include "mongo/util/time_support.h"
 
 namespace mongo {
 namespace executor {
 
-namespace {
-const std::size_t kIOServiceWorkers = 1;
-}  // namespace
+// If less than or equal to 0, the suggested pool size will be determined by the number of cores. If
+// set to a particular positive value, this will be used as the pool size.
+MONGO_EXPORT_STARTUP_SERVER_PARAMETER(NetworkInterfaceASIOWorkerThreads, int, 0);
 
 NetworkInterfaceASIO::Options::Options() = default;
 
@@ -148,12 +150,24 @@ std::string NetworkInterfaceASIO::getHostName() {
 }
 
 void NetworkInterfaceASIO::startup() {
-    _serviceRunners.resize(kIOServiceWorkers);
-    for (std::size_t i = 0; i < kIOServiceWorkers; ++i) {
+    // Calculate the correct pool size.
+    auto poolSize = NetworkInterfaceASIOWorkerThreads;
+    if (poolSize <= 0) {
+        ProcessInfo p;
+        unsigned numCores = p.getNumCores();
+
+        // Never suggest a number outside the range [4, 64].
+        poolSize = std::max(4U, std::min(64U, numCores));
+    }
+
+    LOG(1) << "Starting NetworkInterfaceASIO with " << poolSize << " worker threads.";
+
+    _serviceRunners.resize(poolSize);
+    for (int i = 0; i < poolSize; ++i) {
         _serviceRunners[i] = stdx::thread([this, i]() {
             setThreadName(_options.instanceName + "-" + std::to_string(i));
             try {
-                LOG(2) << "The NetworkInterfaceASIO worker thread is spinning up";
+                LOG(2) << "NetworkInterfaceASIO worker thread " << i << " is spinning up";
                 asio::io_service::work work(_io_service);
                 std::error_code ec;
                 _io_service.run(ec);

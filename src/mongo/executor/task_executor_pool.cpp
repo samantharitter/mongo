@@ -40,23 +40,6 @@
 namespace mongo {
 namespace executor {
 
-// If less than or equal to 0, the suggested pool size will be determined by the number of cores. If
-// set to a particular positive value, this will be used as the pool size.
-MONGO_EXPORT_SERVER_PARAMETER(taskExecutorPoolSize, int, 0);
-
-size_t TaskExecutorPool::getSuggestedPoolSize() {
-    auto poolSize = taskExecutorPoolSize.load();
-    if (poolSize > 0) {
-        return poolSize;
-    }
-
-    ProcessInfo p;
-    unsigned numCores = p.getNumCores();
-
-    // Never suggest a number outside the range [4, 64].
-    return std::max(4U, std::min(64U, numCores));
-}
-
 void TaskExecutorPool::startup() {
     invariant(!_executors.empty());
     invariant(_fixedExecutor);
