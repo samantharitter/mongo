@@ -141,7 +141,7 @@ void ReplCoordTest::init() {
     TopologyCoordinator::Options settings;
     auto topo = stdx::make_unique<TopologyCoordinator>(settings);
     _topo = topo.get();
-    auto net = stdx::make_unique<NetworkInterfaceMock>();
+    auto net = std::make_shared<NetworkInterfaceMock>();
     _net = net.get();
     auto externalState = stdx::make_unique<ReplicationCoordinatorExternalStateMock>();
     _externalState = externalState.get();

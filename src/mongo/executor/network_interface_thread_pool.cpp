@@ -40,7 +40,8 @@
 namespace mongo {
 namespace executor {
 
-NetworkInterfaceThreadPool::NetworkInterfaceThreadPool(NetworkInterface* net) : _net(net) {}
+NetworkInterfaceThreadPool::NetworkInterfaceThreadPool(std::shared_ptr<NetworkInterface> net)
+    : _net(net) {}
 
 NetworkInterfaceThreadPool::~NetworkInterfaceThreadPool() {
     DESTRUCTOR_GUARD(dtorImpl());

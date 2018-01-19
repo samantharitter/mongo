@@ -43,6 +43,7 @@
 #include "mongo/db/service_context.h"
 #include "mongo/db/service_context_d.h"
 #include "mongo/db/storage/storage_options.h"
+#include "mongo/executor/network_interface_mock.h"
 #include "mongo/stdx/memory.h"
 #include "mongo/unittest/temp_dir.h"
 #include "mongo/util/assert_util.h"
@@ -69,6 +70,11 @@ void ServiceContextMongoDTest::setUp() {
         checked_cast<ServiceContextMongoD*>(serviceContext)->createLockFile();
         serviceContext->initializeGlobalStorageEngine();
         serviceContext->setOpObserver(stdx::make_unique<OpObserverNoop>());
+    }
+
+    if (!serviceContext->getNetworkInterface()) {
+        auto net = std::make_shared<executor::NetworkInterfaceMock>();
+        serviceContext->setNetworkInterface(std::move(net));
     }
 }
 

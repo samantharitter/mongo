@@ -89,7 +89,7 @@ private:
     void _doTest() override;
 
     virtual std::unique_ptr<TaskExecutor> makeTaskExecutor(
-        std::unique_ptr<NetworkInterfaceMock> net) = 0;
+        std::shared_ptr<NetworkInterfaceMock> net) = 0;
 
     virtual void postExecutorThreadLaunch();
 

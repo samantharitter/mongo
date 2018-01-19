@@ -41,6 +41,7 @@
 #include "mongo/executor/network_interface_asio.h"
 #include "mongo/executor/network_interface_asio_test_utils.h"
 #include "mongo/executor/task_executor.h"
+#include "mongo/rpc/metadata/egress_metadata_hook_list.h"
 #include "mongo/stdx/memory.h"
 #include "mongo/unittest/integration_test.h"
 #include "mongo/unittest/unittest.h"
@@ -84,10 +85,12 @@ int timeNetworkTestMillis(std::size_t operations, NetworkInterface* net) {
         cv.notify_one();
     };
 
+    rpc::EgressMetadataHookList hookList{};
+
     func = [&]() {
         RemoteCommandRequest request{
             server, "admin", bsonObjPing, BSONObj(), nullptr, Milliseconds(-1)};
-        net->startCommand(makeCallbackHandle(), request, callback).transitional_ignore();
+        net->startCommand(makeCallbackHandle(), request, &hookList, callback).transitional_ignore();
     };
 
     func();

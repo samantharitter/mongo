@@ -82,7 +82,7 @@ public:
                           Milliseconds timeoutMillis = Minutes(5));
 
 private:
-    std::unique_ptr<NetworkInterfaceASIO> _net;
+    std::shared_ptr<NetworkInterfaceASIO> _net;
     PseudoRandom* _rng = nullptr;
 };
 }  // namespace executor

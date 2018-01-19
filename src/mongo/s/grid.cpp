@@ -68,7 +68,7 @@ void Grid::init(std::unique_ptr<ShardingCatalogClient> catalogClient,
                 std::unique_ptr<ClusterCursorManager> cursorManager,
                 std::unique_ptr<BalancerConfiguration> balancerConfig,
                 std::unique_ptr<executor::TaskExecutorPool> executorPool,
-                executor::NetworkInterface* network) {
+                std::shared_ptr<executor::NetworkInterface> network) {
     invariant(!_catalogClient);
     invariant(!_catalogCache);
     invariant(!_shardRegistry);

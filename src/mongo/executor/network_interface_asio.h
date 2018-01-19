@@ -61,6 +61,10 @@
 
 namespace mongo {
 
+namespace rpc {
+class EgressMetadataHook;
+}  // namespace rpc
+
 namespace executor {
 
 namespace connection_pool_asio {
@@ -107,7 +111,6 @@ public:
         std::unique_ptr<AsyncTimerFactoryInterface> timerFactory;
         std::unique_ptr<NetworkConnectionHook> networkConnectionHook;
         std::unique_ptr<AsyncStreamFactoryInterface> streamFactory;
-        std::unique_ptr<rpc::EgressMetadataHook> metadataHook;
     };
 
     NetworkInterfaceASIO(Options = Options());
@@ -130,6 +133,7 @@ public:
     Date_t now() override;
     Status startCommand(const TaskExecutor::CallbackHandle& cbHandle,
                         RemoteCommandRequest& request,
+                        rpc::EgressMetadataHook* metadataHook,
                         const RemoteCommandCompletionFn& onFinish) override;
     void cancelCommand(const TaskExecutor::CallbackHandle& cbHandle) override;
     Status setAlarm(Date_t when, const stdx::function<void()>& action) override;
@@ -327,6 +331,10 @@ private:
 
         bool operator==(const AsyncOp& other) const;
 
+        rpc::EgressMetadataHook* hook() const {
+            return _hook;
+        }
+
     private:
         // Type to represent the internal id of this request.
         using AsyncOpId = uint64_t;
@@ -371,6 +379,11 @@ private:
          * is not known until we obtain a connection.
          */
         boost::optional<rpc::Protocol> _operationProtocol;
+
+        /**
+         * An egress metadata hook for this operation. Owned by the ThreadPoolTaskExecutor.
+         */
+        rpc::EgressMetadataHook* _hook;
 
         Date_t _start;
         std::unique_ptr<AsyncTimerInterface> _timeoutAlarm;

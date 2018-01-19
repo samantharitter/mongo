@@ -113,7 +113,7 @@ public:
     // if they have been initialized.
 
     executor::TaskExecutor* executor() const;
-    executor::NetworkInterfaceMock* network() const;
+    std::shared_ptr<executor::NetworkInterfaceMock> network() const;
 
     repl::ReplicationCoordinatorMock* replicationCoordinator() const;
 
@@ -242,7 +242,8 @@ private:
     // TODO(esha): Currently, some fine-grained synchronization of the network and task executor is
     // is outside of NetworkTestEnv's capabilities. If all control of the network is done through
     // _networkTestEnv, storing this raw pointer is not necessary.
-    executor::NetworkInterfaceMock* _mockNetwork = nullptr;
+    std::shared_ptr<executor::NetworkInterfaceMock> _mockNetwork;
+    std::shared_ptr<executor::NetworkInterfaceMock> _mockNetworkForPool;
 
     // Since the RemoteCommandTargeterFactory is currently a private member of ShardFactory, we
     // store a raw pointer to it here.

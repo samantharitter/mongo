@@ -38,7 +38,8 @@ namespace mongo {
 
 namespace executor {
 
-NetworkTestEnv::NetworkTestEnv(TaskExecutor* executor, NetworkInterfaceMock* network)
+NetworkTestEnv::NetworkTestEnv(TaskExecutor* executor,
+                               std::shared_ptr<NetworkInterfaceMock> network)
     : _executor(executor), _mockNetwork(network) {}
 
 void NetworkTestEnv::onCommand(OnCommandFunction func) {

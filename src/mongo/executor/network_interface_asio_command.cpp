@@ -264,7 +264,7 @@ void NetworkInterfaceASIO::_beginCommunication(AsyncOp* op) {
 }
 
 void NetworkInterfaceASIO::_completedOpCallback(AsyncOp* op) {
-    auto response = op->command().response(op, op->operationProtocol(), now(), _metadataHook.get());
+    auto response = op->command().response(op, op->operationProtocol(), now(), op->hook());
     _completeOperation(op, response);
 }
 

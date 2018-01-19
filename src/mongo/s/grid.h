@@ -79,7 +79,7 @@ public:
               std::unique_ptr<ClusterCursorManager> cursorManager,
               std::unique_ptr<BalancerConfiguration> balancerConfig,
               std::unique_ptr<executor::TaskExecutorPool> executorPool,
-              executor::NetworkInterface* network);
+              std::shared_ptr<executor::NetworkInterface> network);
 
     /**
      * If the instance as which this sharding component is running (config/shard/mongos) uses
@@ -124,7 +124,7 @@ public:
     }
 
     executor::NetworkInterface* getNetwork() {
-        return _network;
+        return _network.get();
     }
 
     BalancerConfiguration* getBalancerConfiguration() const {
@@ -167,9 +167,7 @@ private:
     // contained executor has a connection hook set on it for sending/receiving sharding metadata.
     std::unique_ptr<executor::TaskExecutorPool> _executorPool;
 
-    // Network interface being used by the fixed executor in _executorPool.  Used for asking
-    // questions about the network configuration, such as getting the current server's hostname.
-    executor::NetworkInterface* _network{nullptr};
+    std::shared_ptr<executor::NetworkInterface> _network{nullptr};
 
     CustomConnectionPoolStatsFn _customConnectionPoolStatsFn;
 

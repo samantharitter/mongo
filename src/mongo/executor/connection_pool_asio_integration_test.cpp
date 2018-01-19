@@ -37,6 +37,7 @@
 #include "mongo/executor/network_connection_hook.h"
 #include "mongo/executor/network_interface_asio_test_utils.h"
 #include "mongo/rpc/get_status_from_command_result.h"
+#include "mongo/rpc/metadata/metadata_hook.h"
 #include "mongo/stdx/future.h"
 #include "mongo/stdx/memory.h"
 #include "mongo/unittest/integration_test.h"
@@ -110,6 +111,7 @@ TEST(ConnectionPoolASIO, TestPing) {
             net.startCommand(
                    makeCallbackHandle(),
                    request,
+                   nullptr,
                    [&deferred](RemoteCommandResponse resp) { deferred.emplace(std::move(resp)); })
                 .transitional_ignore();
 
@@ -146,6 +148,7 @@ TEST(ConnectionPoolASIO, TestHostTimeoutRace) {
             fixture.getServers()[0], "admin", BSON("ping" << 1), BSONObj(), nullptr};
         net.startCommand(makeCallbackHandle(),
                          request,
+                         nullptr,
                          [&](RemoteCommandResponse resp) { deferred.emplace(std::move(resp)); })
             .transitional_ignore();
 
@@ -175,6 +178,7 @@ TEST(ConnectionPoolASIO, ConnSetupTimeout) {
         fixture.getServers()[0], "admin", BSON("ping" << 1), BSONObj(), nullptr};
     net.startCommand(makeCallbackHandle(),
                      request,
+                     nullptr,
                      [&](RemoteCommandResponse resp) { deferred.emplace(std::move(resp)); })
         .transitional_ignore();
 
@@ -211,6 +215,7 @@ TEST(ConnectionPoolASIO, ConnRefreshHappens) {
     for (auto& deferred : deferreds) {
         net.startCommand(makeCallbackHandle(),
                          request,
+                         nullptr,
                          [&](RemoteCommandResponse resp) { deferred.emplace(std::move(resp)); })
             .transitional_ignore();
     }
@@ -249,6 +254,7 @@ TEST(ConnectionPoolASIO, ConnRefreshSurvivesFailure) {
         fixture.getServers()[0], "admin", BSON("ping" << 1), BSONObj(), nullptr};
     net.startCommand(makeCallbackHandle(),
                      request,
+                     nullptr,
                      [&](RemoteCommandResponse resp) { deferred.emplace(std::move(resp)); })
         .transitional_ignore();
 
@@ -308,6 +314,7 @@ TEST(ConnectionPoolASIO, ConnSetupSurvivesFailure) {
                                              nullptr};
                 net.startCommand(makeCallbackHandle(),
                                  request,
+                                 nullptr,
                                  [&](RemoteCommandResponse resp) {
                                      if (!unfinished.subtractAndFetch(1)) {
                                          condvar.notify_one();

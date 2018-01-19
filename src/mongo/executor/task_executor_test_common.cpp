@@ -53,7 +53,7 @@ namespace executor {
 namespace {
 
 using ExecutorFactory =
-    stdx::function<std::unique_ptr<TaskExecutor>(std::unique_ptr<NetworkInterfaceMock>)>;
+    stdx::function<std::unique_ptr<TaskExecutor>(std::shared_ptr<NetworkInterfaceMock>)>;
 
 class CommonTaskExecutorTestFixture : public TaskExecutorTest {
 public:
@@ -62,7 +62,7 @@ public:
 
 private:
     std::unique_ptr<TaskExecutor> makeTaskExecutor(
-        std::unique_ptr<NetworkInterfaceMock> net) override {
+        std::shared_ptr<NetworkInterfaceMock> net) override {
         return _makeExecutor(std::move(net));
     }
 

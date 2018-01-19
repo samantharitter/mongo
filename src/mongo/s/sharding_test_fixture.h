@@ -93,7 +93,7 @@ protected:
 
     RemoteCommandTargeterMock* configTargeter() const;
 
-    executor::NetworkInterfaceMock* network() const;
+    std::shared_ptr<executor::NetworkInterfaceMock> network() const;
 
     executor::TaskExecutor* executor() const;
 
@@ -220,9 +220,12 @@ private:
     RemoteCommandTargeterMock* _configTargeter;
 
     // For the Grid's fixed executor.
-    executor::NetworkInterfaceMock* _mockNetwork;
+    std::shared_ptr<executor::NetworkInterfaceMock> _mockNetwork;
     executor::TaskExecutor* _executor;
     std::unique_ptr<executor::NetworkTestEnv> _networkTestEnv;
+
+    // For the executor pool (we use a separate network interface for ease of testing).
+    std::shared_ptr<executor::NetworkInterfaceMock> _mockNetworkForPool;
 
     // For the Grid's arbitrary executor in its executorPool.
     std::unique_ptr<executor::NetworkTestEnv> _networkTestEnvForPool;

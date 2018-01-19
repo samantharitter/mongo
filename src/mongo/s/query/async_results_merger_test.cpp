@@ -168,7 +168,7 @@ protected:
      * Schedules a list of raw BSON command responses to be returned by the mock network.
      */
     void scheduleNetworkResponseObjs(std::vector<BSONObj> objs) {
-        executor::NetworkInterfaceMock* net = network();
+        auto net = network();
         net->enterNetwork();
         for (const auto& obj : objs) {
             ASSERT_TRUE(net->hasReadyRequests());
@@ -182,7 +182,7 @@ protected:
     }
 
     RemoteCommandRequest getFirstPendingRequest() {
-        executor::NetworkInterfaceMock* net = network();
+        auto net = network();
         net->enterNetwork();
         ASSERT_TRUE(net->hasReadyRequests());
         NetworkInterfaceMock::NetworkOperationIterator noi = net->getFrontOfUnscheduledQueue();
@@ -194,7 +194,7 @@ protected:
     void scheduleErrorResponse(ResponseStatus rs) {
         invariant(!rs.isOK());
         rs.elapsedMillis = Milliseconds(0);
-        executor::NetworkInterfaceMock* net = network();
+        auto net = network();
         net->enterNetwork();
         ASSERT_TRUE(net->hasReadyRequests());
         net->scheduleResponse(net->getNextReadyRequest(), net->now(), rs);
@@ -203,14 +203,14 @@ protected:
     }
 
     void runReadyCallbacks() {
-        executor::NetworkInterfaceMock* net = network();
+        auto net = network();
         net->enterNetwork();
         net->runReadyNetworkOperations();
         net->exitNetwork();
     }
 
     void blackHoleNextRequest() {
-        executor::NetworkInterfaceMock* net = network();
+        auto net = network();
         net->enterNetwork();
         ASSERT_TRUE(net->hasReadyRequests());
         net->blackHole(net->getNextReadyRequest());

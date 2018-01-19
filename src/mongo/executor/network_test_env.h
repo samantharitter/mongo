@@ -90,7 +90,7 @@ public:
     public:
         FutureHandle<T>(stdx::future<T> future,
                         executor::TaskExecutor* executor,
-                        executor::NetworkInterfaceMock* network)
+                        std::shared_ptr<executor::NetworkInterfaceMock> network)
             : _future(std::move(future)), _executor(executor), _network(network) {}
 
         FutureHandle(FutureHandle&& other) = default;
@@ -131,7 +131,7 @@ public:
     private:
         stdx::future<T> _future;
         executor::TaskExecutor* _executor;
-        executor::NetworkInterfaceMock* _network;
+        std::shared_ptr<executor::NetworkInterfaceMock> _network;
     };
 
     /**
@@ -164,7 +164,7 @@ public:
     /**
      * Create a new test environment based on an existing executor and network.
      */
-    NetworkTestEnv(TaskExecutor* executor, NetworkInterfaceMock* network);
+    NetworkTestEnv(TaskExecutor* executor, std::shared_ptr<NetworkInterfaceMock> network);
 
     /**
      * Blocking methods, which receive one message from the network and respond using the
@@ -181,7 +181,7 @@ private:
     TaskExecutor* _executor;
 
     // Mocked out network under the task executor.
-    NetworkInterfaceMock* _mockNetwork;
+    std::shared_ptr<NetworkInterfaceMock> _mockNetwork;
 };
 
 }  // namespace executor

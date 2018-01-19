@@ -42,7 +42,7 @@ namespace executor {
  * Makes a new ThreadPoolTaskExecutor for use in unit tests.
  */
 std::unique_ptr<ThreadPoolTaskExecutor> makeThreadPoolTestExecutor(
-    std::unique_ptr<NetworkInterfaceMock> net,
+    std::shared_ptr<NetworkInterfaceMock> net,
     executor::ThreadPoolMock::Options options = executor::ThreadPoolMock::Options());
 
 /**
@@ -65,7 +65,7 @@ public:
 private:
     virtual ThreadPoolMock::Options makeThreadPoolMockOptions() const;
     std::unique_ptr<TaskExecutor> makeTaskExecutor(
-        std::unique_ptr<NetworkInterfaceMock> net) override;
+        std::shared_ptr<NetworkInterfaceMock> net) override;
 
     // Returned by makeThreadPoolMockOptions().
     const ThreadPoolMock::Options _options = {};
