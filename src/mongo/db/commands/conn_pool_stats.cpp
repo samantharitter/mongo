@@ -75,31 +75,13 @@ public:
              mongo::BSONObjBuilder& result) override {
         executor::ConnectionPoolStats stats{};
 
-        // Global connection pool connections.
+        // Legacy connection pool connections.
         globalConnPool.appendConnectionStats(&stats);
         result.appendNumber("numClientConnections", DBClientConnection::getNumConnections());
         result.appendNumber("numAScopedConnections", AScopedConnection::getNumConnections());
 
-        // Replication connections, if we have any
-        {
-            auto const replCoord = repl::ReplicationCoordinator::get(opCtx);
-            if (replCoord && replCoord->isReplEnabled()) {
-                replCoord->appendConnectionStats(&stats);
-            }
-        }
-
-        // Sharding connections, if we have any
-        {
-            auto const grid = Grid::get(opCtx);
-            if (grid->getExecutorPool()) {
-                grid->getExecutorPool()->appendConnectionStats(&stats);
-            }
-
-            auto const customConnPoolStatsFn = grid->getCustomConnectionPoolStatsFn();
-            if (customConnPoolStatsFn) {
-                customConnPoolStatsFn(&stats);
-            }
-        }
+        // NetworkInterfaceASIO connections
+        executor::NetworkInterface::getGlobalNetworkInterface()->appendConnectionStats(&stats);
 
         // Output to a BSON object.
         stats.appendToBSON(result);

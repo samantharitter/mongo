@@ -835,11 +835,6 @@ public:
     virtual void appendDiagnosticBSON(BSONObjBuilder* bob) = 0;
 
     /**
-     * Appends connection information to the provided BSONObjBuilder.
-     */
-    virtual void appendConnectionStats(executor::ConnectionPoolStats* stats) const = 0;
-
-    /**
      * Gets the number of uncommitted snapshots currently held.
      * Warning: This value can change at any time and may not even be accurate at the time of
      * return. It should not be used when an exact amount is needed.

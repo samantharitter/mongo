@@ -82,14 +82,6 @@ public:
               executor::NetworkInterface* network);
 
     /**
-     * If the instance as which this sharding component is running (config/shard/mongos) uses
-     * additional connection pools other than the default, this function will be present and can be
-     * used to obtain statistics about them. Otherwise, the value will be unset.
-     */
-    CustomConnectionPoolStatsFn getCustomConnectionPoolStatsFn() const;
-    void setCustomConnectionPoolStatsFn(CustomConnectionPoolStatsFn statsFn);
-
-    /**
      * Deprecated. This is only used on mongos, and once addShard is solely handled by the configs,
      * it can be deleted.
      * @return true if shards and config servers are allowed to use 'localhost' in address
@@ -168,8 +160,6 @@ private:
     std::unique_ptr<executor::TaskExecutorPool> _executorPool;
 
     executor::NetworkInterface* _network{nullptr};
-
-    CustomConnectionPoolStatsFn _customConnectionPoolStatsFn;
 
     // Protects _configOpTime.
     mutable stdx::mutex _mutex;

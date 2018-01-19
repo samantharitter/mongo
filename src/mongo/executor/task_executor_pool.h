@@ -96,15 +96,6 @@ public:
      */
     TaskExecutor* getFixedExecutor();
 
-    /**
-     * Appends connection information from all of the executors in the pool.
-     *
-     * NOTE: this method returns approximate stats. To avoid blocking operations on the
-     * pool, we don't lock for appendConnectionStats, so data gathered across connection pools
-     * will be from slightly different points in time.
-     */
-    void appendConnectionStats(ConnectionPoolStats* stats) const;
-
 private:
     AtomicUInt32 _counter;
 

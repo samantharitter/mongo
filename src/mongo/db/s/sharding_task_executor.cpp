@@ -197,9 +197,5 @@ void ShardingTaskExecutor::wait(const CallbackHandle& cbHandle) {
     _executor->wait(cbHandle);
 }
 
-void ShardingTaskExecutor::appendConnectionStats(ConnectionPoolStats* stats) const {
-    _executor->appendConnectionStats(stats);
-}
-
 }  // namespace executor
 }  // namespace mongo

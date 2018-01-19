@@ -253,12 +253,6 @@ public:
      */
     virtual void wait(const CallbackHandle& cbHandle) = 0;
 
-    /**
-     * Appends information about the underlying network interface's connections to the given
-     * builder.
-     */
-    virtual void appendConnectionStats(ConnectionPoolStats* stats) const = 0;
-
 protected:
     // Retrieves the Callback from a given CallbackHandle
     static CallbackState* getCallbackFromHandle(const CallbackHandle& cbHandle);

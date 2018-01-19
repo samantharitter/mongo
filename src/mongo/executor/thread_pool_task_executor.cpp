@@ -471,10 +471,6 @@ void ThreadPoolTaskExecutor::wait(const CallbackHandle& cbHandle) {
     }
 }
 
-void ThreadPoolTaskExecutor::appendConnectionStats(ConnectionPoolStats* stats) const {
-    _net->appendConnectionStats(stats);
-}
-
 StatusWith<TaskExecutor::CallbackHandle> ThreadPoolTaskExecutor::enqueueCallbackState_inlock(
     WorkQueue* queue, WorkQueue* wq) {
     if (_inShutdown_inlock()) {

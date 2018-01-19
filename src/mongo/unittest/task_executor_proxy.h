@@ -67,7 +67,6 @@ public:
         const executor::RemoteCommandRequest& request, const RemoteCommandCallbackFn& cb) override;
     virtual void cancel(const CallbackHandle& cbHandle) override;
     virtual void wait(const CallbackHandle& cbHandle) override;
-    virtual void appendConnectionStats(executor::ConnectionPoolStats* stats) const override;
 
 private:
     // Not owned by us.

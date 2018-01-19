@@ -444,10 +444,6 @@ void ReplicationCoordinatorImpl::appendDiagnosticBSON(mongo::BSONObjBuilder* bob
     _replExecutor->appendDiagnosticBSON(&eBuilder);
 }
 
-void ReplicationCoordinatorImpl::appendConnectionStats(executor::ConnectionPoolStats* stats) const {
-    _replExecutor->appendConnectionStats(stats);
-}
-
 bool ReplicationCoordinatorImpl::_startLoadLocalConfig(OperationContext* opCtx) {
     _replicationProcess->getConsistencyMarkers()->initializeMinValidDocument(opCtx);
 

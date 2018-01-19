@@ -84,8 +84,6 @@ public:
     void cancel(const CallbackHandle& cbHandle) override;
     void wait(const CallbackHandle& cbHandle) override;
 
-    void appendConnectionStats(ConnectionPoolStats* stats) const override;
-
     /**
      * Drops all connections to the given host on the network interface.
      */

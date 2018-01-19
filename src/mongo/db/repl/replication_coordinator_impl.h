@@ -307,8 +307,6 @@ public:
 
     virtual void appendDiagnosticBSON(BSONObjBuilder*) override;
 
-    virtual void appendConnectionStats(executor::ConnectionPoolStats* stats) const override;
-
     virtual size_t getNumUncommittedSnapshots() override;
 
     virtual WriteConcernOptions populateUnsetWriteConcernOptionsSyncMode(

@@ -106,10 +106,6 @@ void ShardingCatalogManager::startup() {
     }
     _started = true;
     _executorForAddShard->startup();
-
-    Grid::get(_serviceContext)
-        ->setCustomConnectionPoolStatsFn(
-            [this](executor::ConnectionPoolStats* stats) { appendConnectionStats(stats); });
 }
 
 void ShardingCatalogManager::shutDown() {
@@ -117,8 +113,6 @@ void ShardingCatalogManager::shutDown() {
         stdx::lock_guard<stdx::mutex> lk(_mutex);
         _inShutdown = true;
     }
-
-    Grid::get(_serviceContext)->setCustomConnectionPoolStatsFn(nullptr);
 
     _executorForAddShard->shutdown();
     _executorForAddShard->join();
