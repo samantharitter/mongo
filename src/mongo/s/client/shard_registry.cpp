@@ -88,19 +88,28 @@ const ShardId ShardRegistry::kConfigServerShardId = ShardId("config");
 
 ShardRegistry::ShardRegistry(std::unique_ptr<ShardFactory> shardFactory,
                              const ConnectionString& configServerCS)
-    : _shardFactory(std::move(shardFactory)), _initConfigServerCS(configServerCS) {}
+    : _shardFactory(std::move(shardFactory)),
+      _initConfigServerCS(configServerCS),
+      _state(State::kReady) {}
 
 ShardRegistry::~ShardRegistry() {
     shutdown();
 }
 
 void ShardRegistry::shutdown() {
-    if (_executor && !_isShutdown) {
-        LOG(1) << "Shutting down task executor for reloading shard registry";
-        _executor->shutdown();
-        _executor->join();
-        _isShutdown = true;
+    log() << "shutting down the Shard Registry...";
+    {
+        stdx::lock_guard<stdx::mutex> lk(_reloadMutex);
+
+        // Only shut down once, and only if we've started up.
+        if (_state == State::kComplete || _state == State::kReady) {
+            return;
+        }
+        _state = State::kComplete;
     }
+
+    _inReloadCV.notify_all();
+    _reloadThread.join();
 }
 
 ConnectionString ShardRegistry::getConfigServerConnectionString() const {
@@ -200,67 +209,41 @@ void ShardRegistry::init() {
 }
 
 void ShardRegistry::startup(OperationContext* opCtx) {
-    // startup() must be called only once
-    invariant(!_executor);
-
-    auto hookList = stdx::make_unique<rpc::EgressMetadataHookList>();
-    hookList->addHook(stdx::make_unique<rpc::LogicalTimeMetadataHook>(opCtx->getServiceContext()));
-
-    // construct task executor
-    auto net = executor::makeNetworkInterface("ShardRegistryUpdater", nullptr, std::move(hookList));
-    auto netPtr = net.get();
-    _executor = stdx::make_unique<ThreadPoolTaskExecutor>(
-        stdx::make_unique<NetworkInterfaceThreadPool>(netPtr), std::move(net));
-    LOG(1) << "Starting up task executor for periodic reloading of ShardRegistry";
-    _executor->startup();
-
-    auto status =
-        _executor->scheduleWork([this](const CallbackArgs& cbArgs) { _internalReload(cbArgs); });
-
-    if (status.getStatus() == ErrorCodes::ShutdownInProgress) {
-        LOG(1) << "Cant schedule Shard Registry reload. "
-               << "Executor shutdown in progress";
-        return;
+    {
+        // The ShardRegistry may only be started once.
+        stdx::lock_guard<stdx::mutex> lk(_reloadMutex);
+        if (_state != State::kReady) {
+            return;
+        }
     }
 
-    if (!status.isOK()) {
-        severe() << "Can't schedule ShardRegistry reload due to " << causedBy(status.getStatus());
-        fassertFailed(40252);
-    }
+    _reloadThread = stdx::thread([this]() { _internalReload(); });
 }
 
-void ShardRegistry::_internalReload(const CallbackArgs& cbArgs) {
-    LOG(1) << "Reloading shardRegistry";
-    if (!cbArgs.status.isOK()) {
-        warning() << "cant reload ShardRegistry " << causedBy(cbArgs.status);
-        return;
-    }
-
-    Client::initThreadIfNotAlready("shard registry reload");
+void ShardRegistry::_internalReload() {
+    Client::initThread("ShardRegistry-Reload");
     auto opCtx = cc().makeOperationContext();
 
-    try {
-        reload(opCtx.get());
-    } catch (const DBException& e) {
-        log() << "Periodic reload of shard registry failed " << causedBy(e) << "; will retry after "
-              << kRefreshPeriod;
+    stdx::unique_lock<stdx::mutex> lk(_reloadMutex);
+    while (_state != State::kComplete) {
+        LOG(1) << "Reloading shardRegistry";
+
+        try {
+            _reload(opCtx.get(), lk);
+        } catch (const DBException& e) {
+            log() << "Periodic reload of shard registry failed " << causedBy(e)
+                  << "; will retry after " << kRefreshPeriod;
+        }
+
+        if (_state == State::kComplete) {
+            break;
+        }
+
+        // Wait for the next refresh period.
+        _inReloadCV.wait_for(lk, kRefreshPeriod.toSystemDuration());
     }
 
-    // reschedule itself
-    auto status =
-        _executor->scheduleWorkAt(_executor->now() + kRefreshPeriod,
-                                  [this](const CallbackArgs& cbArgs) { _internalReload(cbArgs); });
-
-    if (status.getStatus() == ErrorCodes::ShutdownInProgress) {
-        LOG(1) << "Cant schedule ShardRegistry reload. "
-               << "Executor shutdown in progress";
-        return;
-    }
-
-    if (!status.isOK()) {
-        severe() << "Can't schedule ShardRegistry reload due to " << causedBy(status.getStatus());
-        fassertFailed(40253);
-    }
+    return;
 }
 
 bool ShardRegistry::isUp() const {
@@ -269,8 +252,11 @@ bool ShardRegistry::isUp() const {
 }
 
 bool ShardRegistry::reload(OperationContext* opCtx) {
-    stdx::unique_lock<stdx::mutex> reloadLock(_reloadMutex);
+    stdx::unique_lock<stdx::mutex> lk(_reloadMutex);
+    return _reload(opCtx, lk);
+}
 
+bool ShardRegistry::_reload(OperationContext* opCtx, stdx::unique_lock<stdx::mutex>& reloadLock) {
     if (_reloadState == ReloadState::Reloading) {
         // Another thread is already in the process of reloading so no need to do duplicate work.
         // There is also an issue if multiple threads are allowed to call getAllShards()
@@ -384,9 +370,8 @@ ShardRegistryData::ShardRegistryData(OperationContext* opCtx, ShardFactory* shar
     auto shards = std::move(shardsAndOpTime.value);
     auto reloadOpTime = std::move(shardsAndOpTime.opTime);
 
-    LOG(1) << "found " << shards.size()
-           << " shards listed on config server(s) with lastVisibleOpTime: "
-           << reloadOpTime.toBSON();
+    log() << "found " << shards.size()
+          << " shards listed on config server(s) with lastVisibleOpTime: " << reloadOpTime.toBSON();
 
     // Ensure targeter exists for all shards and take shard connection string from the targeter.
     // Do this before re-taking the mutex to avoid deadlock with the ReplicaSetMonitor updating
@@ -515,6 +500,7 @@ void ShardRegistryData::_rebuildShard(WithLock lk,
                                       ShardFactory* factory) {
     auto it = _rsLookup.find(newConnString.getSetName());
     invariant(it->second);
+
     auto shard = factory->createShard(it->second->getId(), newConnString);
     _addShard(lk, shard, true);
     if (shard->isConfig()) {
@@ -548,7 +534,7 @@ void ShardRegistryData::_addShard(WithLock lk,
 
     _lookup[shard->getId()] = shard;
 
-    LOG(3) << "Adding shard " << shard->getId() << ", with CS " << connString.toString();
+    log() << "Adding shard " << shard->getId() << ", with CS " << connString.toString();
     if (connString.type() == ConnectionString::SET) {
         _rsLookup[connString.getSetName()] = shard;
     } else if (connString.type() == ConnectionString::CUSTOM) {
