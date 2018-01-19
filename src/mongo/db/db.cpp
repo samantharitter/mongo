@@ -927,6 +927,11 @@ ExitCode _initAndListen(int listenPort) {
               << startupWarningsLog;
     }
 
+    // Set up the periodic runner for background job execution
+    auto runner = makePeriodicRunner();
+    runner->startup().transitional_ignore();
+    serviceContext->setPeriodicRunner(std::move(runner));
+
     SessionCatalog::create(serviceContext);
 
     // This function may take the global lock.
@@ -1001,11 +1006,6 @@ ExitCode _initAndListen(int listenPort) {
     startClientCursorMonitor();
 
     PeriodicTask::startRunningPeriodicTasks();
-
-    // Set up the periodic runner for background job execution
-    auto runner = makePeriodicRunner();
-    runner->startup().transitional_ignore();
-    serviceContext->setPeriodicRunner(std::move(runner));
 
     SessionKiller::set(serviceContext,
                        std::make_shared<SessionKiller>(serviceContext, killSessionsLocal));
@@ -1254,6 +1254,11 @@ void shutdownTask() {
     auto const client = Client::getCurrent();
     auto const serviceContext = client->getServiceContext();
 
+    // Shut down the background periodic task runner
+    if (auto runner = serviceContext->getPeriodicRunner()) {
+        runner->shutdown();
+    }
+
     // Shutdown the TransportLayer so that new connections aren't accepted
     if (auto tl = serviceContext->getTransportLayer()) {
         log(LogComponent::kNetwork) << "shutdown: going to close listening sockets...";
@@ -1298,11 +1303,6 @@ void shutdownTask() {
     }
 
     serviceContext->setKillAllOperations();
-
-    // Shut down the background periodic task runner
-    if (auto runner = serviceContext->getPeriodicRunner()) {
-        runner->shutdown();
-    }
 
     ReplicaSetMonitor::shutdown();
 

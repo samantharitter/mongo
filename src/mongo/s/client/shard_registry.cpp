@@ -61,6 +61,7 @@
 #include "mongo/util/log.h"
 #include "mongo/util/map_util.h"
 #include "mongo/util/mongoutils/str.h"
+#include "mongo/util/periodic_runner.h"
 #include "mongo/util/scopeguard.h"
 
 namespace mongo {
@@ -88,19 +89,27 @@ const ShardId ShardRegistry::kConfigServerShardId = ShardId("config");
 
 ShardRegistry::ShardRegistry(std::unique_ptr<ShardFactory> shardFactory,
                              const ConnectionString& configServerCS)
-    : _shardFactory(std::move(shardFactory)), _initConfigServerCS(configServerCS) {}
+    : _shardFactory(std::move(shardFactory)),
+      _initConfigServerCS(configServerCS),
+      _state(State::kReady) {}
 
 ShardRegistry::~ShardRegistry() {
     shutdown();
 }
 
 void ShardRegistry::shutdown() {
-    if (_executor && !_isShutdown) {
-        LOG(1) << "Shutting down task executor for reloading shard registry";
-        _executor->shutdown();
-        _executor->join();
-        _isShutdown = true;
+    log() << "shutting down the Shard Registry...";
+    {
+        stdx::lock_guard<stdx::mutex> lk(_reloadMutex);
+
+        // Only shut down once, and only if we've started up.
+        if (_state == State::kComplete || _state == State::kReady) {
+            return;
+        }
+        _state = State::kComplete;
     }
+
+    _inReloadCV.notify_all();
 }
 
 ConnectionString ShardRegistry::getConfigServerConnectionString() const {
@@ -200,67 +209,43 @@ void ShardRegistry::init() {
 }
 
 void ShardRegistry::startup(OperationContext* opCtx) {
-    // startup() must be called only once
-    invariant(!_executor);
-
-    auto hookList = stdx::make_unique<rpc::EgressMetadataHookList>();
-    hookList->addHook(stdx::make_unique<rpc::LogicalTimeMetadataHook>(opCtx->getServiceContext()));
-
-    // construct task executor
-    auto net = executor::makeNetworkInterface("ShardRegistryUpdater", nullptr, std::move(hookList));
-    auto netPtr = net.get();
-    _executor = stdx::make_unique<ThreadPoolTaskExecutor>(
-        stdx::make_unique<NetworkInterfaceThreadPool>(netPtr), std::move(net));
-    LOG(1) << "Starting up task executor for periodic reloading of ShardRegistry";
-    _executor->startup();
-
-    auto status =
-        _executor->scheduleWork([this](const CallbackArgs& cbArgs) { _internalReload(cbArgs); });
-
-    if (status.getStatus() == ErrorCodes::ShutdownInProgress) {
-        LOG(1) << "Cant schedule Shard Registry reload. "
-               << "Executor shutdown in progress";
-        return;
+    {
+        // The ShardRegistry may only be started once.
+        stdx::lock_guard<stdx::mutex> lk(_reloadMutex);
+        if (_state != State::kReady) {
+            return;
+        }
+        _state = State::kRunning;
     }
 
-    if (!status.isOK()) {
-        severe() << "Can't schedule ShardRegistry reload due to " << causedBy(status.getStatus());
-        fassertFailed(40252);
-    }
+    invariant(opCtx);
+    invariant(opCtx->getServiceContext());
+    invariant(opCtx->getServiceContext()->getPeriodicRunner());
+    opCtx->getServiceContext()->getPeriodicRunner()->scheduleJob(
+        {[this](Client* client) { _backgroundReload(); }, kRefreshPeriod});
 }
 
-void ShardRegistry::_internalReload(const CallbackArgs& cbArgs) {
-    LOG(1) << "Reloading shardRegistry";
-    if (!cbArgs.status.isOK()) {
-        warning() << "cant reload ShardRegistry " << causedBy(cbArgs.status);
+void ShardRegistry::_backgroundReload() {
+    Client::initThreadIfNotAlready("ShardRegistry-Reload");
+
+    // Make an operation context.
+    ServiceContext::UniqueOperationContext uniqueCtx{cc().makeOperationContext()};
+
+    stdx::unique_lock<stdx::mutex> lk(_reloadMutex);
+    if (_state == State::kComplete) {
         return;
     }
 
-    Client::initThreadIfNotAlready("shard registry reload");
-    auto opCtx = cc().makeOperationContext();
+    LOG(1) << "Reloading shardRegistry";
 
     try {
-        reload(opCtx.get());
+        _reload(uniqueCtx.get(), lk);
     } catch (const DBException& e) {
         log() << "Periodic reload of shard registry failed " << causedBy(e) << "; will retry after "
               << kRefreshPeriod;
     }
 
-    // reschedule itself
-    auto status =
-        _executor->scheduleWorkAt(_executor->now() + kRefreshPeriod,
-                                  [this](const CallbackArgs& cbArgs) { _internalReload(cbArgs); });
-
-    if (status.getStatus() == ErrorCodes::ShutdownInProgress) {
-        LOG(1) << "Cant schedule ShardRegistry reload. "
-               << "Executor shutdown in progress";
-        return;
-    }
-
-    if (!status.isOK()) {
-        severe() << "Can't schedule ShardRegistry reload due to " << causedBy(status.getStatus());
-        fassertFailed(40253);
-    }
+    return;
 }
 
 bool ShardRegistry::isUp() const {
@@ -269,8 +254,11 @@ bool ShardRegistry::isUp() const {
 }
 
 bool ShardRegistry::reload(OperationContext* opCtx) {
-    stdx::unique_lock<stdx::mutex> reloadLock(_reloadMutex);
+    stdx::unique_lock<stdx::mutex> lk(_reloadMutex);
+    return _reload(opCtx, lk);
+}
 
+bool ShardRegistry::_reload(OperationContext* opCtx, stdx::unique_lock<stdx::mutex>& reloadLock) {
     if (_reloadState == ReloadState::Reloading) {
         // Another thread is already in the process of reloading so no need to do duplicate work.
         // There is also an issue if multiple threads are allowed to call getAllShards()
@@ -515,6 +503,7 @@ void ShardRegistryData::_rebuildShard(WithLock lk,
                                       ShardFactory* factory) {
     auto it = _rsLookup.find(newConnString.getSetName());
     invariant(it->second);
+
     auto shard = factory->createShard(it->second->getId(), newConnString);
     _addShard(lk, shard, true);
     if (shard->isConfig()) {

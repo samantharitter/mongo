@@ -90,8 +90,14 @@ ShardingTest.prototype.checkUUIDsConsistentAcrossCluster = function() {
 
                 print("checking that the UUID in the storage catalog for " + ns + " on " +
                       shardConn + " is consistent with the config server");
+
+                // Some tests remove nodes from their shards. Running a dummy op
+                // flushes the replica set monitor so it detects the removed node.
+                shardConn.getDB("admin").runCommand({ listCollections: 1 });
+
                 const actualCollMetadata =
                     shardConn.getDB(dbName).getCollectionInfos({name: collName})[0];
+
                 assert.eq(authoritativeCollMetadata.collInfo.uuid,
                           actualCollMetadata.info.uuid,
                           "authoritative collection info on config server: " +

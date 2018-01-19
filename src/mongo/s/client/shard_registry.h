@@ -35,7 +35,6 @@
 
 #include "mongo/base/disallow_copying.h"
 #include "mongo/db/jsobj.h"
-#include "mongo/executor/task_executor.h"
 #include "mongo/s/client/shard.h"
 #include "mongo/stdx/condition_variable.h"
 #include "mongo/stdx/mutex.h"
@@ -245,8 +244,8 @@ public:
     void init();
 
     /**
-     * Shuts down _executor. Needs to be called explicitly because ShardRegistry is never destroyed
-     * as it's owned by the static grid object.
+     * Shuts down the ShardRegistry. Needs to be called explicitly because ShardRegistry is
+     * never destroyed as it's owned by the static grid object.
      */
     void shutdown();
 
@@ -279,13 +278,36 @@ private:
      * shard
      */
     ConnectionString _initConfigServerCS;
-    void _internalReload(const executor::TaskExecutor::CallbackArgs& cbArgs);
+
+    /**
+     * Performs a reload of the ShardRegistry from a background thread at regular intervals.
+     */
+    void _backgroundReload();
+
     ShardRegistryData _data;
+
+    /**
+     * Performs the work of doing a reload of the ShardRegistry. May be called from a
+     * job scheduled on a background thread via _backgroundReload(), or may be called
+     * explicitly by consumers of the ShardRegistry via reload().
+     */
+    bool _reload(OperationContext* opCtx, stdx::unique_lock<stdx::mutex>& lk);
 
     // Protects the _reloadState and _initConfigServerCS during startup.
     mutable stdx::mutex _reloadMutex;
     stdx::condition_variable _inReloadCV;
 
+    /**
+     * Indicates the state of the ShardRegistry as a component. May be kReady before
+     * startup() is called, kRunning once startup() is called, and kComplete once
+     * shutdown() is called.
+     */
+    enum class State { kReady, kRunning, kComplete };
+    State _state;
+
+    /**
+     * Indicates the state of a single reload of the ShardRegistry.
+     */
     enum class ReloadState {
         Idle,       // no other thread is loading data from config server in reload().
         Reloading,  // another thread is loading data from the config server in reload().
@@ -294,12 +316,6 @@ private:
 
     ReloadState _reloadState{ReloadState::Idle};
     bool _isUp{false};
-
-    // Executor for reloading.
-    std::unique_ptr<executor::TaskExecutor> _executor{};
-
-    // Set to true in shutdown call to prevent calling it twice.
-    bool _isShutdown{false};
 };
 
 }  // namespace mongo

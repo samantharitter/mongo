@@ -387,6 +387,11 @@ static ExitCode runMongosServer() {
 
     auto opCtx = cc().makeOperationContext();
 
+    // Set up the periodic runner for background job execution
+    auto runner = makePeriodicRunner();
+    runner->startup().transitional_ignore();
+    getGlobalServiceContext()->setPeriodicRunner(std::move(runner));
+
     auto logicalClock = stdx::make_unique<LogicalClock>(opCtx->getServiceContext());
     LogicalClock::set(opCtx->getServiceContext(), std::move(logicalClock));
 
@@ -430,11 +435,6 @@ static ExitCode runMongosServer() {
     }
 
     PeriodicTask::startRunningPeriodicTasks();
-
-    // Set up the periodic runner for background job execution
-    auto runner = makePeriodicRunner();
-    runner->startup().transitional_ignore();
-    getGlobalServiceContext()->setPeriodicRunner(std::move(runner));
 
     SessionKiller::set(
         getGlobalServiceContext(),
