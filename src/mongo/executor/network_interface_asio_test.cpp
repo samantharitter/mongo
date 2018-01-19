@@ -43,6 +43,7 @@
 #include "mongo/rpc/factory.h"
 #include "mongo/rpc/legacy_reply_builder.h"
 #include "mongo/rpc/metadata/egress_metadata_hook_list.h"
+#include "mongo/rpc/metadata/metadata_hook.h"
 #include "mongo/stdx/memory.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/log.h"
@@ -108,7 +109,7 @@ public:
         // keep unowned pointer, but pass ownership to NIA
         _streamFactory = factory.get();
         options.streamFactory = std::move(factory);
-        _net = stdx::make_unique<NetworkInterfaceASIO>(std::move(options));
+        _net = std::make_unique<NetworkInterfaceASIO>(std::move(options));
         _net->startup();
     }
 
@@ -119,10 +120,11 @@ public:
     }
 
     Deferred<RemoteCommandResponse> startCommand(const TaskExecutor::CallbackHandle& cbHandle,
-                                                 RemoteCommandRequest& request) {
+                                                 RemoteCommandRequest& request,
+                                                 rpc::EgressMetadataHook* hook = nullptr) {
         Deferred<RemoteCommandResponse> deferredResponse;
         ASSERT_OK(net().startCommand(
-            cbHandle, request, [deferredResponse](ResponseStatus response) mutable {
+            cbHandle, request, hook, [deferredResponse](ResponseStatus response) mutable {
                 deferredResponse.emplace(std::move(response));
             }));
         return deferredResponse;
@@ -130,7 +132,7 @@ public:
 
     // Helper to run startCommand and wait for it
     RemoteCommandResponse startCommandSync(RemoteCommandRequest& request) {
-        auto deferred = startCommand(makeCallbackHandle(), request);
+        auto deferred = startCommand(makeCallbackHandle(), request, nullptr);
 
         // wait for the operation to complete
         auto& result = deferred.get();
@@ -467,8 +469,8 @@ TEST_F(NetworkInterfaceASIOTest, InShutdown) {
 TEST_F(NetworkInterfaceASIOTest, StartCommandReturnsNotOKIfShutdownHasStarted) {
     net().shutdown();
     RemoteCommandRequest request;
-    ASSERT_NOT_OK(
-        net().startCommand(makeCallbackHandle(), request, [&](RemoteCommandResponse resp) {}));
+    ASSERT_NOT_OK(net().startCommand(
+        makeCallbackHandle(), request, nullptr, [&](RemoteCommandResponse resp) {}));
 }
 
 class MalformedMessageTest : public NetworkInterfaceASIOTest {
@@ -598,7 +600,7 @@ public:
         options.streamFactory = std::move(factory);
         options.networkConnectionHook = std::move(hook);
         options.timerFactory = stdx::make_unique<AsyncTimerFactoryMock>();
-        _net = stdx::make_unique<NetworkInterfaceASIO>(std::move(options));
+        _net = std::make_unique<NetworkInterfaceASIO>(std::move(options));
         _net->startup();
     }
 };
@@ -997,22 +999,6 @@ TEST_F(NetworkInterfaceASIOTest, IsMasterRequestMissingInternalClientInfoWhenNot
     assertNumOps(0u, 0u, 0u, 1u);
 }
 
-class NetworkInterfaceASIOMetadataTest : public NetworkInterfaceASIOTest {
-protected:
-    void setUp() override {}
-
-    void start(std::unique_ptr<rpc::EgressMetadataHook> metadataHook) {
-        auto factory = stdx::make_unique<AsyncMockStreamFactory>();
-        _streamFactory = factory.get();
-        NetworkInterfaceASIO::Options options{};
-        options.streamFactory = std::move(factory);
-        options.metadataHook = std::move(metadataHook);
-        options.timerFactory = stdx::make_unique<AsyncTimerFactoryMock>();
-        _net = stdx::make_unique<NetworkInterfaceASIO>(std::move(options));
-        _net->startup();
-    }
-};
-
 class TestMetadataHook : public rpc::EgressMetadataHook {
 public:
     TestMetadataHook(bool* wroteRequestMetadata, bool* gotReplyMetadata)
@@ -1036,16 +1022,15 @@ private:
     bool* _gotReplyMetadata;
 };
 
-TEST_F(NetworkInterfaceASIOMetadataTest, Metadata) {
+TEST_F(NetworkInterfaceASIOTest, EgressMetadataTest) {
     bool wroteRequestMetadata = false;
     bool gotReplyMetadata = false;
     auto hookList = stdx::make_unique<rpc::EgressMetadataHookList>();
     hookList->addHook(
         stdx::make_unique<TestMetadataHook>(&wroteRequestMetadata, &gotReplyMetadata));
-    start(std::move(hookList));
 
     RemoteCommandRequest request{testHost, "blah", BSON("ping" << 1), nullptr};
-    auto deferred = startCommand(makeCallbackHandle(), request);
+    auto deferred = startCommand(makeCallbackHandle(), request, hookList.get());
 
     auto stream = streamFactory().blockUntilStreamExists(testHost);
     ConnectEvent{stream}.skip();

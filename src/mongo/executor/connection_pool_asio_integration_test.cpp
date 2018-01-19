@@ -35,6 +35,7 @@
 #include "mongo/executor/async_timer_asio.h"
 #include "mongo/executor/connection_pool_stats.h"
 #include "mongo/executor/network_connection_hook.h"
+#include "mongo/executor/network_interface_asio.h"
 #include "mongo/executor/network_interface_asio_test_utils.h"
 #include "mongo/rpc/get_status_from_command_result.h"
 #include "mongo/stdx/future.h"
@@ -48,6 +49,13 @@
 namespace mongo {
 namespace executor {
 namespace {
+
+void startCommand(NetworkInterface* net,
+                  const TaskExecutor::CallbackHandle& cbHandle,
+                  RemoteCommandRequest& request,
+                  const NetworkInterface::RemoteCommandCompletionFn& onFinish) {
+    net->startCommand(cbHandle, request, nullptr, onFinish).transitional_ignore();
+}
 
 class MyNetworkConnectionHook : public NetworkConnectionHook {
 public:
@@ -107,11 +115,10 @@ TEST(ConnectionPoolASIO, TestPing) {
 
             RemoteCommandRequest request{
                 fixture.getServers()[0], "admin", BSON("ping" << 1), BSONObj(), nullptr};
-            net.startCommand(
-                   makeCallbackHandle(),
-                   request,
-                   [&deferred](RemoteCommandResponse resp) { deferred.emplace(std::move(resp)); })
-                .transitional_ignore();
+            startCommand(
+                &net, makeCallbackHandle(), request, [&deferred](RemoteCommandResponse resp) {
+                    deferred.emplace(std::move(resp));
+                });
 
             ASSERT_OK(deferred.get().status);
         });
@@ -144,10 +151,9 @@ TEST(ConnectionPoolASIO, TestHostTimeoutRace) {
         Deferred<RemoteCommandResponse> deferred;
         RemoteCommandRequest request{
             fixture.getServers()[0], "admin", BSON("ping" << 1), BSONObj(), nullptr};
-        net.startCommand(makeCallbackHandle(),
-                         request,
-                         [&](RemoteCommandResponse resp) { deferred.emplace(std::move(resp)); })
-            .transitional_ignore();
+        startCommand(&net, makeCallbackHandle(), request, [&](RemoteCommandResponse resp) {
+            deferred.emplace(std::move(resp));
+        });
 
         ASSERT_OK(deferred.get().status);
         sleepmillis(1);
@@ -173,10 +179,9 @@ TEST(ConnectionPoolASIO, ConnSetupTimeout) {
     Deferred<RemoteCommandResponse> deferred;
     RemoteCommandRequest request{
         fixture.getServers()[0], "admin", BSON("ping" << 1), BSONObj(), nullptr};
-    net.startCommand(makeCallbackHandle(),
-                     request,
-                     [&](RemoteCommandResponse resp) { deferred.emplace(std::move(resp)); })
-        .transitional_ignore();
+    startCommand(&net, makeCallbackHandle(), request, [&](RemoteCommandResponse resp) {
+        deferred.emplace(std::move(resp));
+    });
 
     ASSERT_EQ(deferred.get().status.code(), ErrorCodes::NetworkInterfaceExceededTimeLimit);
 }
@@ -209,10 +214,9 @@ TEST(ConnectionPoolASIO, ConnRefreshHappens) {
                                  nullptr};
 
     for (auto& deferred : deferreds) {
-        net.startCommand(makeCallbackHandle(),
-                         request,
-                         [&](RemoteCommandResponse resp) { deferred.emplace(std::move(resp)); })
-            .transitional_ignore();
+        startCommand(&net, makeCallbackHandle(), request, [&](RemoteCommandResponse resp) {
+            deferred.emplace(std::move(resp));
+        });
     }
 
     for (auto& deferred : deferreds) {
@@ -247,10 +251,9 @@ TEST(ConnectionPoolASIO, ConnRefreshSurvivesFailure) {
 
     RemoteCommandRequest request{
         fixture.getServers()[0], "admin", BSON("ping" << 1), BSONObj(), nullptr};
-    net.startCommand(makeCallbackHandle(),
-                     request,
-                     [&](RemoteCommandResponse resp) { deferred.emplace(std::move(resp)); })
-        .transitional_ignore();
+    startCommand(&net, makeCallbackHandle(), request, [&](RemoteCommandResponse resp) {
+        deferred.emplace(std::move(resp));
+    });
 
     deferred.get();
 
@@ -306,14 +309,11 @@ TEST(ConnectionPoolASIO, ConnSetupSurvivesFailure) {
                                                           << 3),
                                              BSONObj(),
                                              nullptr};
-                net.startCommand(makeCallbackHandle(),
-                                 request,
-                                 [&](RemoteCommandResponse resp) {
-                                     if (!unfinished.subtractAndFetch(1)) {
-                                         condvar.notify_one();
-                                     }
-                                 })
-                    .transitional_ignore();
+                startCommand(&net, makeCallbackHandle(), request, [&](RemoteCommandResponse resp) {
+                    if (!unfinished.subtractAndFetch(1)) {
+                        condvar.notify_one();
+                    }
+                });
                 unstarted.subtractAndFetch(1);
             }
         });

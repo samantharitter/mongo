@@ -263,6 +263,7 @@ env.CppUnitTest(
         'authorization_session_for_test',
         '$BUILD_DIR/mongo/db/pipeline/document_source',
         '$BUILD_DIR/mongo/db/service_context_d_test_fixture',
+        '$BUILD_DIR/mongo/executor/network_interface_mock',
         '$BUILD_DIR/mongo/transport/transport_layer_mock',
     ]
 )

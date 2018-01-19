@@ -68,7 +68,7 @@ std::string generateDistLockProcessId(OperationContext* opCtx);
  * Constructs a TaskExecutor which contains the required configuration for the sharding subsystem.
  */
 std::unique_ptr<executor::TaskExecutor> makeShardingTaskExecutor(
-    std::unique_ptr<executor::NetworkInterface> net);
+    executor::NetworkInterface* net, std::unique_ptr<rpc::EgressMetadataHook> hook = nullptr);
 
 /**
  * Takes in the connection string for reaching the config servers and initializes the global

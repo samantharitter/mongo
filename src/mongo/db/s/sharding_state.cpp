@@ -622,12 +622,11 @@ Status ShardingState::updateShardIdentityConfigString(OperationContext* opCtx,
     return Status::OK();
 }
 
-executor::TaskExecutor* ShardingState::getRangeDeleterTaskExecutor() {
+executor::TaskExecutor* ShardingState::getRangeDeleterTaskExecutor(ServiceContext* sc) {
     stdx::lock_guard<stdx::mutex> lk(_rangeDeleterExecutor.lock);
     if (_rangeDeleterExecutor.taskExecutor.get() == nullptr) {
-        static const char kExecName[] = "NetworkInterfaceCollectionRangeDeleter-TaskExecutor";
-        auto net = executor::makeNetworkInterface(kExecName);
-        auto pool = stdx::make_unique<executor::NetworkInterfaceThreadPool>(net.get());
+        auto net = sc->getNetworkInterfaceOrDie();
+        auto pool = stdx::make_unique<executor::NetworkInterfaceThreadPool>(net);
         _rangeDeleterExecutor.taskExecutor =
             stdx::make_unique<executor::ThreadPoolTaskExecutor>(std::move(pool), std::move(net));
         _rangeDeleterExecutor.taskExecutor->startup();

@@ -121,26 +121,16 @@ std::unique_ptr<ShardingCatalogClient> makeCatalogClient(ServiceContext* service
 }
 
 std::unique_ptr<TaskExecutorPool> makeShardingTaskExecutorPool(
-    std::unique_ptr<NetworkInterface> fixedNet,
+    NetworkInterface* fixedNet,
     rpc::ShardingEgressMetadataHookBuilder metadataHookBuilder,
     ConnectionPool::Options connPoolOptions,
     boost::optional<size_t> taskExecutorPoolSize) {
+    // Set up a "pool" with just one executor.
     std::vector<std::unique_ptr<executor::TaskExecutor>> executors;
-
-    const auto poolSize = taskExecutorPoolSize.value_or(TaskExecutorPool::getSuggestedPoolSize());
-
-    for (size_t i = 0; i < poolSize; ++i) {
-        auto exec = makeShardingTaskExecutor(executor::makeNetworkInterface(
-            "NetworkInterfaceASIO-TaskExecutorPool-" + std::to_string(i),
-            stdx::make_unique<ShardingNetworkConnectionHook>(),
-            metadataHookBuilder(),
-            connPoolOptions));
-
-        executors.emplace_back(std::move(exec));
-    }
+    executors.emplace_back(makeShardingTaskExecutor(fixedNet, metadataHookBuilder()));
 
     // Add executor used to perform non-performance critical work.
-    auto fixedExec = makeShardingTaskExecutor(std::move(fixedNet));
+    auto fixedExec = makeShardingTaskExecutor(std::move(fixedNet), metadataHookBuilder());
 
     auto executorPool = stdx::make_unique<TaskExecutorPool>();
     executorPool->addExecutors(std::move(executors), std::move(fixedExec));
@@ -150,10 +140,9 @@ std::unique_ptr<TaskExecutorPool> makeShardingTaskExecutorPool(
 }  // namespace
 
 std::unique_ptr<executor::TaskExecutor> makeShardingTaskExecutor(
-    std::unique_ptr<NetworkInterface> net) {
-    auto netPtr = net.get();
+    NetworkInterface* net, std::unique_ptr<rpc::EgressMetadataHook> hook) {
     auto executor = stdx::make_unique<ThreadPoolTaskExecutor>(
-        stdx::make_unique<NetworkInterfaceThreadPool>(netPtr), std::move(net));
+        stdx::make_unique<NetworkInterfaceThreadPool>(net), net, std::move(hook));
 
     return stdx::make_unique<executor::ShardingTaskExecutor>(std::move(executor));
 }
@@ -218,14 +207,9 @@ Status initializeGlobalShardingState(OperationContext* opCtx,
         connPoolOptions.hostTimeout = newHostTimeout;
     }
 
-    auto network =
-        executor::makeNetworkInterface("NetworkInterfaceASIO-ShardRegistry",
-                                       stdx::make_unique<ShardingNetworkConnectionHook>(),
-                                       hookBuilder(),
-                                       connPoolOptions);
-    auto networkPtr = network.get();
-    auto executorPool = makeShardingTaskExecutorPool(
-        std::move(network), hookBuilder, connPoolOptions, taskExecutorPoolSize);
+    auto network = opCtx->getServiceContext()->getNetworkInterfaceOrDie();
+    auto executorPool =
+        makeShardingTaskExecutorPool(network, hookBuilder, connPoolOptions, taskExecutorPoolSize);
     executorPool->startup();
 
     auto const grid = Grid::get(opCtx);
@@ -236,7 +220,7 @@ Status initializeGlobalShardingState(OperationContext* opCtx,
         stdx::make_unique<ClusterCursorManager>(getGlobalServiceContext()->getPreciseClockSource()),
         stdx::make_unique<BalancerConfiguration>(),
         std::move(executorPool),
-        networkPtr);
+        network);
 
     // The shard registry must be started once the grid is initialized
     grid->shardRegistry()->startup(opCtx);

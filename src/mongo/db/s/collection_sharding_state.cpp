@@ -129,7 +129,7 @@ bool isStandaloneOrPrimary(OperationContext* opCtx) {
 CollectionShardingState::CollectionShardingState(ServiceContext* sc, NamespaceString nss)
     : _nss(std::move(nss)),
       _metadataManager(std::make_shared<MetadataManager>(
-          sc, _nss, ShardingState::get(sc)->getRangeDeleterTaskExecutor())) {}
+          sc, _nss, ShardingState::get(sc)->getRangeDeleterTaskExecutor(sc))) {}
 
 CollectionShardingState::~CollectionShardingState() {
     invariant(!_sourceMgr);

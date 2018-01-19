@@ -95,7 +95,7 @@ protected:
      * Gets the network mock.
      */
     executor::NetworkInterfaceMock* getNet() {
-        return _net;
+        return _net.get();
     }
 
     /**
@@ -289,8 +289,8 @@ private:
     std::unique_ptr<ReplicationCoordinatorImpl> _repl;
     // Owned by ReplicationCoordinatorImpl
     TopologyCoordinator* _topo = nullptr;
-    // Owned by executor
-    executor::NetworkInterfaceMock* _net = nullptr;
+    // Owned by us
+    std::unique_ptr<executor::NetworkInterfaceMock> _net = nullptr;
     // Owned by ReplicationCoordinatorImpl
     ReplicationCoordinatorExternalStateMock* _externalState = nullptr;
     // Owned by ReplicationCoordinatorImpl

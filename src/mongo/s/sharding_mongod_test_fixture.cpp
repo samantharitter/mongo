@@ -161,25 +161,24 @@ std::unique_ptr<executor::TaskExecutorPool> ShardingMongodTestFixture::makeTaskE
     // Set up a NetworkInterfaceMock. Note, unlike NetworkInterfaceASIO, which has its own pool of
     // threads, tasks in the NetworkInterfaceMock must be carried out synchronously by the (single)
     // thread the unit test is running on.
-    auto netForFixedTaskExecutor = stdx::make_unique<executor::NetworkInterfaceMock>();
-    _mockNetwork = netForFixedTaskExecutor.get();
+    _mockNetwork = std::make_unique<executor::NetworkInterfaceMock>();
 
     // Set up a ThreadPoolTaskExecutor. Note, for local tasks this TaskExecutor uses a
     // ThreadPoolMock, and for remote tasks it uses the NetworkInterfaceMock created above. However,
     // note that the ThreadPoolMock uses the NetworkInterfaceMock's threads to run tasks, which is
     // again just the (single) thread the unit test is running on. Therefore, all tasks, local and
     // remote, must be carried out synchronously by the test thread.
-    auto fixedTaskExecutor = makeThreadPoolTestExecutor(std::move(netForFixedTaskExecutor));
+    auto fixedTaskExecutor = makeThreadPoolTestExecutor(_mockNetwork.get());
 
-    _networkTestEnv = stdx::make_unique<NetworkTestEnv>(fixedTaskExecutor.get(), _mockNetwork);
+    _networkTestEnv =
+        stdx::make_unique<NetworkTestEnv>(fixedTaskExecutor.get(), _mockNetwork.get());
 
     // Set up a NetworkInterfaceMock for the (one) arbitrary TaskExecutor that will go in the set
     // of arbitrary TaskExecutors.
-    auto netForArbitraryExecutor = stdx::make_unique<executor::NetworkInterfaceMock>();
+    _mockNetworkForPool = std::make_unique<executor::NetworkInterfaceMock>();
 
     // Set up (one) TaskExecutor for the set of arbitrary TaskExecutors.
-    auto arbitraryExecutorForExecutorPool =
-        makeThreadPoolTestExecutor(std::move(netForArbitraryExecutor));
+    auto arbitraryExecutorForExecutorPool = makeThreadPoolTestExecutor(_mockNetworkForPool.get());
     std::vector<std::unique_ptr<executor::TaskExecutor>> arbitraryExecutorsForExecutorPool;
     arbitraryExecutorsForExecutorPool.emplace_back(std::move(arbitraryExecutorForExecutorPool));
 
@@ -281,7 +280,7 @@ Status ShardingMongodTestFixture::initializeGlobalShardingStateForMongodForTest(
                makeClusterCursorManager(),
                makeBalancerConfiguration(),
                std::move(executorPoolPtr),
-               _mockNetwork);
+               _mockNetwork.get());
 
     // NOTE: ShardRegistry::startup() is not called because it starts a task executor with a
     // self-rescheduling task to reload the ShardRegistry over the network.
@@ -346,7 +345,7 @@ void ShardingMongodTestFixture::shutdownExecutorPool() {
 
 executor::NetworkInterfaceMock* ShardingMongodTestFixture::network() const {
     invariant(_mockNetwork);
-    return _mockNetwork;
+    return _mockNetwork.get();
 }
 
 executor::TaskExecutor* ShardingMongodTestFixture::executor() const {

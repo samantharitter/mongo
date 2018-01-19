@@ -62,7 +62,7 @@ public:
     virtual ~TaskExecutorTest();
 
     executor::NetworkInterfaceMock* getNet() {
-        return _net;
+        return _net.get();
     }
     TaskExecutor& getExecutor() {
         return *_executor;
@@ -79,7 +79,7 @@ public:
 
 private:
     /**
-     * Unused implementation of test function. This allows us to instantiate
+    * Unused implementation of test function. This allows us to instantiate
      * TaskExecutorTest on its own without the need to inherit from it in a test.
      * This supports using TaskExecutorTest inside another test fixture and works around the
      * limitation that tests cannot inherit from multiple test fixtures.
@@ -89,11 +89,11 @@ private:
     void _doTest() override;
 
     virtual std::unique_ptr<TaskExecutor> makeTaskExecutor(
-        std::unique_ptr<NetworkInterfaceMock> net) = 0;
+        NetworkInterfaceMock* net) = 0;
 
     virtual void postExecutorThreadLaunch();
 
-    NetworkInterfaceMock* _net;
+    std::unique_ptr<NetworkInterfaceMock> _net;
     std::unique_ptr<TaskExecutor> _executor;
 };
 

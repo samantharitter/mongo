@@ -172,7 +172,7 @@ protected:
 private:
     // Since these are currently private members of the real ShardingCatalogManager, we store a raw
     // pointer to them here.
-    executor::NetworkInterfaceMock* _mockNetworkForAddShard;
+    std::unique_ptr<executor::NetworkInterfaceMock> _mockNetworkForAddShard;
     executor::TaskExecutor* _executorForAddShard;
 
     // Allows for processing tasks through the NetworkInterfaceMock/ThreadPoolMock subsystem.

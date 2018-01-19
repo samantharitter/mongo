@@ -264,7 +264,7 @@ void NetworkInterfaceASIO::_beginCommunication(AsyncOp* op) {
 }
 
 void NetworkInterfaceASIO::_completedOpCallback(AsyncOp* op) {
-    auto response = op->command().response(op, op->operationProtocol(), now(), _metadataHook.get());
+    auto response = op->command().response(op, op->operationProtocol(), now(), op->metadataHook());
     _completeOperation(op, response);
 }
 
@@ -456,12 +456,12 @@ void NetworkInterfaceASIO::_asyncRunCommand(AsyncOp* op, NetworkOpHandler handle
 }
 
 void NetworkInterfaceASIO::_runConnectionHook(AsyncOp* op) {
-    if (!_hook) {
+    if (!_connectionHook) {
         return _beginCommunication(op);
     }
 
     auto swOptionalRequest =
-        callNoexcept(*_hook, &NetworkConnectionHook::makeRequest, op->request().target);
+        callNoexcept(*_connectionHook, &NetworkConnectionHook::makeRequest, op->request().target);
 
     if (!swOptionalRequest.isOK()) {
         return _completeOperation(op, swOptionalRequest.getStatus());
@@ -480,14 +480,16 @@ void NetworkInterfaceASIO::_runConnectionHook(AsyncOp* op) {
 
     auto finishHook = [this, op]() {
         auto response =
-            op->command().response(op, op->operationProtocol(), now(), _metadataHook.get());
+            op->command().response(op, op->operationProtocol(), now(), op->metadataHook());
 
         if (!response.isOK()) {
             return _completeOperation(op, response);
         }
 
-        auto handleStatus = callNoexcept(
-            *_hook, &NetworkConnectionHook::handleReply, op->request().target, std::move(response));
+        auto handleStatus = callNoexcept(*_connectionHook,
+                                         &NetworkConnectionHook::handleReply,
+                                         op->request().target,
+                                         std::move(response));
 
         if (!handleStatus.isOK()) {
             return _completeOperation(op, handleStatus);

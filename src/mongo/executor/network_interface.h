@@ -33,6 +33,7 @@
 
 #include "mongo/base/disallow_copying.h"
 #include "mongo/executor/task_executor.h"
+#include "mongo/rpc/metadata/metadata_hook.h"
 #include "mongo/stdx/functional.h"
 
 namespace mongo {
@@ -125,9 +126,13 @@ public:
      * Returns ErrorCodes::ShutdownInProgress if NetworkInterface::shutdown has already started
      * and Status::OK() otherwise. If it returns Status::OK(), then the onFinish argument will be
      * executed by NetworkInterface eventually; otherwise, it will not.
+     *
+     * The passed-in metadata hook MUST live until the onFinish callback is called for this
+     * command.
      */
     virtual Status startCommand(const TaskExecutor::CallbackHandle& cbHandle,
                                 RemoteCommandRequest& request,
+                                rpc::EgressMetadataHook* hook,
                                 const RemoteCommandCompletionFn& onFinish) = 0;
 
     /**

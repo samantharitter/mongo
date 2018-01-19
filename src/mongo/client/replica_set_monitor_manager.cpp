@@ -36,6 +36,7 @@
 #include "mongo/client/connection_string.h"
 #include "mongo/client/mongo_uri.h"
 #include "mongo/client/replica_set_monitor.h"
+#include "mongo/db/service_context.h"
 #include "mongo/executor/network_connection_hook.h"
 #include "mongo/executor/network_interface_factory.h"
 #include "mongo/executor/network_interface_thread_pool.h"
@@ -80,14 +81,25 @@ shared_ptr<ReplicaSetMonitor> ReplicaSetMonitorManager::getMonitor(StringData se
 void ReplicaSetMonitorManager::_setupTaskExecutorInLock(const std::string& name) {
     auto hookList = stdx::make_unique<rpc::EgressMetadataHookList>();
 
-    // do not restart taskExecutor if is in shutdown
+    // Do not restart taskExecutor if is in shutdown.
     if (!_taskExecutor && !_isShutdown) {
-        // construct task executor
-        auto net = executor::makeNetworkInterface(
-            "ReplicaSetMonitor-TaskExecutor", nullptr, std::move(hookList));
-        auto netPtr = net.get();
+
+        // Get network interface (or make one in the shell).
+        auto net = [this] {
+            if (hasGlobalServiceContext()) {
+                return getGlobalServiceContext()->getNetworkInterfaceOrDie();
+            } else {
+                _net = executor::makeNetworkInterface("RS Monitor - Shell");
+                return _net->get();
+            }
+        }();
+
+        invariant(net);
+
+        // Construct a new task executor.
         _taskExecutor = stdx::make_unique<ThreadPoolTaskExecutor>(
-            stdx::make_unique<NetworkInterfaceThreadPool>(netPtr), std::move(net));
+            stdx::make_unique<NetworkInterfaceThreadPool>(net), net, std::move(hookList));
+
         LOG(1) << "Starting up task executor for monitoring replica sets in response to request to "
                   "monitor set: "
                << redact(name);

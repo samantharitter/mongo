@@ -111,17 +111,16 @@ void ConfigServerTestFixture::setUp() {
 
     {
         // The catalog manager requires a special executor used for operations during addShard.
-        auto specialNet(stdx::make_unique<executor::NetworkInterfaceMock>());
-        _mockNetworkForAddShard = specialNet.get();
+        _mockNetworkForAddShard = std::make_unique<executor::NetworkInterfaceMock>();
 
-        auto specialExec(makeThreadPoolTestExecutor(std::move(specialNet)));
+        auto specialExec(makeThreadPoolTestExecutor(_mockNetworkForAddShard.get()));
         _executorForAddShard = specialExec.get();
 
         ShardingCatalogManager::create(getServiceContext(), std::move(specialExec));
     }
 
     _addShardNetworkTestEnv =
-        stdx::make_unique<NetworkTestEnv>(_executorForAddShard, _mockNetworkForAddShard);
+        stdx::make_unique<NetworkTestEnv>(_executorForAddShard, _mockNetworkForAddShard.get());
 
     CatalogCacheLoader::set(getServiceContext(),
                             stdx::make_unique<ConfigServerCatalogCacheLoader>());
@@ -176,7 +175,7 @@ std::unique_ptr<ClusterCursorManager> ConfigServerTestFixture::makeClusterCursor
 
 executor::NetworkInterfaceMock* ConfigServerTestFixture::networkForAddShard() const {
     invariant(_mockNetworkForAddShard);
-    return _mockNetworkForAddShard;
+    return _mockNetworkForAddShard.get();
 }
 
 executor::TaskExecutor* ConfigServerTestFixture::executorForAddShard() const {

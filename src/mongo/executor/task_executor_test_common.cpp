@@ -52,8 +52,7 @@ namespace mongo {
 namespace executor {
 namespace {
 
-using ExecutorFactory =
-    stdx::function<std::unique_ptr<TaskExecutor>(std::unique_ptr<NetworkInterfaceMock>)>;
+using ExecutorFactory = stdx::function<std::unique_ptr<TaskExecutor>(NetworkInterfaceMock*)>;
 
 class CommonTaskExecutorTestFixture : public TaskExecutorTest {
 public:
@@ -62,9 +61,13 @@ public:
 
 private:
     std::unique_ptr<TaskExecutor> makeTaskExecutor(
-        std::unique_ptr<NetworkInterfaceMock> net) override {
-        return _makeExecutor(std::move(net));
+        NetworkInterfaceMock* net) override {
+        _net = net;
+        return _makeExecutor(_net);
     }
+
+    // Owned by the base class TaskExecutorTest
+    NetworkInterfaceMock* _net;
 
     ExecutorFactory _makeExecutor;
 };

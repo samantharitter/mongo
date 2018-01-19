@@ -146,10 +146,12 @@ void NetworkInterfaceASIO::_runIsMaster(AsyncOp* op) {
 
         op->connection().getCompressorManager().clientFinish(commandReply.data);
 
-        if (_hook) {
+        if (_connectionHook) {
             // Run the validation hook.
-            auto validHost = callNoexcept(
-                *_hook, &NetworkConnectionHook::validateHost, op->request().target, commandReply);
+            auto validHost = callNoexcept(*_connectionHook,
+                                          &NetworkConnectionHook::validateHost,
+                                          op->request().target,
+                                          commandReply);
             if (!validHost.isOK()) {
                 return _completeOperation(op, validHost);
             }

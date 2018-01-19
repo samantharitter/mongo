@@ -274,7 +274,7 @@ public:
     /**
      * Return the task executor to be shared by the range deleters for all collections.
      */
-    executor::TaskExecutor* getRangeDeleterTaskExecutor();
+    executor::TaskExecutor* getRangeDeleterTaskExecutor(ServiceContext* sc);
 
 private:
     // Map from a namespace into the sharding state for each collection we have

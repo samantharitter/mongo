@@ -125,8 +125,11 @@ public:
 };
 
 ThreadPoolTaskExecutor::ThreadPoolTaskExecutor(std::unique_ptr<ThreadPoolInterface> pool,
-                                               std::unique_ptr<NetworkInterface> net)
-    : _net(std::move(net)), _pool(std::move(pool)) {}
+                                               NetworkInterface* net,
+                                               std::unique_ptr<rpc::EgressMetadataHook> hook)
+    : _net(net), _pool(std::move(pool)), _hook(std::move(hook)) {
+    invariant(_net);
+}
 
 ThreadPoolTaskExecutor::~ThreadPoolTaskExecutor() {
     shutdown();
@@ -135,7 +138,6 @@ ThreadPoolTaskExecutor::~ThreadPoolTaskExecutor() {
 }
 
 void ThreadPoolTaskExecutor::startup() {
-    _net->startup();
     stdx::lock_guard<stdx::mutex> lk(_mutex);
     if (_inShutdown_inlock()) {
         return;
@@ -205,10 +207,7 @@ stdx::unique_lock<stdx::mutex> ThreadPoolTaskExecutor::_join(stdx::unique_lock<s
         signalEvent_inlock(event, std::move(lk));
         lk = stdx::unique_lock<stdx::mutex>(_mutex);
     }
-    lk.unlock();
-    _net->shutdown();
 
-    lk.lock();
     // The _poolInProgressQueue may not be empty if the network interface attempted to schedule work
     // into _pool after _pool->shutdown(). Because _pool->join() has returned, we know that any
     // items left in _poolInProgressQueue will never be processed by another thread, so we process
@@ -409,6 +408,7 @@ StatusWith<TaskExecutor::CallbackHandle> ThreadPoolTaskExecutor::scheduleRemoteC
     _net->startCommand(
             cbHandle.getValue(),
             scheduledRequest,
+            _hook.get(),
             [this, scheduledRequest, cbState, cb](const ResponseStatus& response) {
                 using std::swap;
                 CallbackFn newCb = [cb, scheduledRequest, response](const CallbackArgs& cbData) {

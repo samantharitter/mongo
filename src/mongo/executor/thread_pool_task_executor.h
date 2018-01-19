@@ -32,6 +32,7 @@
 
 #include "mongo/base/disallow_copying.h"
 #include "mongo/executor/task_executor.h"
+#include "mongo/rpc/metadata/metadata_hook.h"
 #include "mongo/stdx/condition_variable.h"
 #include "mongo/stdx/list.h"
 #include "mongo/stdx/mutex.h"
@@ -58,7 +59,8 @@ public:
      * for network operations.
      */
     ThreadPoolTaskExecutor(std::unique_ptr<ThreadPoolInterface> pool,
-                           std::unique_ptr<NetworkInterface> net);
+                           NetworkInterface* net,
+                           std::unique_ptr<rpc::EgressMetadataHook> hook = nullptr);
 
     /**
      * Destroys a ThreadPoolTaskExecutor.
@@ -172,10 +174,14 @@ private:
     stdx::unique_lock<stdx::mutex> _join(stdx::unique_lock<stdx::mutex> lk);
 
     // The network interface used for remote command execution and waiting.
-    std::unique_ptr<NetworkInterface> _net;
+    // Owned by the service context.
+    NetworkInterface* _net;
 
     // The thread pool that executes scheduled work items.
     std::unique_ptr<ThreadPoolInterface> _pool;
+
+    // Hook to be run on all egress operations.
+    std::unique_ptr<rpc::EgressMetadataHook> _hook;
 
     // Mutex guarding all remaining fields.
     mutable stdx::mutex _mutex;

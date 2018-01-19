@@ -304,11 +304,12 @@ void ReplicationCoordinatorExternalStateImpl::startThreads(const ReplSettings& s
     log() << "Starting replication storage threads";
     _service->getGlobalStorageEngine()->setJournalListener(this);
 
+    auto net = _service->getNetworkInterfaceOrDie();
+
     auto hookList = stdx::make_unique<rpc::EgressMetadataHookList>();
     hookList->addHook(stdx::make_unique<rpc::LogicalTimeMetadataHook>(_service));
     _taskExecutor = stdx::make_unique<executor::ThreadPoolTaskExecutor>(
-        makeThreadPool(),
-        executor::makeNetworkInterface("NetworkInterfaceASIO-RS", nullptr, std::move(hookList)));
+        makeThreadPool(), net, std::move(hookList));
     _taskExecutor->startup();
 
     _writerPool = SyncTail::makeWriterPool();

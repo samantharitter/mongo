@@ -47,7 +47,7 @@ public:
     NetworkInterfaceThreadPoolWithASIO() {
         executor::NetworkInterfaceASIO::Options options;
         options.timerFactory = stdx::make_unique<executor::AsyncTimerFactoryMock>();
-        _asio = stdx::make_unique<executor::NetworkInterfaceASIO>(std::move(options));
+        _asio = std::make_unique<executor::NetworkInterfaceASIO>(std::move(options));
         _pool = stdx::make_unique<executor::NetworkInterfaceThreadPool>(_asio.get());
         _asio->startup();
     }

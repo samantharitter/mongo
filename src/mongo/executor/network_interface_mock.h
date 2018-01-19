@@ -48,6 +48,10 @@ namespace mongo {
 
 class BSONObj;
 
+namespace rpc {
+class EgressMetadataHook;
+}  // namespace rpc
+
 namespace executor {
 
 using ResponseStatus = TaskExecutor::ResponseStatus;
@@ -108,6 +112,7 @@ public:
     virtual std::string getHostName();
     virtual Status startCommand(const TaskExecutor::CallbackHandle& cbHandle,
                                 RemoteCommandRequest& request,
+                                rpc::EgressMetadataHook* hook,
                                 const RemoteCommandCompletionFn& onFinish);
 
     /**

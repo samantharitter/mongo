@@ -107,7 +107,6 @@ public:
         std::unique_ptr<AsyncTimerFactoryInterface> timerFactory;
         std::unique_ptr<NetworkConnectionHook> networkConnectionHook;
         std::unique_ptr<AsyncStreamFactoryInterface> streamFactory;
-        std::unique_ptr<rpc::EgressMetadataHook> metadataHook;
     };
 
     NetworkInterfaceASIO(Options = Options());
@@ -130,6 +129,7 @@ public:
     Date_t now() override;
     Status startCommand(const TaskExecutor::CallbackHandle& cbHandle,
                         RemoteCommandRequest& request,
+                        rpc::EgressMetadataHook* metadataHook,
                         const RemoteCommandCompletionFn& onFinish) override;
     void cancelCommand(const TaskExecutor::CallbackHandle& cbHandle) override;
     Status setAlarm(Date_t when, const stdx::function<void()>& action) override;
@@ -327,6 +327,15 @@ private:
 
         bool operator==(const AsyncOp& other) const;
 
+        /**
+         * Returns the metadata hook for this operation, may be null.
+         *
+         * This hook object is owned by the calling TaskExecutor.
+         */
+        rpc::EgressMetadataHook* metadataHook() const {
+            return _metadataHook;
+        }
+
     private:
         // Type to represent the internal id of this request.
         using AsyncOpId = uint64_t;
@@ -371,6 +380,11 @@ private:
          * is not known until we obtain a connection.
          */
         boost::optional<rpc::Protocol> _operationProtocol;
+
+        /**
+         * An egress metadata hook for this operation. Owned by the ThreadPoolTaskExecutor.
+         */
+        rpc::EgressMetadataHook* _metadataHook;
 
         Date_t _start;
         std::unique_ptr<AsyncTimerInterface> _timeoutAlarm;
@@ -471,9 +485,7 @@ private:
     asio::io_service _io_service;
     std::vector<stdx::thread> _serviceRunners;
 
-    const std::unique_ptr<rpc::EgressMetadataHook> _metadataHook;
-
-    const std::unique_ptr<NetworkConnectionHook> _hook;
+    const std::unique_ptr<NetworkConnectionHook> _connectionHook;
 
     std::atomic<State> _state;  // NOLINT
 

@@ -88,8 +88,7 @@ using std::vector;
 using unittest::assertGet;
 
 namespace {
-std::unique_ptr<ShardingTaskExecutor> makeShardingTestExecutor(
-    std::unique_ptr<NetworkInterfaceMock> net) {
+std::unique_ptr<ShardingTaskExecutor> makeShardingTestExecutor(NetworkInterfaceMock* net) {
     auto testExecutor = makeThreadPoolTestExecutor(std::move(net));
     return stdx::make_unique<ShardingTaskExecutor>(std::move(testExecutor));
 }
@@ -123,21 +122,23 @@ void ShardingTestFixture::setUp() {
     _opCtx = _client->makeOperationContext();
 
     // Set up executor pool used for most operations.
-    auto fixedNet = stdx::make_unique<executor::NetworkInterfaceMock>();
-    fixedNet->setEgressMetadataHook(
+    _mockNetwork = std::make_unique<executor::NetworkInterfaceMock>();
+    _mockNetwork->setEgressMetadataHook(
         stdx::make_unique<rpc::ShardingEgressMetadataHookForMongos>(serviceContext()));
-    _mockNetwork = fixedNet.get();
-    auto fixedExec = makeShardingTestExecutor(std::move(fixedNet));
-    _networkTestEnv = stdx::make_unique<NetworkTestEnv>(fixedExec.get(), _mockNetwork);
+    _mockNetwork->startup();
+
+    auto fixedExec = makeShardingTestExecutor(_mockNetwork.get());
+    _networkTestEnv = stdx::make_unique<NetworkTestEnv>(fixedExec.get(), _mockNetwork.get());
     _executor = fixedExec.get();
 
-    auto netForPool = stdx::make_unique<executor::NetworkInterfaceMock>();
-    netForPool->setEgressMetadataHook(
+    _mockNetworkForPool = std::make_unique<executor::NetworkInterfaceMock>();
+    _mockNetworkForPool->setEgressMetadataHook(
         stdx::make_unique<rpc::ShardingEgressMetadataHookForMongos>(serviceContext()));
-    auto _mockNetworkForPool = netForPool.get();
-    auto execForPool = makeShardingTestExecutor(std::move(netForPool));
+    _mockNetworkForPool->startup();
+
+    auto execForPool = makeShardingTestExecutor(_mockNetworkForPool.get());
     _networkTestEnvForPool =
-        stdx::make_unique<NetworkTestEnv>(execForPool.get(), _mockNetworkForPool);
+        stdx::make_unique<NetworkTestEnv>(execForPool.get(), _mockNetworkForPool.get());
     std::vector<std::unique_ptr<executor::TaskExecutor>> executorsForPool;
     executorsForPool.emplace_back(std::move(execForPool));
 
@@ -197,7 +198,7 @@ void ShardingTestFixture::setUp() {
                stdx::make_unique<ClusterCursorManager>(serviceContext()->getPreciseClockSource()),
                stdx::make_unique<BalancerConfiguration>(),
                std::move(executorPool),
-               _mockNetwork);
+               _mockNetwork.get());
 }
 
 void ShardingTestFixture::tearDown() {
@@ -206,6 +207,9 @@ void ShardingTestFixture::tearDown() {
     Grid::get(operationContext())->getExecutorPool()->shutdownAndJoin();
     Grid::get(operationContext())->catalogClient()->shutDown(_opCtx.get());
     Grid::get(operationContext())->clearForUnitTests();
+
+    _mockNetwork->shutdown();
+    _mockNetworkForPool->shutdown();
 
     _transportSession.reset();
     _opCtx.reset();
@@ -243,8 +247,7 @@ RemoteCommandTargeterMock* ShardingTestFixture::configTargeter() const {
 
 executor::NetworkInterfaceMock* ShardingTestFixture::network() const {
     invariant(_mockNetwork);
-
-    return _mockNetwork;
+    return _mockNetwork.get();
 }
 
 executor::TaskExecutor* ShardingTestFixture::executor() const {

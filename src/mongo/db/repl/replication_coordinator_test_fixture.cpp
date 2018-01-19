@@ -141,15 +141,14 @@ void ReplCoordTest::init() {
     TopologyCoordinator::Options settings;
     auto topo = stdx::make_unique<TopologyCoordinator>(settings);
     _topo = topo.get();
-    auto net = stdx::make_unique<NetworkInterfaceMock>();
-    _net = net.get();
+    auto net = std::make_unique<NetworkInterfaceMock>();
     auto externalState = stdx::make_unique<ReplicationCoordinatorExternalStateMock>();
     _externalState = externalState.get();
     executor::ThreadPoolMock::Options tpOptions;
     tpOptions.onCreateThread = []() { Client::initThread("replexec"); };
-    auto pool = stdx::make_unique<executor::ThreadPoolMock>(_net, seed, tpOptions);
+    auto pool = stdx::make_unique<executor::ThreadPoolMock>(_net.get(), seed, tpOptions);
     auto replExec =
-        stdx::make_unique<executor::ThreadPoolTaskExecutor>(std::move(pool), std::move(net));
+        stdx::make_unique<executor::ThreadPoolTaskExecutor>(std::move(pool), _net.get());
     _replExec = replExec.get();
     _repl = stdx::make_unique<ReplicationCoordinatorImpl>(service,
                                                           _settings,
@@ -159,9 +158,10 @@ void ReplCoordTest::init() {
                                                           replicationProcess,
                                                           _storageInterface,
                                                           seed);
-    service->setFastClockSource(stdx::make_unique<executor::NetworkInterfaceMockClockSource>(_net));
+    service->setFastClockSource(
+        stdx::make_unique<executor::NetworkInterfaceMockClockSource>(_net.get()));
     service->setPreciseClockSource(
-        stdx::make_unique<executor::NetworkInterfaceMockClockSource>(_net));
+        stdx::make_unique<executor::NetworkInterfaceMockClockSource>(_net.get()));
 }
 
 void ReplCoordTest::init(const ReplSettings& settings) {

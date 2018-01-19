@@ -38,6 +38,10 @@
 
 namespace mongo {
 
+namespace executor {
+class NetworkInterface;
+}  // namespace executor
+
 class BSONObjBuilder;
 class ConnectionString;
 class ReplicaSetMonitor;
@@ -107,6 +111,10 @@ private:
 
     // set to true when shutdown has been called.
     bool _isShutdown{false};
+
+    // The shell doesn't have a service context, so it owns its
+    // own NetworkInterface here.
+    boost::optional<std::unique_ptr<executor::NetworkInterface>> _net;
 };
 
 }  // namespace mongo
