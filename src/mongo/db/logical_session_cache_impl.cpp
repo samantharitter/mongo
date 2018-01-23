@@ -65,10 +65,12 @@ LogicalSessionCacheImpl::LogicalSessionCacheImpl(
       _sessionsColl(std::move(collection)),
       _transactionReaper(std::move(transactionReaper)) {
     if (!disableLogicalSessionCacheRefresh) {
-        _service->scheduleJob(
-            {[this](Client* client) { _periodicRefresh(client); }, _refreshInterval});
-        _service->scheduleJob(
-            {[this](Client* client) { _periodicReap(client); }, _refreshInterval});
+        _service->scheduleJob({[this](Client* client) { _periodicRefresh(client); },
+                               _refreshInterval,
+                               PeriodicRunner::Strategy::kStart});
+        _service->scheduleJob({[this](Client* client) { _periodicReap(client); },
+                               _refreshInterval,
+                               PeriodicRunner::Strategy::kStart});
     }
     _stats.setLastSessionsCollectionJobTimestamp(now());
     _stats.setLastTransactionReaperJobTimestamp(now());

@@ -76,8 +76,15 @@ void PeriodicRunnerASIO::_scheduleJob(std::weak_ptr<PeriodicJobASIO> job, bool f
     }
 
     // Adjust the timer to expire at the correct time.
-    auto adjustedMS =
-        std::max(Milliseconds(0), lockedJob->start + lockedJob->interval - _timerFactory->now());
+    Milliseconds adjustedMS;
+
+    if (lockedJob->strategy == Strategy::kStart) {
+        adjustedMS = std::max(Milliseconds(0),
+                              lockedJob->start + lockedJob->interval - _timerFactory->now());
+    } else {
+        adjustedMS = lockedJob->interval;
+    }
+
     lockedJob->timer->expireAfter(adjustedMS);
     lockedJob->timer->asyncWait([this, job, firstTime](std::error_code ec) mutable {
         if (!firstTime) {

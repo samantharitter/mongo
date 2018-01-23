@@ -93,7 +93,7 @@ ShardingTest.prototype.checkUUIDsConsistentAcrossCluster = function() {
 
                 // Some tests remove nodes from their shards. Running a dummy op
                 // flushes the replica set monitor so it detects the removed node.
-                shardConn.getDB("admin").runCommand({ listCollections: 1 });
+                shardConn.getDB("admin").runCommand({listCollections: 1});
 
                 const actualCollMetadata =
                     shardConn.getDB(dbName).getCollectionInfos({name: collName})[0];

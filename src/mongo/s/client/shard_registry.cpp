@@ -222,7 +222,9 @@ void ShardRegistry::startup(OperationContext* opCtx) {
     invariant(opCtx->getServiceContext());
     invariant(opCtx->getServiceContext()->getPeriodicRunner());
     opCtx->getServiceContext()->getPeriodicRunner()->scheduleJob(
-        {[this](Client* client) { _backgroundReload(); }, kRefreshPeriod});
+        {[this](Client* client) { _backgroundReload(); },
+         kRefreshPeriod,
+         PeriodicRunner::Strategy::kEnd});
 }
 
 void ShardRegistry::_backgroundReload() {

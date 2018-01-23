@@ -96,10 +96,12 @@ private:
             : job(std::move(callable.job)),
               interval(callable.interval),
               start(startTime),
+              strategy(callable.strategy),
               timer(sharedTimer) {}
         Job job;
         Milliseconds interval;
         Date_t start;
+        Strategy strategy;
         std::shared_ptr<executor::AsyncTimerInterface> timer;
     };
 

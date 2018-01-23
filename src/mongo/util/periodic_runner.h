@@ -50,9 +50,22 @@ class PeriodicRunner {
 public:
     using Job = stdx::function<void(Client* client)>;
 
+    /**
+     * Start counting the scheduling interval from either the start or
+     * end of the last job. When scheduling from kStart, if the job
+     * takes longer to run than the given interval, it will be
+     * rescheduled immediately after running. If kEnd, the job will
+     * be rescheduled 'interval' milliseconds after it ends.
+     *
+     * This value is set on a per-job basis.
+     *
+     * Defaults to 'kStart'.
+     */
+    enum class Strategy { kStart, kEnd };
+
     struct PeriodicJob {
-        PeriodicJob(Job callable, Milliseconds period)
-            : job(std::move(callable)), interval(period) {}
+        PeriodicJob(Job callable, Milliseconds period, Strategy schedulingStrategy)
+            : job(std::move(callable)), interval(period), strategy(schedulingStrategy) {}
 
         /**
          * A task to be run at regular intervals by the runner.
@@ -63,6 +76,11 @@ public:
          * An interval at which the job should be run. Defaults to 1 minute.
          */
         Milliseconds interval;
+
+        /**
+         * The scheduling strategy to use for this job, see above.
+         */
+        Strategy strategy = Strategy::kStart;
     };
 
     virtual ~PeriodicRunner();
