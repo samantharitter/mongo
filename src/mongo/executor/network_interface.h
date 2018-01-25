@@ -32,9 +32,11 @@
 #include <string>
 
 #include "mongo/base/disallow_copying.h"
+#include "mongo/db/service_context.h"
 #include "mongo/executor/task_executor.h"
 #include "mongo/rpc/metadata/metadata_hook.h"
 #include "mongo/stdx/functional.h"
+#include "mongo/util/decorable.h"
 
 namespace mongo {
 
@@ -49,6 +51,11 @@ class NetworkInterface {
     MONGO_DISALLOW_COPYING(NetworkInterface);
 
 public:
+    static const ServiceContext::Decoration<std::unique_ptr<NetworkInterface>> getNetworkInterface;
+    static void setGlobalNetworkInterface(std::unique_ptr<NetworkInterface> networkInterface);
+    static NetworkInterface* getGlobalNetworkInterface();
+    static NetworkInterface* getGlobalNetworkInterfaceOrDie();
+
     // A flag to keep replication MessagingPorts open when all other sockets are disconnected.
     static const unsigned int kMessagingPortKeepOpen = 1;
 

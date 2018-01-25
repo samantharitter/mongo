@@ -229,7 +229,7 @@ static void cleanupTask() {
         }
 
         // Shut down egress networking
-        if (auto ni = serviceContext->getNetworkInterfaceOrDie()) {
+        if (auto ni = executor::NetworkInterface::getGlobalNetworkInterfaceOrDie()) {
             log(LogComponent::kNetwork) << "shutting down egress networking...";
             ni->shutdown();
         }
@@ -366,8 +366,8 @@ static ExitCode runMongosServer() {
 
     auto net = executor::makeNetworkInterface("GlobalNetworkInterface",
                                               stdx::make_unique<ShardingNetworkConnectionHook>());
-    getGlobalServiceContext()->setNetworkInterface(std::move(net));
-    getGlobalServiceContext()->getNetworkInterface()->startup();
+    executor::NetworkInterface::setGlobalNetworkInterface(std::move(net));
+    executor::NetworkInterface::getGlobalNetworkInterface()->startup();
 
     auto unshardedHookList = stdx::make_unique<rpc::EgressMetadataHookList>();
     unshardedHookList->addHook(

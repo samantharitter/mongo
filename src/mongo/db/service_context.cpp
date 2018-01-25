@@ -177,21 +177,6 @@ PeriodicRunner* ServiceContext::getPeriodicRunner() const {
     return _runner.get();
 }
 
-executor::NetworkInterface* ServiceContext::getNetworkInterface() const {
-    return _networkInterface.get();
-}
-
-executor::NetworkInterface* ServiceContext::getNetworkInterfaceOrDie() const {
-    invariant(_networkInterface);
-    return this->getNetworkInterface();
-}
-
-void ServiceContext::setNetworkInterface(
-    std::unique_ptr<executor::NetworkInterface> networkInterface) {
-    invariant(!_networkInterface);
-    _networkInterface = std::move(networkInterface);
-}
-
 transport::TransportLayer* ServiceContext::getTransportLayer() const {
     return _transportLayer.get();
 }

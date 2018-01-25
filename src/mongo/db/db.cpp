@@ -745,7 +745,7 @@ ExitCode _initAndListen(int listenPort) {
 
     serviceContext->createLockFile();
 
-    serviceContext->getNetworkInterfaceOrDie()->startup();
+    executor::NetworkInterface::getGlobalNetworkInterfaceOrDie()->startup();
 
     serviceContext->setServiceEntryPoint(
         stdx::make_unique<ServiceEntryPointMongod>(serviceContext));
@@ -961,7 +961,7 @@ ExitCode _initAndListen(int listenPort) {
 
             Balancer::create(startupOpCtx->getServiceContext());
 
-            auto net = startupOpCtx->getServiceContext()->getNetworkInterfaceOrDie();
+            auto net = executor::NetworkInterface::getGlobalNetworkInterfaceOrDie();
 
             ShardingCatalogManager::create(startupOpCtx->getServiceContext(),
                                            makeShardingTaskExecutor(net));
@@ -1187,14 +1187,14 @@ auto makeReplicationExecutor(ServiceContext* serviceContext) {
         Client::initThread(threadName.c_str());
     };
 
-    serviceContext->getNetworkInterfaceOrDie();
+    executor::NetworkInterface::getGlobalNetworkInterfaceOrDie();
 
     auto hookList = stdx::make_unique<rpc::EgressMetadataHookList>();
     hookList->addHook(stdx::make_unique<rpc::LogicalTimeMetadataHook>(serviceContext));
 
     return stdx::make_unique<executor::ThreadPoolTaskExecutor>(
         stdx::make_unique<ThreadPool>(tpOptions),
-        serviceContext->getNetworkInterfaceOrDie(),
+        executor::NetworkInterface::getGlobalNetworkInterfaceOrDie(),
         std::move(hookList));
 }
 
@@ -1226,7 +1226,8 @@ MONGO_INITIALIZER_WITH_PREREQUISITES(CreateReplicationManager,
     auto logicalClock = stdx::make_unique<LogicalClock>(serviceContext);
     LogicalClock::set(serviceContext, std::move(logicalClock));
 
-    serviceContext->setNetworkInterface(executor::makeNetworkInterface("GlobalNetworkInterface"));
+    executor::NetworkInterface::setGlobalNetworkInterface(
+        executor::makeNetworkInterface("GlobalNetworkInterface"));
 
     auto replCoord = stdx::make_unique<repl::ReplicationCoordinatorImpl>(
         serviceContext,
@@ -1316,7 +1317,7 @@ void shutdownTask() {
     ReplicaSetMonitor::shutdown();
 
     // Shut down egress networking
-    if (auto ni = serviceContext->getNetworkInterface()) {
+    if (auto ni = executor::NetworkInterface::getGlobalNetworkInterface()) {
         log(LogComponent::kNetwork) << "shutting down egress networking...";
         ni->shutdown();
     }

@@ -41,6 +41,25 @@ const unsigned int NetworkInterface::kMessagingPortKeepOpen;
 NetworkInterface::NetworkInterface() {}
 NetworkInterface::~NetworkInterface() {}
 
+const ServiceContext::Decoration<std::unique_ptr<NetworkInterface>>
+    NetworkInterface::getNetworkInterface =
+        ServiceContext::declareDecoration<std::unique_ptr<NetworkInterface>>();
+
+void NetworkInterface::setGlobalNetworkInterface(
+    std::unique_ptr<NetworkInterface> networkInterface) {
+    invariant(!NetworkInterface::getNetworkInterface(getGlobalServiceContext()));
+    getNetworkInterface(getGlobalServiceContext()) = std::move(networkInterface);
+}
+
+NetworkInterface* NetworkInterface::getGlobalNetworkInterfaceOrDie() {
+    auto net = NetworkInterface::getNetworkInterface(getGlobalServiceContext()).get();
+    invariant(net);
+    return net;
+}
+
+NetworkInterface* NetworkInterface::getGlobalNetworkInterface() {
+    return NetworkInterface::getNetworkInterface(getGlobalServiceContext()).get();
+}
 
 }  // namespace executor
 }  // namespace mongo

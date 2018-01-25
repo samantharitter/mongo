@@ -72,9 +72,9 @@ void ServiceContextMongoDTest::setUp() {
         serviceContext->setOpObserver(stdx::make_unique<OpObserverNoop>());
     }
 
-    if (!serviceContext->getNetworkInterface()) {
+    if (!executor::NetworkInterface::getGlobalNetworkInterface()) {
         auto net = std::make_unique<executor::NetworkInterfaceMock>();
-        serviceContext->setNetworkInterface(std::move(net));
+        executor::NetworkInterface::setGlobalNetworkInterface(std::move(net));
     }
 }
 

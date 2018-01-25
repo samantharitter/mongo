@@ -33,7 +33,6 @@
 #include "mongo/base/disallow_copying.h"
 #include "mongo/db/logical_session_id.h"
 #include "mongo/db/storage/storage_engine.h"
-#include "mongo/executor/network_interface.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/platform/unordered_set.h"
 #include "mongo/stdx/condition_variable.h"
@@ -340,21 +339,6 @@ public:
     //
 
     /**
-     * Get the NetworkInterface for this service.
-     */
-    executor::NetworkInterface* getNetworkInterface() const;
-
-    /**
-     * Gets the NetworkInterface, if it exists, or invariants.
-     */
-    executor::NetworkInterface* getNetworkInterfaceOrDie() const;
-
-    /**
-     * Set the NetworkInterface for this service.
-     */
-    void setNetworkInterface(std::unique_ptr<executor::NetworkInterface> networkInterface);
-
-    /**
      * Get the master TransportLayer. Routes to all other TransportLayers that
      * may be in use within this service.
      *
@@ -480,11 +464,6 @@ private:
      * The periodic runner.
      */
     std::unique_ptr<PeriodicRunner> _runner;
-
-    /**
-     * The network interface.
-     */
-    std::unique_ptr<executor::NetworkInterface> _networkInterface;
 
     /**
      * The TransportLayer.

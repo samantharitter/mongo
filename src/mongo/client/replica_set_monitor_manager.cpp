@@ -87,7 +87,7 @@ void ReplicaSetMonitorManager::_setupTaskExecutorInLock(const std::string& name)
         // Get network interface (or make one in the shell).
         auto net = [this] {
             if (hasGlobalServiceContext()) {
-                return getGlobalServiceContext()->getNetworkInterfaceOrDie();
+                return NetworkInterface::getGlobalNetworkInterfaceOrDie();
             } else {
                 _net = executor::makeNetworkInterface("RS Monitor - Shell");
                 return _net->get();

@@ -207,7 +207,7 @@ Status initializeGlobalShardingState(OperationContext* opCtx,
         connPoolOptions.hostTimeout = newHostTimeout;
     }
 
-    auto network = opCtx->getServiceContext()->getNetworkInterfaceOrDie();
+    auto network = NetworkInterface::getGlobalNetworkInterfaceOrDie();
     auto executorPool =
         makeShardingTaskExecutorPool(network, hookBuilder, connPoolOptions, taskExecutorPoolSize);
     executorPool->startup();
