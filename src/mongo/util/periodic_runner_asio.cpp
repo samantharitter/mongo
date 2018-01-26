@@ -156,7 +156,6 @@ void PeriodicRunnerASIO::shutdown() {
     if (_state == State::kRunning) {
         _state = State::kComplete;
 
-        _io_service.stop();
         _jobs.clear();
 
         lk.unlock();
@@ -164,6 +163,8 @@ void PeriodicRunnerASIO::shutdown() {
         for (auto& thread : _threads) {
             thread.join();
         }
+
+        _io_service.stop();
     }
 }
 
