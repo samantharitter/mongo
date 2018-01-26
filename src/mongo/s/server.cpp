@@ -389,7 +389,7 @@ static ExitCode runMongosServer() {
 
     // Set up the periodic runner for background job execution
     auto runner = makePeriodicRunner();
-    runner->startup().transitional_ignore();
+    uassertStatusOK(runner->startup());
     getGlobalServiceContext()->setPeriodicRunner(std::move(runner));
 
     auto logicalClock = stdx::make_unique<LogicalClock>(opCtx->getServiceContext());

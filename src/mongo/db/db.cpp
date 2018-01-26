@@ -929,7 +929,7 @@ ExitCode _initAndListen(int listenPort) {
 
     // Set up the periodic runner for background job execution
     auto runner = makePeriodicRunner();
-    runner->startup().transitional_ignore();
+    uassertStatusOK(runner->startup());
     serviceContext->setPeriodicRunner(std::move(runner));
 
     SessionCatalog::create(serviceContext);
