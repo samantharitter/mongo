@@ -60,8 +60,6 @@ NetworkInterfaceMock::NetworkInterfaceMock()
 NetworkInterfaceMock::~NetworkInterfaceMock() {
     stdx::unique_lock<stdx::mutex> lk(_mutex);
     invariant(!_hasStarted || inShutdown());
-    invariant(_scheduled.empty());
-    invariant(_blackHoled.empty());
 }
 
 void NetworkInterfaceMock::logQueues() {
@@ -211,22 +209,8 @@ void NetworkInterfaceMock::shutdown() {
     if (!_hasStarted) {
         _startup_inlock();
     }
-    _inShutdown.store(true);
-    NetworkOperationList todo;
-    todo.splice(todo.end(), _scheduled);
-    todo.splice(todo.end(), _unscheduled);
-    todo.splice(todo.end(), _processing);
-    todo.splice(todo.end(), _blackHoled);
 
-    const Date_t now = _now_inlock();
-    _waitingToRunMask |= kExecutorThread;  // Prevents network thread from scheduling.
-    lk.unlock();
-    for (NetworkOperationIterator iter = todo.begin(); iter != todo.end(); ++iter) {
-        iter->setResponse(
-            now, {ErrorCodes::ShutdownInProgress, "Shutting down mock network", Milliseconds(0)});
-        iter->finishResponse();
-    }
-    lk.lock();
+    _inShutdown.store(true);
 
     _currentlyRunning = kNoThread;
     _waitingToRunMask = kNetworkThread;
